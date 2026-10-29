@@ -1,0 +1,64 @@
+---
+- name: Probe the OpenSearch service
+  ansible.builtin.command: systemctl is-active opensearch  # noqa: command-instead-of-module
+  register: _v_os_service
+  changed_when: false
+  failed_when: false
+
+- name: Query OpenSearch
+  ansible.builtin.uri:
+    url: "{{ _base }}{{ item }}"
+    user: "{{ 'admin' if mmd_opensearch_security else omit }}"
+    password: "{{ mmd_secrets.opensearch_admin_password if mmd_opensearch_security else omit }}"
+    force_basic_auth: "{{ mmd_opensearch_security | bool }}"
+    ca_path: "{{ opensearch_cert_dir ~ '/root-ca.pem' if mmd_opensearch_security else omit }}"
+    return_content: true
+    timeout: 10
+  vars:
+    _base: "{{ 'https' if mmd_opensearch_security else 'http' }}://127.0.0.1:{{ opensearch_port }}"
+  loop: ["/", "/_cluster/health", "/_cat/plugins?format=json"]
+  register: _v_os_api
+  failed_when: false
+  no_log: true
+
+- name: Try OpenSearch without credentials
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ opensearch_port }}/"
+    validate_certs: false
+    status_code: [200, 401, 403]
+    timeout: 10
+  register: _v_os_anon
+  failed_when: false
+  when: mmd_opensearch_security | bool
+
+- name: Keep the OpenSearch version for the report
+  ansible.builtin.set_fact:
+    mmd_versions: "{{ mmd_versions | default({}) | combine({'opensearch': _v_os_api.results[0].json.version.number | default('unknown')}) }}"
+
+- name: Record OpenSearch checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _health: "{{ _v_os_api.results[1].json.status | default('unreachable') }}"
+    _plugins: "{{ _v_os_api.results[2].json | default([]) | map(attribute='component') | list }}"
+    checks:
+      - component: opensearch
+        name: Service is active
+        ok: "{{ _v_os_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_os_service.stdout }}"
+      - component: opensearch
+        name: Cluster health is green or yellow
+        ok: "{{ _health in ['green', 'yellow'] }}"
+        detail: "status {{ _health }}{{ ' (yellow is normal on one node: replicas have nowhere to go)' if _health == 'yellow' else '' }}"
+      - component: opensearch
+        name: analysis-icu plugin installed
+        severity: warning
+        ok: "{{ 'analysis-icu' in _plugins }}"
+        detail: "plugins: {{ _plugins | unique | join(', ') | default('none', true) }}"
+      - component: opensearch
+        name: Unauthenticated requests are refused
+        status: "{{ ('pass' if _v_os_anon.status | default(0) in [401, 403] else 'fail') if mmd_opensearch_security else 'skip' }}"
+        detail: >-
+          {{ ('HTTP ' ~ (_v_os_anon.status | default('none')) ~ ' without credentials') if mmd_opensearch_security
+             else 'security plugin off; bound to 127.0.0.1 only' }}

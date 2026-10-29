@@ -1,0 +1,26 @@
+---
+- name: Read the saved deployment state
+  ansible.builtin.slurp:
+    path: "{{ deploy_state_dir }}/deployment.json"
+  register: _state_raw
+
+- name: Restore artifact and run details
+  ansible.builtin.set_fact:
+    mmd_artifacts: "{{ _state.artifacts | default({}) }}"
+    mmd_artifact_mode: "{{ _state.artifact_mode | default('unknown') }}"
+    mmd_artifact_warnings: "{{ _state.artifact_warnings | default([]) }}"
+    mmd_mattermost_previous: "{{ _state.mattermost_previous | default('') }}"
+    mmd_deploy_failed: "{{ _state.deploy_failed | default(false) }}"
+    mmd_deploy_error: "{{ _state.deploy_error | default('') }}"
+    mmd_install_run_id: "{{ _state.run_id | default('') }}"
+  vars:
+    _state: "{{ _state_raw.content | b64decode | from_json }}"
+
+- name: Warn when the saved state does not match the answer file
+  ansible.builtin.debug:
+    msg: >-
+      The answer file now selects {{ mmd_selected | join(', ') }}, but the last
+      install was {{ _saved | join(', ') }}. Checks follow the answer file.
+  vars:
+    _saved: "{{ (_state_raw.content | b64decode | from_json).selected | default([]) }}"
+  when: _saved | sort != mmd_selected | sort

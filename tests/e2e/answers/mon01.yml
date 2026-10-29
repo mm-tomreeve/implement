@@ -1,0 +1,10 @@
+---
+deploy_profiles: [monitoring]
+monitoring_site_url: https://app01.e2e.test
+# The harness copies the throwaway CA that signed app01's certificate here.
+monitoring_site_ca_file: /root/site-ca.pem
+monitoring_estate:
+  - {name: db01, address: 172.30.10.11, components: [postgresql]}
+  - {name: app01, address: 172.30.10.12, components: [mattermost, nginx]}
+  - {name: calls01, address: 172.30.10.13, components: [rtcd]}
+  - {name: search01, address: 172.30.10.14, components: [opensearch]}

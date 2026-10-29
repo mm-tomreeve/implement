@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: prometheus
+  author: mattermost-implement
+  description: Prometheus server scraping Mattermost, rtcd and exporters
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions: [all]
+dependencies: []

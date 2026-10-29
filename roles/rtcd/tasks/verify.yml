@@ -1,0 +1,51 @@
+---
+- name: Probe the rtcd service
+  ansible.builtin.command: systemctl is-active rtcd  # noqa: command-instead-of-module
+  register: _v_rtcd_service
+  changed_when: false
+  failed_when: false
+
+- name: Ask rtcd for its version
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ rtcd_api_port }}/version"
+    return_content: true
+    timeout: 10
+  register: _v_rtcd_version
+  failed_when: false
+
+- name: Look for the UDP media listener
+  ansible.builtin.shell: set -o pipefail; ss -Hlun | awk '{print $4}' | grep -c ':{{ rtcd_rtc_port }}$' || true
+  args:
+    executable: /bin/bash
+  register: _v_rtcd_udp
+  changed_when: false
+
+- name: Keep the rtcd version for the report
+  ansible.builtin.set_fact:
+    mmd_versions: "{{ mmd_versions | default({}) | combine({'rtcd': _v_rtcd_version.json.buildVersion | default(mmd_artifacts.rtcd.version | default('unknown'))}) }}"
+
+- name: Record rtcd checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    checks:
+      - component: rtcd
+        name: Service is active
+        ok: "{{ _v_rtcd_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_rtcd_service.stdout }}"
+      - component: rtcd
+        name: API answers on port {{ rtcd_api_port }}
+        ok: "{{ _v_rtcd_version.status | default(0) == 200 }}"
+        detail: "{{ _v_rtcd_version.content | default('no answer') | truncate(120) }}"
+      - component: rtcd
+        name: Listening for media on UDP {{ rtcd_rtc_port }}
+        ok: "{{ (_v_rtcd_udp.stdout | trim | int) > 0 }}"
+        detail: "{{ _v_rtcd_udp.stdout | trim }} UDP sockets bound"
+      - component: rtcd
+        name: ICE host override set for clients
+        severity: warning
+        ok: "{{ rtcd_ice_host_override | length > 0 }}"
+        detail: >-
+          {{ rtcd_ice_host_override if rtcd_ice_host_override | length > 0
+             else 'not set; rtcd will advertise its own address, which fails behind NAT' }}

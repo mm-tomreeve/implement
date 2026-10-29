@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Prometheus nginx exporter
+After=network-online.target nginx.service
+
+[Service]
+User={{ nginx_exporter_user }}
+ExecStart=/opt/nginx_exporter/nginx-prometheus-exporter --nginx.scrape-uri=http://127.0.0.1:{{ nginx_stub_status_port }}/stub_status --web.listen-address={{ mmd_exporter_bind }}:{{ nginx_exporter_port }}
+Restart=always
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

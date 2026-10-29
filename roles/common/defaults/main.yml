@@ -1,0 +1,16 @@
+---
+common_packages:
+  - firewalld
+  - policycoreutils-python-utils
+  - python3-libselinux
+  - chrony
+  - tar
+  - gzip
+  - unzip
+  - openssl
+  - gnupg2
+  - acl
+  - iproute
+  - procps-ng
+# Components counted when deciding whether a server is "all in one".
+common_major_components: [postgresql, mattermost, nginx, rtcd, opensearch, prometheus, grafana]

@@ -1,0 +1,3 @@
+---
+prometheus_user: prometheus
+prometheus_conf_dir: /etc/prometheus

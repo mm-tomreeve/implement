@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: opensearch
+  author: mattermost-implement
+  description: Single-node OpenSearch for Mattermost Enterprise search
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions: [all]
+dependencies: []

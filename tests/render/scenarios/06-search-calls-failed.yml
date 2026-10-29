@@ -1,0 +1,8 @@
+---
+# Render scenario: an answer file plus render_* keys for the fake host.
+render_host: svc01
+render_failed: true
+deploy_name: chat-prod
+deploy_profiles: [search, calls]
+opensearch_allowed_clients: [10.10.1.11]
+rtcd_api_sources: [10.10.1.11]

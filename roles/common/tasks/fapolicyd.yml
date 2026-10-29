@@ -1,0 +1,30 @@
+---
+# Shared helper. STIG-hardened RHEL often runs fapolicyd, which blocks binaries
+# it does not trust. Trust the install directories we create.
+#   fapolicyd_paths: ["/opt/mattermost-12.0.1"]
+- name: Check whether fapolicyd is running
+  ansible.builtin.command: systemctl is-active fapolicyd  # noqa: command-instead-of-module
+  register: _fapolicyd_state
+  changed_when: false
+  failed_when: false
+
+- name: Trust the new install directories
+  when: _fapolicyd_state.stdout == 'active'
+  block:
+    - name: Add paths to the mattermost-implement trust file
+      ansible.builtin.command:
+        argv: [fapolicyd-cli, --file, add, "{{ item }}", --trust-file, mattermost-implement]
+      loop: "{{ fapolicyd_paths }}"
+      register: _fapolicyd_add
+      changed_when: _fapolicyd_add.rc == 0
+      failed_when: false
+
+    - name: Refresh hashes for paths already trusted
+      ansible.builtin.command:
+        argv: [fapolicyd-cli, --file, update, "{{ item }}", --trust-file, mattermost-implement]
+      loop: "{{ fapolicyd_paths }}"
+      changed_when: true
+
+    - name: Reload the fapolicyd trust database
+      ansible.builtin.command: fapolicyd-cli --update
+      changed_when: true

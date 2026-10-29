@@ -1,0 +1,10 @@
+---
+# Render scenario: an answer file plus render_* keys for the fake host.
+render_host: chat01
+render_ram: 8000
+render_cpus: 4
+deploy_name: chat-small
+deploy_profiles: [core]
+mattermost_site_url: http://chat01.example.internal
+mattermost_version_channel: latest-esr
+tls_mode: later

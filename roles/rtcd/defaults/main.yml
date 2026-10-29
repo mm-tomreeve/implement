@@ -1,0 +1,11 @@
+---
+rtcd_user: rtcd
+rtcd_conf_dir: /etc/rtcd
+rtcd_data_dir: /var/lib/rtcd
+rtcd_bin: "{{ rtcd_dir }}/bin/rtcd"
+rtcd_version_bin: "{{ rtcd_dir }}/bin/rtcd-{{ mmd_artifacts.rtcd.version }}"
+# Bigger UDP buffers for media traffic.
+rtcd_sysctl:
+  net.core.rmem_max: 16777216
+  net.core.wmem_max: 16777216
+  net.core.optmem_max: 16777216

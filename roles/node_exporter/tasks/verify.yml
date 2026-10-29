@@ -1,0 +1,20 @@
+---
+- name: Fetch node_exporter metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ node_exporter_port }}/metrics"
+    return_content: true
+    timeout: 10
+  register: _v_ne
+  failed_when: false
+
+- name: Record node_exporter checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    checks:
+      - component: node_exporter
+        name: Host metrics are served
+        severity: warning
+        ok: "{{ _v_ne.status | default(0) == 200 and 'node_load1' in _v_ne.content | default('') }}"
+        detail: "HTTP {{ _v_ne.status | default('none') }} on port {{ node_exporter_port }}"

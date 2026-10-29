@@ -1,0 +1,112 @@
+---
+- name: Test the Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: _v_ngx_test
+  changed_when: false
+  failed_when: false
+
+- name: Probe the Nginx service
+  ansible.builtin.command: systemctl is-active nginx  # noqa: command-instead-of-module
+  register: _v_ngx_service
+  changed_when: false
+  failed_when: false
+
+- name: Request the site over HTTP
+  ansible.builtin.command:
+    argv: [curl, -s, -o, /dev/null, -w, "%{http_code} %{redirect_url}", --max-time, "10",
+           --resolve, "{{ nginx_server_name }}:80:127.0.0.1", "http://{{ nginx_server_name }}/api/v4/system/ping"]
+  register: _v_ngx_http
+  changed_when: false
+  failed_when: false
+
+- name: HTTPS checks
+  when: tls_mode == 'provided'
+  block:
+    - name: Request the site over HTTPS
+      ansible.builtin.command:
+        argv: [curl, -sk, -o, /dev/null, -w, "%{http_code}", --max-time, "10",
+               --resolve, "{{ nginx_server_name }}:443:127.0.0.1", "https://{{ nginx_server_name }}/api/v4/system/ping"]
+      register: _v_ngx_https
+      changed_when: false
+      failed_when: false
+
+    - name: Check certificate expiry (30 days)
+      ansible.builtin.command:
+        argv: [openssl, x509, -in, "{{ tls_install_dir }}/mattermost.crt", -noout, -enddate, -checkend, "2592000"]
+      register: _v_ngx_expiry
+      changed_when: false
+      failed_when: false
+
+    - name: Check the certificate covers the server name
+      ansible.builtin.command:
+        argv: [openssl, x509, -in, "{{ tls_install_dir }}/mattermost.crt", -noout, -checkhost, "{{ nginx_server_name }}"]
+      register: _v_ngx_host
+      changed_when: false
+      failed_when: false
+
+    - name: Read certificate details for the report
+      ansible.builtin.command:
+        argv: [openssl, x509, -in, "{{ tls_install_dir }}/mattermost.crt", -noout, -subject, -issuer, -enddate]
+      register: _v_ngx_certinfo
+      changed_when: false
+      failed_when: false
+
+# The key must decode to exactly 16 bytes or Mattermost rejects the handshake.
+- name: Try a websocket upgrade through the proxy
+  ansible.builtin.command:
+    argv: [curl, -s, -k, -o, /dev/null, -w, "%{http_code}", --max-time, "3", --http1.1,
+           -H, "Connection: Upgrade", -H, "Upgrade: websocket", -H, "Sec-WebSocket-Version: 13",
+           -H, "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+           --resolve, "{{ nginx_server_name }}:{{ _port }}:127.0.0.1",
+           "{{ _scheme }}://{{ nginx_server_name }}/api/v4/websocket"]
+  vars:
+    _scheme: "{{ 'https' if tls_mode == 'provided' else 'http' }}"
+    _port: "{{ '443' if tls_mode == 'provided' else '80' }}"
+  register: _v_ngx_ws
+  changed_when: false
+  failed_when: false
+
+- name: Keep TLS and Nginx details for the report
+  ansible.builtin.set_fact:
+    mmd_versions: "{{ mmd_versions | default({}) | combine({'nginx': _nginx_version | default('unknown')}) }}"
+    mmd_tls_info: "{{ _v_ngx_certinfo.stdout_lines | default([]) }}"
+
+- name: Record Nginx checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _tls: "{{ tls_mode == 'provided' }}"
+    _http_code: "{{ _v_ngx_http.stdout.split(' ')[0] | default('000') }}"
+    checks:
+      - component: nginx
+        name: Configuration passes nginx -t
+        ok: "{{ _v_ngx_test.rc == 0 }}"
+        detail: "{{ _v_ngx_test.stderr_lines | default([]) | last | default('') }}"
+      - component: nginx
+        name: Service is active
+        ok: "{{ _v_ngx_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_ngx_service.stdout }}"
+      - component: nginx
+        name: "{{ 'HTTP redirects to HTTPS' if _tls else 'Mattermost answers over HTTP' }}"
+        ok: "{{ (_http_code in ['301', '308']) if _tls else (_http_code == '200') }}"
+        detail: "HTTP {{ _v_ngx_http.stdout | default('no answer') }}"
+      - component: nginx
+        name: Mattermost answers over HTTPS
+        status: "{{ ('pass' if _v_ngx_https.stdout | default('') == '200' else 'fail') if _tls else 'skip' }}"
+        detail: "{{ ('HTTP ' ~ _v_ngx_https.stdout | default('none')) if _tls else 'TLS not configured yet (tls_mode: later)' }}"
+      - component: nginx
+        name: Certificate valid for at least 30 more days
+        severity: warning
+        status: "{{ ('pass' if _v_ngx_expiry.rc | default(1) == 0 else 'warn') if _tls else 'skip' }}"
+        detail: "{{ (_v_ngx_expiry.stdout_lines | default([]) | first | default('no certificate found')) if _tls else 'TLS not configured yet' }}"
+      - component: nginx
+        name: Certificate matches {{ nginx_server_name }}
+        severity: warning
+        status: "{{ ('pass' if 'does match' in _v_ngx_host.stdout | default('') else 'warn') if _tls else 'skip' }}"
+        detail: "{{ _v_ngx_host.stdout | default('n/a') | trim if _tls else 'TLS not configured yet' }}"
+      - component: nginx
+        name: Websocket upgrade reaches Mattermost
+        severity: warning
+        ok: "{{ _v_ngx_ws.stdout | default('') == '101' }}"
+        detail: "HTTP {{ _v_ngx_ws.stdout | default('none') }} from /api/v4/websocket"

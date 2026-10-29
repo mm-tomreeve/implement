@@ -1,0 +1,43 @@
+---
+- name: Install baseline packages
+  ansible.builtin.dnf:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Refresh network facts now iproute is present
+  ansible.builtin.setup:
+    gather_subset: [network]
+
+- name: Keep firewalld running
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+  when: firewall_manage | bool
+
+- name: Keep time in sync
+  ansible.builtin.systemd:
+    name: chronyd
+    state: started
+    enabled: true
+
+- name: Make sure /etc/sysctl.d exists (missing on some minimal images)
+  ansible.builtin.file:
+    path: /etc/sysctl.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create deployer state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ deploy_state_dir }}"
+    - "{{ deploy_state_dir }}/results"
+    - "{{ deploy_state_dir }}/reports"
+    - "{{ artifact_cache_dir }}"

@@ -1,0 +1,49 @@
+---
+# Shared helper for the single-binary monitoring components.
+# Unpacks an artifact into /opt/<name>-<version> and points /opt/<name> at it.
+#   tb_name:     prometheus
+#   tb_artifact: "{{ mmd_artifacts.prometheus }}"
+#   tb_user:     prometheus
+#   tb_strip:    1 (0 for tarballs with no top-level directory)
+# Sets tb_changed so the caller can restart its service.
+- name: "{{ tb_name }} | create the service user"
+  ansible.builtin.user:
+    name: "{{ tb_user }}"
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+
+- name: "{{ tb_name }} | create the version directory"
+  ansible.builtin.file:
+    path: "/opt/{{ tb_name }}-{{ tb_artifact.version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "{{ tb_name }} | unpack {{ tb_artifact.version }}"
+  ansible.builtin.unarchive:
+    src: "{{ tb_artifact.path }}"
+    dest: "/opt/{{ tb_name }}-{{ tb_artifact.version }}"
+    remote_src: true
+    extra_opts: ["--strip-components={{ tb_strip | default(1) }}"]
+    owner: root
+    group: root
+    creates: "/opt/{{ tb_name }}-{{ tb_artifact.version }}/{{ tb_creates | default(tb_name) }}"
+
+- name: "{{ tb_name }} | trust the install for fapolicyd"
+  ansible.builtin.include_tasks: fapolicyd.yml
+  vars:
+    fapolicyd_paths: ["/opt/{{ tb_name }}-{{ tb_artifact.version }}/"]
+
+- name: "{{ tb_name }} | point /opt/{{ tb_name }} at this version"
+  ansible.builtin.file:
+    src: "/opt/{{ tb_name }}-{{ tb_artifact.version }}"
+    dest: "/opt/{{ tb_name }}"
+    state: link
+    force: true
+  register: _tb_link
+
+- name: "{{ tb_name }} | tell the caller whether anything changed"
+  ansible.builtin.set_fact:
+    tb_changed: "{{ _tb_link is changed }}"

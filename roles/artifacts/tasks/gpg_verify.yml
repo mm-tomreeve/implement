@@ -1,0 +1,35 @@
+---
+# Check a detached signature against a key we ship in the repo. Trust comes from
+# the key and fingerprint in this repo, never from the download source.
+- name: Create a throwaway GnuPG home
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: -mmd-gnupg
+  register: _gnupg_home
+  changed_when: false
+
+- name: Import the vendor key
+  ansible.builtin.command:
+    argv: [gpg, --batch, --homedir, "{{ _gnupg_home.path }}", --import, "{{ _gpg_key }}"]
+  changed_when: false
+
+- name: Verify the signature
+  ansible.builtin.command:
+    argv: [gpg, --batch, --homedir, "{{ _gnupg_home.path }}", --status-fd, "1", --verify, "{{ _gpg_sig }}", "{{ _gpg_file }}"]
+  register: _gpg_out
+  changed_when: false
+  failed_when: false
+
+- name: Check the primary key fingerprint
+  ansible.builtin.set_fact:
+    _gpg_ok: >-
+      {{ _gpg_out.rc == 0 and (_gpg_out.stdout_lines
+          | select('match', '^\[GNUPG:\] VALIDSIG ')
+          | map('split') | map('last') | map('upper') | list
+          | intersect([_gpg_fpr | upper]) | length > 0) }}
+
+- name: Remove the GnuPG home
+  ansible.builtin.file:
+    path: "{{ _gnupg_home.path }}"
+    state: absent
+  changed_when: false

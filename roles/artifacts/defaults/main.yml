@@ -1,0 +1,17 @@
+---
+# Components that ship as tarballs or binaries. PostgreSQL and Nginx come from dnf.
+artifacts_tarball_components:
+  - mattermost
+  - rtcd
+  - opensearch
+  - prometheus
+  - node_exporter
+  - postgres_exporter
+  - grafana
+  - nginx_exporter
+  - opensearch_exporter
+  - blackbox_exporter
+# Artifacts that must carry a valid GPG signature when artifact_require_signature is on.
+artifacts_signed:
+  - mattermost
+  - opensearch

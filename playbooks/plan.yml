@@ -1,0 +1,21 @@
+---
+# Read-only. Shows what would be installed and any colocation or sizing advice.
+# install.sh runs this before asking for confirmation.
+- name: Plan a Mattermost deployment on this server
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: Work out the plan
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: plan
+
+    - name: Write the plan for the wrapper
+      ansible.builtin.copy:
+        dest: "{{ plan_output_file }}"
+        mode: "0600"
+        content: >-
+          {{ {'components': mmd_selected, 'profiles': mmd_profiles_used, 'findings': mmd_findings,
+              'sizing': mmd_sizing, 'tls_mode': tls_mode, 'site_url': mattermost_site_url,
+              'online': deploy_online | bool, 'artifact_source': artifact_source} | to_nice_json }}
+      when: plan_output_file is defined

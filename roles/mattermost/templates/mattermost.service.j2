@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Mattermost
+After=network.target{{ ' postgresql.service' if mmd_db_local else '' }}{{ ' opensearch.service' if 'opensearch' in mmd_selected else '' }}
+{% if mmd_db_local %}
+BindsTo=postgresql.service
+{% endif %}
+
+[Service]
+Type=notify
+ExecStart={{ mattermost_dir }}/bin/mattermost
+TimeoutStartSec=3600
+KillMode=mixed
+Restart=always
+RestartSec=10
+WorkingDirectory={{ mattermost_dir }}
+User={{ mattermost_user }}
+Group={{ mattermost_group }}
+LimitNOFILE=49152
+# Config lives outside the versioned install so upgrades are a symlink swap.
+Environment=MM_CONFIG={{ mattermost_config_dir }}/config.json
+# Logs live outside the install directory too, so tell Mattermost where the log root is.
+Environment=MM_LOG_PATH={{ mattermost_log_dir }}
+
+[Install]
+WantedBy=multi-user.target

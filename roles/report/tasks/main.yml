@@ -1,0 +1,50 @@
+---
+- name: Ensure the report directory exists
+  ansible.builtin.file:
+    path: "{{ report_dir }}"
+    state: directory
+    owner: "{{ report_owner }}"
+    group: "{{ report_group }}"
+    mode: "0750"
+
+- name: Read the answer file for the appendix
+  ansible.builtin.slurp:
+    path: "{{ mmd_answers_file }}"
+  register: _report_answers_raw
+  failed_when: false
+  when: mmd_answers_file is defined and mmd_answers_file | length > 0
+  no_log: true
+
+- name: Redact the answer file
+  ansible.builtin.set_fact:
+    _report_answers: >-
+      {%- set src = (_report_answers_raw.content | b64decode | from_yaml) if (_report_answers_raw.content is defined) else {} -%}
+      {%- set out = {} -%}
+      {%- for k, v in (src or {}).items() -%}
+      {%-   set _ = out.update({k: ('<redacted>' if (k is search(report_redact_pattern) and v) else v)}) -%}
+      {%- endfor -%}
+      {{ out }}
+  no_log: true
+
+- name: Work out risks the report should call out
+  ansible.builtin.set_fact:
+    _report_risks: "{{ lookup('ansible.builtin.template', 'risks.yml.j2') | from_yaml }}"
+
+- name: Set the report path
+  ansible.builtin.set_fact:
+    mmd_report_path: "{{ report_dir }}/ARCHITECTURE-{{ ansible_facts['hostname'] }}-{{ mmd_run_id }}.md"
+
+- name: Write the architecture document
+  ansible.builtin.template:
+    src: architecture.md.j2
+    dest: "{{ mmd_report_path }}"
+    owner: "{{ report_owner }}"
+    group: "{{ report_group }}"
+    mode: "0640"
+
+- name: Point latest.md at this report
+  ansible.builtin.file:
+    src: "{{ mmd_report_path }}"
+    dest: "{{ report_dir }}/latest.md"
+    state: link
+    force: true

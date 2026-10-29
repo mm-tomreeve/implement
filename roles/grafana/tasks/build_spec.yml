@@ -1,0 +1,28 @@
+---
+# Describe the estate for tools/observability.py. Shared by install and verify.
+- name: Describe the estate for the alert and dashboard builder
+  ansible.builtin.set_fact:
+    _obs_spec:
+      deployment: "{{ deploy_name }}"
+      site_url: "{{ monitoring_site_url if 'blackbox_exporter' in mmd_selected else '' }}"
+      servers: "{{ mmd_estate | default([]) }}"
+      datasource_uid: "{{ grafana_datasource_uid }}"
+      folder: "{{ grafana_alert_folder }}"
+      overrides: "{{ monitoring_alert_overrides }}"
+      disabled: "{{ monitoring_alerts_disabled }}"
+      params:
+        db_name: "{{ mattermost_db_name }}"
+        mm_max_conns: 300
+
+- name: Run the builder
+  ansible.builtin.command:
+    argv: [/usr/bin/python3, -I, "{{ mmd_repo_dir }}/tools/observability.py", build]
+    stdin: "{{ _obs_spec | to_json }}"
+  register: _obs_raw
+  changed_when: false
+  check_mode: false
+
+- name: Keep what the builder produced
+  ansible.builtin.set_fact:
+    _obs_files: "{{ (_obs_raw.stdout | from_json).files }}"
+    mmd_observability: "{{ (_obs_raw.stdout | from_json).summary }}"

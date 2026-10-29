@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+local   all             postgres                                peer
+local   all             all                                     peer
+host    {{ mattermost_db_name }}  {{ mattermost_db_user }}  127.0.0.1/32  scram-sha-256
+host    {{ mattermost_db_name }}  {{ mattermost_db_user }}  ::1/128       scram-sha-256
+{% for client in postgresql_allowed_clients %}
+{{ 'hostssl' if mmd_postgresql_ssl | bool else 'host   ' }} {{ mattermost_db_name }}  {{ mattermost_db_user }}  {{ client if '/' in client else client ~ ('/128' if ':' in client else '/32') }}  scram-sha-256
+{% endfor %}

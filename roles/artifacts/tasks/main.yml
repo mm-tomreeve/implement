@@ -1,0 +1,73 @@
+---
+- name: Work out whether this server needs any downloads
+  ansible.builtin.set_fact:
+    _artifacts_needed: "{{ mmd_selected | intersect(artifacts_tarball_components) }}"
+    mmd_artifacts: {}
+
+- name: Stop when offline and no artifact source is set
+  ansible.builtin.assert:
+    that:
+      - artifact_source | length > 0 or deploy_online | bool
+    fail_msg: >-
+      This server has no internet access and artifact_source is empty.
+      Build a bundle with tools/build-offline-bundle.sh and pass --offline-dir,
+      or set artifact_source in the answer file.
+  when: _artifacts_needed | length > 0
+
+- name: Resolve artifacts
+  when: _artifacts_needed | length > 0
+  block:
+    - name: Ensure the artifact cache exists
+      ansible.builtin.file:
+        path: "{{ artifact_cache_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Ask the resolver what to fetch
+      ansible.builtin.command:
+        argv: "{{ _resolver_argv }}"
+      vars:
+        _pins:
+          rtcd: "{{ rtcd_version }}"
+          opensearch: "{{ opensearch_version }}"
+          prometheus: "{{ prometheus_version }}"
+          node_exporter: "{{ node_exporter_version }}"
+          postgres_exporter: "{{ postgres_exporter_version }}"
+          grafana: "{{ grafana_version }}"
+          nginx_exporter: "{{ nginx_exporter_version }}"
+          opensearch_exporter: "{{ opensearch_exporter_version }}"
+          blackbox_exporter: "{{ blackbox_exporter_version }}"
+        _pin_args: >-
+          {%- set out = [] -%}{%- for k, v in _pins.items() -%}{%- set _ = out.append('--version=' ~ k ~ '=' ~ v) -%}{%- endfor -%}{{ out }}
+        _resolver_argv: >-
+          {{ ['/usr/bin/python3', '-I', mmd_repo_dir ~ '/tools/resolve_versions.py', 'resolve',
+              '--components', _artifacts_needed | join(','),
+              '--arch', mmd_arch,
+              '--mattermost-edition', mattermost_edition,
+              '--mattermost-channel', mattermost_version_channel,
+              '--mattermost-version', mattermost_version]
+             + _pin_args
+             + (['--source', artifact_source] if artifact_source | length > 0 else []) }}
+      register: _resolved
+      changed_when: false
+      check_mode: false
+
+    - name: Keep the resolver output
+      ansible.builtin.set_fact:
+        _resolved_artifacts: "{{ (_resolved.stdout | from_json).artifacts }}"
+        mmd_artifact_mode: "{{ (_resolved.stdout | from_json).mode }}"
+        mmd_artifact_warnings: "{{ (_resolved.stdout | from_json).warnings }}"
+
+    - name: Show resolver warnings
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      loop: "{{ mmd_artifact_warnings }}"
+
+    - name: Fetch and verify each artifact
+      ansible.builtin.include_tasks: fetch_one.yml
+      loop: "{{ _resolved_artifacts | dict2items }}"
+      loop_control:
+        loop_var: _art_item
+        label: "{{ _art_item.key }} {{ _art_item.value.version }}"

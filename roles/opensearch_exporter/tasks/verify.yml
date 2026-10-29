@@ -1,0 +1,20 @@
+---
+- name: Fetch OpenSearch exporter metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ opensearch_exporter_port }}/metrics"
+    return_content: true
+    timeout: 15
+  register: _v_ose
+  failed_when: false
+
+- name: Record opensearch_exporter checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    checks:
+      - component: opensearch_exporter
+        name: Exporter reads cluster health
+        severity: warning
+        ok: "{{ _v_ose.content | default('') is search('(?m)^elasticsearch_clusterinfo_up\\S* 1') }}"
+        detail: "HTTP {{ _v_ose.status | default('none') }} on port {{ opensearch_exporter_port }}"

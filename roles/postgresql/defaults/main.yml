@@ -1,0 +1,7 @@
+---
+postgresql_packages:
+  - postgresql-server
+  - postgresql-contrib
+postgresql_initdb_options: "--encoding=UTF8 --locale=C.UTF-8 --auth-local=peer --auth-host=scram-sha-256"
+postgresql_work_mem: 16MB
+postgresql_random_page_cost: 1.1

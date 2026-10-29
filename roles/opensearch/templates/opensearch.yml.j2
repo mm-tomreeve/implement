@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+cluster.name: {{ deploy_name }}-search
+node.name: {{ ansible_facts['hostname'] }}
+path.data: {{ opensearch_data_dir }}
+path.logs: {{ opensearch_log_dir }}
+network.host: {{ '0.0.0.0' if opensearch_allowed_clients | length > 0 else '127.0.0.1' }}
+http.port: {{ opensearch_port }}
+discovery.type: single-node
+bootstrap.memory_lock: false
+
+{% if mmd_opensearch_security | bool %}
+plugins.security.ssl.transport.pemcert_filepath: certs/node.pem
+plugins.security.ssl.transport.pemkey_filepath: certs/node-key.pem
+plugins.security.ssl.transport.pemtrustedcas_filepath: certs/root-ca.pem
+plugins.security.ssl.transport.enforce_hostname_verification: false
+plugins.security.ssl.http.enabled: true
+plugins.security.ssl.http.pemcert_filepath: certs/node.pem
+plugins.security.ssl.http.pemkey_filepath: certs/node-key.pem
+plugins.security.ssl.http.pemtrustedcas_filepath: certs/root-ca.pem
+plugins.security.allow_default_init_securityindex: true
+plugins.security.authcz.admin_dn:
+  - "{{ opensearch_admin_dn }}"
+plugins.security.nodes_dn:
+  - "{{ opensearch_node_dn }}"
+plugins.security.restapi.roles_enabled: ["all_access", "security_rest_api_access"]
+plugins.security.system_indices.enabled: true
+{% else %}
+# Bound to localhost with no remote clients, so the security plugin is off.
+# Add opensearch_allowed_clients to turn on TLS and authentication.
+plugins.security.disabled: true
+{% endif %}

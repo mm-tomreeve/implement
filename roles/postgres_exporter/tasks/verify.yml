@@ -1,0 +1,20 @@
+---
+- name: Fetch postgres_exporter metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_exporter_port }}/metrics"
+    return_content: true
+    timeout: 10
+  register: _v_pge
+  failed_when: false
+
+- name: Record postgres_exporter checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    checks:
+      - component: postgres_exporter
+        name: Exporter is connected to PostgreSQL (pg_up 1)
+        severity: warning
+        ok: "{{ _v_pge.content | default('') is search('(?m)^pg_up 1') }}"
+        detail: "HTTP {{ _v_pge.status | default('none') }} on port {{ postgres_exporter_port }}"

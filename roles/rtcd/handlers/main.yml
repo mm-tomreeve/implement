@@ -1,0 +1,6 @@
+---
+- name: Restart rtcd
+  ansible.builtin.systemd:
+    name: rtcd
+    state: restarted
+    daemon_reload: true

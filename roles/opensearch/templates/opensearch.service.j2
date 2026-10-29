@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+[Unit]
+Description=OpenSearch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ opensearch_user }}
+Group={{ opensearch_user }}
+Environment=OPENSEARCH_HOME={{ opensearch_dir }}
+Environment=OPENSEARCH_PATH_CONF={{ opensearch_conf_dir }}
+Environment=OPENSEARCH_JAVA_HOME={{ opensearch_dir }}/jdk
+Environment=OPENSEARCH_TMPDIR={{ opensearch_data_dir }}/tmp
+WorkingDirectory={{ opensearch_dir }}
+ExecStart={{ opensearch_dir }}/bin/opensearch
+LimitNOFILE=65535
+LimitNPROC=4096
+LimitAS=infinity
+LimitFSIZE=infinity
+TimeoutStartSec=300
+TimeoutStopSec=120
+KillSignal=SIGTERM
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

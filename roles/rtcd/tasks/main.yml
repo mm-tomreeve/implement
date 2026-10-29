@@ -1,0 +1,111 @@
+---
+- name: Create the rtcd user
+  ansible.builtin.user:
+    name: "{{ rtcd_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ rtcd_data_dir }}"
+    create_home: false
+
+- name: Create rtcd directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ rtcd_user }}"
+    mode: "0750"
+  loop:
+    - {path: "{{ rtcd_dir }}/bin", owner: root}
+    - {path: "{{ rtcd_conf_dir }}", owner: root}
+    - {path: "{{ rtcd_data_dir }}", owner: "{{ rtcd_user }}"}
+
+- name: Install rtcd {{ mmd_artifacts.rtcd.version }}
+  ansible.builtin.copy:
+    src: "{{ mmd_artifacts.rtcd.path }}"
+    dest: "{{ rtcd_version_bin }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Trust the binary for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: fapolicyd
+  vars:
+    fapolicyd_paths: ["{{ rtcd_version_bin }}"]
+
+- name: Point rtcd at this version
+  ansible.builtin.file:
+    src: "{{ rtcd_version_bin }}"
+    dest: "{{ rtcd_bin }}"
+    state: link
+    force: true
+  notify: Restart rtcd
+
+- name: Tune UDP buffers for media
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-rtcd.conf
+    state: present
+    reload: true
+  loop: "{{ rtcd_sysctl | dict2items }}"
+  register: _sysctl_result
+  failed_when: _sysctl_result is failed and not (mmd_in_container | bool)
+
+- name: Write the rtcd config
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: "{{ rtcd_conf_dir }}/config.toml"
+    owner: root
+    group: "{{ rtcd_user }}"
+    mode: "0640"
+  notify: Restart rtcd
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: rtcd.service.j2
+    dest: /etc/systemd/system/rtcd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart rtcd
+
+- name: Enable and start rtcd
+  ansible.builtin.systemd:
+    name: rtcd
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Open the media port to clients
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports:
+      - {port: "{{ rtcd_rtc_port }}", proto: udp}
+      - {port: "{{ rtcd_rtc_port }}", proto: tcp}
+    fw_public: true
+
+- name: Open the API to Mattermost and Prometheus servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ rtcd_api_port }}", proto: tcp}]
+    fw_sources: "{{ (rtcd_api_sources + monitoring_scrape_sources) | unique }}"
+    fw_public: false
+  when: (rtcd_api_sources + monitoring_scrape_sources) | length > 0
+
+- name: Wait for the rtcd API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ rtcd_api_port }}/version"
+  register: _rtcd_up
+  until: _rtcd_up.status == 200
+  retries: 12
+  delay: 5

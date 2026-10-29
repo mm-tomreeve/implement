@@ -1,0 +1,8 @@
+---
+node_exporter_user: node_exporter
+node_exporter_collectors: [systemd]
+# The systemd collector only reports the units Mattermost Implement cares about.
+node_exporter_units: [mattermost, postgresql, nginx, rtcd, opensearch, prometheus, grafana, node_exporter,
+                      postgres_exporter, nginx_exporter, opensearch_exporter, blackbox_exporter, chronyd]
+# firewalld is only watched when we manage it; otherwise "not running" may be deliberate.
+node_exporter_watched_units: "{{ node_exporter_units + (['firewalld'] if firewall_manage | bool else []) }}"

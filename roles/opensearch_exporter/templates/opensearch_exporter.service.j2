@@ -1,0 +1,23 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Prometheus exporter for OpenSearch
+After=network-online.target opensearch.service
+
+[Service]
+User={{ opensearch_exporter_user }}
+EnvironmentFile={{ opensearch_exporter_conf_dir }}/env
+ExecStart=/opt/opensearch_exporter/elasticsearch_exporter \
+  --es.uri={{ 'https' if mmd_opensearch_security else 'http' }}://127.0.0.1:{{ opensearch_port }} \
+{% if mmd_opensearch_security %}
+  --es.ca={{ opensearch_exporter_conf_dir }}/ca.pem \
+{% endif %}
+  --es.indices \
+  --es.timeout=10s \
+  --web.listen-address={{ mmd_exporter_bind }}:{{ opensearch_exporter_port }}
+Restart=always
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

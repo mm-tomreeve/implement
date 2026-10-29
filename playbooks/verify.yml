@@ -1,0 +1,23 @@
+---
+# Re-run the post-deploy tests and refresh the report without changing anything.
+- name: Verify the Mattermost components on this server
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: Work out the plan
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: plan
+
+    - name: Load secrets
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: secrets
+
+    - name: Load the saved deployment state
+      ansible.builtin.include_tasks: tasks/load_state.yml
+
+    - name: Verify and report
+      ansible.builtin.include_tasks: tasks/finish.yml
+      vars:
+        mmd_skip_state_save: true

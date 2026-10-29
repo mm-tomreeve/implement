@@ -1,0 +1,182 @@
+---
+- name: Work out the JVM heap
+  ansible.builtin.set_fact:
+    _os_heap_mb: >-
+      {{ opensearch_heap_mb if opensearch_heap_mb != 'auto'
+         else [[(ansible_facts['memtotal_mb'] * (25 if 'mattermost' in mmd_selected else 50) / 100) | int, 512] | max, 31744] | min }}
+
+- name: Raise vm.max_map_count for OpenSearch
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "262144"
+    sysctl_file: /etc/sysctl.d/60-opensearch.conf
+    state: present
+    reload: true
+  register: _sysctl_result
+  failed_when: _sysctl_result is failed and not (mmd_in_container | bool)
+
+- name: Create the opensearch user
+  ansible.builtin.user:
+    name: "{{ opensearch_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ opensearch_data_dir }}"
+    create_home: false
+
+- name: Create OpenSearch directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    mode: "0750"
+  loop:
+    - "{{ opensearch_version_dir }}"
+    - "{{ opensearch_conf_dir }}"
+    - "{{ opensearch_data_dir }}"
+    - "{{ opensearch_data_dir }}/tmp"
+    - "{{ opensearch_log_dir }}"
+
+- name: Unpack OpenSearch {{ mmd_artifacts.opensearch.version }}
+  ansible.builtin.unarchive:
+    src: "{{ mmd_artifacts.opensearch.path }}"
+    dest: "{{ opensearch_version_dir }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    creates: "{{ opensearch_version_dir }}/bin/opensearch"
+
+- name: Trust the install for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: fapolicyd
+  vars:
+    fapolicyd_paths: ["{{ opensearch_version_dir }}/"]
+
+- name: Point {{ opensearch_dir }} at this version
+  ansible.builtin.file:
+    src: "{{ opensearch_version_dir }}"
+    dest: "{{ opensearch_dir }}"
+    state: link
+    force: true
+  notify: Restart opensearch
+
+- name: Look for an existing config directory
+  ansible.builtin.stat:
+    path: "{{ opensearch_conf_dir }}/jvm.options"
+  register: _os_conf
+
+- name: Seed {{ opensearch_conf_dir }} from the tarball
+  ansible.builtin.copy:
+    src: "{{ opensearch_version_dir }}/config/"
+    dest: "{{ opensearch_conf_dir }}/"
+    remote_src: true
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+  when: not _os_conf.stat.exists
+
+- name: Install the analysis-icu plugin
+  ansible.builtin.command:
+    argv: ["{{ opensearch_version_dir }}/bin/opensearch-plugin", install, --batch, "file://{{ mmd_artifacts.opensearch_icu.path }}"]
+    creates: "{{ opensearch_version_dir }}/plugins/analysis-icu"
+  environment: "{{ opensearch_env }}"
+  notify: Restart opensearch
+
+- name: Make plugin files readable by OpenSearch
+  ansible.builtin.file:
+    path: "{{ opensearch_version_dir }}/plugins"
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    recurse: true
+
+- name: Set up the security plugin
+  ansible.builtin.include_tasks: security.yml
+  when: mmd_opensearch_security | bool
+
+- name: Write opensearch.yml
+  ansible.builtin.template:
+    src: opensearch.yml.j2
+    dest: "{{ opensearch_conf_dir }}/opensearch.yml"
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    mode: "0640"
+  notify: Restart opensearch
+
+- name: Set the JVM heap
+  ansible.builtin.copy:
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      -Xms{{ _os_heap_mb }}m
+      -Xmx{{ _os_heap_mb }}m
+    dest: "{{ opensearch_conf_dir }}/jvm.options.d/heap.options"
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    mode: "0640"
+  notify: Restart opensearch
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: opensearch.service.j2
+    dest: /etc/systemd/system/opensearch.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart opensearch
+
+- name: Enable and start OpenSearch
+  ansible.builtin.systemd:
+    name: opensearch
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Open OpenSearch to the Mattermost servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ opensearch_port }}", proto: tcp}]
+    fw_sources: "{{ opensearch_allowed_clients }}"
+    fw_public: false
+  when: opensearch_allowed_clients | length > 0
+
+- name: Wait for the cluster to come up
+  ansible.builtin.uri:
+    url: "{{ 'https' if mmd_opensearch_security else 'http' }}://127.0.0.1:{{ opensearch_port }}/_cluster/health"
+    user: "{{ 'admin' if mmd_opensearch_security else omit }}"
+    password: "{{ mmd_secrets.opensearch_admin_password if mmd_opensearch_security else omit }}"
+    force_basic_auth: "{{ mmd_opensearch_security | bool }}"
+    validate_certs: false
+  register: _os_up
+  until: _os_up.status == 200
+  retries: 36
+  delay: 5
+  no_log: true
+
+- name: Push changed users into the security index
+  ansible.builtin.command:
+    argv:
+      - bash
+      - "{{ opensearch_dir }}/plugins/opensearch-security/tools/securityadmin.sh"
+      - -f
+      - "{{ opensearch_conf_dir }}/opensearch-security/internal_users.yml"
+      - -t
+      - internalusers
+      - -icl
+      - -nhnv
+      - -h
+      - 127.0.0.1
+      - -cacert
+      - "{{ opensearch_cert_dir }}/root-ca.pem"
+      - -cert
+      - "{{ opensearch_cert_dir }}/admin.pem"
+      - -key
+      - "{{ opensearch_cert_dir }}/admin-key.pem"
+  environment: "{{ opensearch_env }}"
+  when:
+    - mmd_opensearch_security | bool
+    - _os_users is changed

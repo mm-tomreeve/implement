@@ -1,0 +1,54 @@
+---
+# One place that decides how the pieces on this server reach each other and the
+# pieces on other servers. Roles and the report read these facts.
+- name: Decide local versus remote wiring
+  ansible.builtin.set_fact:
+    mmd_db_local: "{{ 'postgresql' in mmd_selected }}"
+    mmd_db_host: "{{ mattermost_db_host if mattermost_db_host | length > 0 else '127.0.0.1' }}"
+    mmd_postgresql_listen: "{{ '*' if postgresql_allowed_clients | length > 0 else 'localhost' }}"
+    mmd_postgresql_ssl: >-
+      {{ (postgresql_allowed_clients | length > 0) if postgresql_ssl == 'auto' else postgresql_ssl | bool }}
+    mmd_mattermost_listen: >-
+      {{ mattermost_listen_address if mattermost_listen_address != 'auto'
+         else ('127.0.0.1' if ('nginx' in mmd_selected and mattermost_proxy_sources | length == 0) else '0.0.0.0') }}
+    mmd_nginx_upstreams: >-
+      {{ nginx_upstreams if nginx_upstreams | length > 0 else ['127.0.0.1:' ~ mattermost_port] }}
+    mmd_rtcd_url: >-
+      {{ mattermost_rtcd_url if mattermost_rtcd_url | length > 0
+         else ('http://127.0.0.1:' ~ rtcd_api_port if 'rtcd' in mmd_selected else '') }}
+    mmd_opensearch_security: "{{ opensearch_allowed_clients | length > 0 }}"
+    mmd_prometheus_url: >-
+      {{ grafana_prometheus_url if grafana_prometheus_url | length > 0 else 'http://127.0.0.1:' ~ prometheus_port }}
+    mmd_exporter_bind: "{{ '0.0.0.0' if monitoring_scrape_sources | length > 0 else '127.0.0.1' }}"
+    mmd_tls_enabled: "{{ 'nginx' in mmd_selected and tls_mode == 'provided' }}"
+    mmd_mattermost_metrics: "{{ mattermost_edition == 'enterprise' }}"
+    # Containers can't set host-wide kernel tunables. We still try, but don't fail.
+    mmd_in_container: >-
+      {{ ansible_facts['virtualization_role'] | default('') == 'guest'
+         and ansible_facts['virtualization_type'] | default('') in ['docker', 'podman', 'container', 'containerd', 'lxc'] }}
+
+- name: Describe the estate the monitoring server watches
+  ansible.builtin.set_fact:
+    mmd_estate: >-
+      {{ (monitoring_estate | rejectattr('name', 'equalto', ansible_facts['hostname']) | list)
+         + [{'name': ansible_facts['hostname'], 'address': '127.0.0.1',
+             'components': mmd_selected | intersect(['mattermost', 'nginx', 'postgresql', 'rtcd', 'opensearch', 'prometheus', 'grafana'])}] }}
+  when: "'prometheus' in mmd_selected or 'grafana' in mmd_selected"
+
+- name: Derive the settings that depend on the facts above
+  ansible.builtin.set_fact:
+    mmd_db_sslmode: >-
+      {{ mattermost_db_sslmode if mattermost_db_sslmode != 'auto'
+         else ('disable' if mmd_db_host in ['127.0.0.1', 'localhost', '::1'] else 'require') }}
+    mmd_calls_integrated: >-
+      {{ 'mattermost' in mmd_selected and mattermost_calls_integrated | bool and mmd_rtcd_url | length == 0 }}
+    mmd_opensearch_url: >-
+      {{ mattermost_opensearch_url if mattermost_opensearch_url | length > 0
+         else ((('https' if mmd_opensearch_security else 'http') ~ '://127.0.0.1:' ~ opensearch_port)
+               if 'opensearch' in mmd_selected else '') }}
+    # Source of the CA Mattermost should trust for OpenSearch. The mattermost role
+    # adds it to the system trust store, which Mattermost (Go) reads.
+    mmd_opensearch_ca_src: >-
+      {{ mattermost_opensearch_ca_file if mattermost_opensearch_ca_file | length > 0
+         else (opensearch_conf_dir ~ '/certs/root-ca.pem'
+               if ('opensearch' in mmd_selected and mmd_opensearch_security) else '') }}

@@ -1,0 +1,74 @@
+---
+# Renders the plan logic and the architecture report for one scenario using
+# made-up facts and results, so template and wiring mistakes show up without a
+# RHEL server. tests/render/run.sh runs every scenario.
+- name: Render a sample architecture report
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Fake the host facts
+      fake_facts:
+        facts:
+          fqdn: "{{ render_host }}.example.internal"
+          hostname: "{{ render_host }}"
+          os_family: RedHat
+          distribution: RedHat
+          distribution_version: "{{ render_os | default('9.6') }}"
+          distribution_major_version: "{{ (render_os | default('9.6')).split('.')[0] }}"
+          architecture: x86_64
+          kernel: 5.14.0-570.el9.x86_64
+          memtotal_mb: "{{ render_ram | default(16000) | int }}"
+          processor_vcpus: "{{ render_cpus | default(8) | int }}"
+          default_ipv4: {address: 10.10.1.20}
+          all_ipv4_addresses: [10.10.1.20]
+          selinux: {status: enabled}
+
+    - name: Run the plan
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: plan
+
+    - name: Fake what an install would have produced
+      ansible.builtin.set_fact:
+        mmd_secrets: {db_password: x, opensearch_admin_password: x, opensearch_mattermost_password: x, grafana_admin_password: x}
+        mmd_artifact_mode: online
+        mmd_artifact_warnings: []
+        mmd_artifacts: >-
+          {%- set out = {} -%}{%- for c in mmd_selected if c not in ['postgresql', 'nginx'] -%}
+          {%- set _ = out.update({c: {'name': c, 'version': '1.2.3', 'filename': c ~ '-1.2.3-linux-amd64.tar.gz',
+                'sha256': 'ab' * 32, 'checksum_verified': true, 'checksum_source': 'github-asset-digest',
+                'signature': 'verified' if c in ['mattermost', 'opensearch'] else 'not published',
+                'gpg_fingerprint': 'A1B31D46F0F3A10B02CF2D44F8F2C31744774B28', 'esr': true}}) -%}{%- endfor -%}{{ out }}
+        mmd_versions: "{{ dict(mmd_selected | zip(mmd_selected | map('regex_replace', '^.*$', '1.2.3'))) }}"
+        mmd_results:
+          - {component: host, name: SELinux is enforcing, severity: warning, status: pass, detail: getenforce says Enforcing}
+          - {component: mattermost, name: API ping returns OK, severity: critical, status: pass, detail: "HTTP 200, status OK"}
+          - {component: nginx, name: Websocket upgrade reaches Mattermost, severity: warning, status: warn, detail: "HTTP 400 | pipe in detail"}
+          - {component: nginx, name: Mattermost answers over HTTPS, severity: critical, status: skip, detail: TLS not configured yet}
+        mmd_host_firewall: ["public (active)", "  services: ssh", "  ports: 80/tcp 443/tcp"]
+        mmd_host_selinux: Enforcing
+        mmd_host_disk: ["/ 34", "/var/lib/pgsql 12"]
+        mmd_tls_info: ["subject=CN = chat.example.com", "issuer=CN = Example CA", "notAfter=Oct 28 00:00:00 2027 GMT"]
+        mmd_deploy_failed: "{{ render_failed | default(false) }}"
+        mmd_deploy_error: "Unpack Mattermost: example failure"
+
+    - name: Build the alert and dashboard summary when Grafana is here
+      ansible.builtin.include_role:
+        name: grafana
+        tasks_from: build_spec
+      when: "'grafana' in mmd_selected"
+
+    - name: Pretend nobody has added a contact point yet
+      ansible.builtin.set_fact:
+        mmd_results: "{{ mmd_results + [{'component': 'grafana', 'name': 'Somewhere for alerts to go', 'severity': 'info', 'status': 'warn', 'detail': 'placeholder only'}] }}"
+      when: "'grafana' in mmd_selected"
+
+    - name: Write the report
+      ansible.builtin.include_role:
+        name: report
+
+    - name: Keep a copy under the scenario name
+      ansible.builtin.copy:
+        src: "{{ mmd_report_path }}"
+        dest: "{{ render_out }}/{{ render_name }}.md"
+        mode: "0644"

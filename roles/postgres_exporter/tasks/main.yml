@@ -1,0 +1,68 @@
+---
+- name: Install postgres_exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: tarball_install
+  vars:
+    tb_name: postgres_exporter
+    tb_artifact: "{{ mmd_artifacts.postgres_exporter }}"
+    tb_user: "{{ postgres_exporter_user }}"
+
+- name: Restart when the version changed
+  ansible.builtin.debug:
+    msg: "postgres_exporter now points at {{ mmd_artifacts.postgres_exporter.version }}"
+  changed_when: tb_changed | bool
+  notify: Restart postgres_exporter
+
+# The OS user and the database role share a name, so the default peer rule in
+# pg_hba.conf lets the exporter in over the socket without a password.
+- name: Create the monitoring database role
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -v, ON_ERROR_STOP=1, -p, "{{ postgresql_port }}", -d, postgres]
+    stdin: |
+      SELECT format('CREATE ROLE %I LOGIN', '{{ postgres_exporter_user }}') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ postgres_exporter_user }}')\gexec
+      GRANT pg_monitor TO {{ postgres_exporter_user }};
+  register: _pge_sql
+  changed_when: "'CREATE ROLE' in _pge_sql.stdout"
+
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/postgres_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      [Unit]
+      Description=Prometheus postgres_exporter
+      After=network-online.target postgresql.service
+
+      [Service]
+      User={{ postgres_exporter_user }}
+      Environment=DATA_SOURCE_NAME=postgresql:///postgres?host=/var/run/postgresql&port={{ postgresql_port }}&sslmode=disable
+      ExecStart=/opt/postgres_exporter/postgres_exporter --web.listen-address={{ mmd_exporter_bind }}:{{ postgres_exporter_port }}
+      Restart=always
+      NoNewPrivileges=true
+      ProtectSystem=full
+      ProtectHome=true
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart postgres_exporter
+
+- name: Enable and start postgres_exporter
+  ansible.builtin.systemd:
+    name: postgres_exporter
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Open the exporter to Prometheus servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ postgres_exporter_port }}", proto: tcp}]
+    fw_sources: "{{ monitoring_scrape_sources }}"
+    fw_public: false
+  when: monitoring_scrape_sources | length > 0

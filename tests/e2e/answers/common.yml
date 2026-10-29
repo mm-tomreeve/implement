@@ -1,0 +1,16 @@
+---
+# Shared by every e2e server. Containers can't run firewalld or SELinux, and the
+# Docker VM's RAM would make the auto-sizing far too greedy, so we pin things down.
+deploy_name: e2e
+deploy_internet: auto
+firewall_manage: false
+selinux_manage: false
+mattermost_edition: enterprise
+mattermost_version_channel: latest-esr
+mattermost_db_password: E2eDbPassw0rd
+mattermost_opensearch_password: E2eSearchPassw0rd
+opensearch_admin_password: E2eAdminPassw0rd
+opensearch_heap_mb: 512
+grafana_admin_password: E2eGrafanaPassw0rd
+deploy_monitoring_exporters: true
+monitoring_scrape_sources: [172.30.10.15]

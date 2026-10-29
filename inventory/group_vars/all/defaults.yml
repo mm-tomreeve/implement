@@ -1,0 +1,189 @@
+---
+# Defaults for every setting the answer file can override.
+# The answer file is passed with -e @answers.yml, so anything set there wins.
+# answers.example.yml documents each setting for operators.
+
+# ---------------------------------------------------------------- deployment
+deploy_name: mattermost
+deploy_profiles: []
+deploy_components: []
+# Install node_exporter (and postgres_exporter where PostgreSQL is local) so a
+# Prometheus server can scrape this host. Always on when Prometheus is local.
+deploy_monitoring_exporters: false
+# Set by install.sh after it has tested connectivity. Do not set by hand.
+deploy_online: false
+deploy_state_dir: /var/lib/mattermost-implement
+deploy_config_dir: /etc/mattermost-implement
+deploy_tool_version: unknown
+deploy_operator: "{{ lookup('ansible.builtin.env', 'SUDO_USER') | default('root', true) }}"
+# Firewalld and SELinux handling.
+firewall_manage: true
+firewall_zone: public
+selinux_manage: true
+
+# ---------------------------------------------------------------- artifacts
+# Offline directory or internal mirror URL. When set it is always used, even if
+# the server can reach the internet.
+artifact_source: ""
+artifact_cache_dir: /var/cache/mattermost-implement
+# Refuse a Mattermost or OpenSearch tarball whose GPG signature cannot be checked.
+artifact_require_signature: true
+# Allow artifacts with no published or bundled checksum. Leave this off.
+artifact_allow_unverified: false
+
+# ---------------------------------------------------------------- mattermost
+mattermost_edition: enterprise            # enterprise | team
+mattermost_version_channel: latest-stable # latest-stable | latest-esr | pinned
+mattermost_version: ""                    # required when the channel is pinned
+mattermost_sha256: ""                     # optional extra check for a pinned build
+mattermost_gpg_fingerprint: A1B31D46F0F3A10B02CF2D44F8F2C31744774B28
+mattermost_site_url: "https://{{ ansible_facts['fqdn'] }}"
+mattermost_user: mattermost
+mattermost_group: mattermost
+mattermost_install_root: /opt
+mattermost_dir: /opt/mattermost
+mattermost_config_dir: /etc/mattermost
+mattermost_data_dir: /var/opt/mattermost/data
+mattermost_plugin_dir: /var/opt/mattermost/plugins
+mattermost_client_plugin_dir: /var/opt/mattermost/client-plugins
+mattermost_log_dir: /var/log/mattermost
+mattermost_port: 8065
+# auto = 127.0.0.1 when Nginx is on this host and no remote proxies are listed.
+mattermost_listen_address: auto
+# Remote reverse proxies allowed to reach port 8065 (CIDRs or IPs).
+mattermost_proxy_sources: []
+mattermost_metrics_port: 8067
+mattermost_license_file: ""
+# Turn on OpenSearch indexing and searching. Needs an Enterprise licence.
+mattermost_search_enable: "{{ mattermost_license_file | length > 0 }}"
+# Extra settings deep-merged into config.json last.
+mattermost_config_overrides: {}
+# Open 8443 udp/tcp for the built-in Calls media server when no rtcd is used.
+mattermost_calls_integrated: true
+mattermost_calls_port: 8443
+
+# Database as Mattermost sees it. The PostgreSQL role uses the same values.
+mattermost_db_host: ""          # blank = local PostgreSQL
+mattermost_db_port: 5432
+mattermost_db_name: mattermost
+mattermost_db_user: mmuser
+mattermost_db_password: ""      # blank = generated and stored in secrets.yml
+mattermost_db_sslmode: auto     # auto = disable locally, require for remote
+
+# File storage. We consume storage, we do not build it.
+mattermost_file_driver: local   # local | amazons3
+mattermost_s3_endpoint: ""      # host[:port], no scheme
+mattermost_s3_bucket: ""
+mattermost_s3_region: ""
+mattermost_s3_access_key: ""
+mattermost_s3_secret_key: ""
+mattermost_s3_ssl: true
+mattermost_s3_path_prefix: ""
+
+# Remote services Mattermost should use when they are not on this host.
+mattermost_rtcd_url: ""         # e.g. http://rtcd01.internal:8045
+mattermost_opensearch_url: ""   # e.g. https://search01.internal:9200
+mattermost_opensearch_username: mattermost
+mattermost_opensearch_password: ""
+mattermost_opensearch_ca_file: ""
+
+# ---------------------------------------------------------------- postgresql
+postgresql_version: "16"
+postgresql_port: "{{ mattermost_db_port }}"
+# Mattermost app servers allowed to connect (CIDRs). Empty = localhost only.
+postgresql_allowed_clients: []
+postgresql_max_connections: 300
+# auto = on when remote clients are allowed (self-signed certificate).
+postgresql_ssl: auto
+postgresql_data_dir: /var/lib/pgsql/data
+# Share of RAM for shared_buffers and effective_cache_size. Lower when Mattermost shares the box.
+postgresql_shared_buffers_pct: "{{ 15 if 'mattermost' in mmd_selected else 25 }}"
+postgresql_effective_cache_pct: "{{ 50 if 'mattermost' in mmd_selected else 75 }}"
+
+# ---------------------------------------------------------------- nginx / tls
+nginx_server_name: "{{ mattermost_site_url | urlsplit('hostname') }}"
+# Mattermost app servers behind this proxy (host:port). Blank = local Mattermost.
+nginx_upstreams: []
+nginx_client_max_body_size: 100M
+nginx_hsts: false
+nginx_ssl_protocols: TLSv1.2 TLSv1.3
+nginx_cache_dir: /var/cache/nginx/mattermost
+nginx_module_stream: ""          # RHEL 9 only, e.g. "1.24". Blank = default stream.
+tls_mode: later                  # provided | later
+tls_cert_file: ""                # PEM certificate (full chain preferred)
+tls_key_file: ""
+tls_chain_file: ""               # optional intermediates if not in the cert file
+tls_source_dir: ""               # or a directory holding <server_name>.crt/.key or tls.crt/tls.key
+tls_install_dir: /etc/pki/tls/mattermost
+
+# ---------------------------------------------------------------- rtcd
+rtcd_version: latest
+rtcd_dir: /opt/rtcd
+rtcd_api_port: 8045
+rtcd_rtc_port: 8443
+rtcd_ice_host_override: ""       # public IP or name clients use to reach rtcd
+# Mattermost servers allowed to reach the rtcd API. Empty = localhost only.
+rtcd_api_sources: []
+
+# ---------------------------------------------------------------- opensearch
+opensearch_version: "2.19.7"
+opensearch_gpg_fingerprint: C5B7498965EFD1C2924BA9D539D319879310D3FC
+opensearch_dir: /opt/opensearch
+opensearch_conf_dir: /etc/opensearch
+opensearch_data_dir: /var/lib/opensearch
+opensearch_log_dir: /var/log/opensearch
+opensearch_port: 9200
+opensearch_heap_mb: auto
+# Mattermost servers allowed to connect. Non-empty turns the security plugin on.
+opensearch_allowed_clients: []
+opensearch_admin_password: ""
+
+# ---------------------------------------------------------------- monitoring
+prometheus_version: "3.15.1"
+prometheus_port: 9090
+prometheus_retention: 15d
+prometheus_scrape_interval: 30s
+prometheus_data_dir: /var/lib/prometheus
+# Extra jobs: [{job: name, targets: ["host:port"], metrics_path: /metrics, scheme: http}]
+prometheus_scrape_targets: []
+# Hosts allowed to reach the Prometheus UI/API. Empty = localhost only.
+prometheus_allowed_sources: []
+node_exporter_version: "1.12.1"
+node_exporter_port: 9100
+postgres_exporter_version: "0.20.1"
+postgres_exporter_port: 9187
+# Prometheus servers allowed to scrape exporters and Mattermost metrics here.
+monitoring_scrape_sources: []
+nginx_exporter_version: "1.5.3"
+nginx_exporter_port: 9113
+nginx_stub_status_port: 81           # http_port_t in SELinux, bound to 127.0.0.1 only
+opensearch_exporter_version: "1.11.0"
+opensearch_exporter_port: 9114
+blackbox_exporter_version: "0.29.1"
+blackbox_exporter_port: 9115
+grafana_version: "13.3.0"
+grafana_port: 3000
+grafana_admin_password: ""
+grafana_prometheus_url: ""       # blank = local Prometheus
+# Hosts allowed to reach Grafana. Empty = open to all (Grafana has its own login).
+grafana_allowed_sources: []
+
+# ---------------------------------------------------------------- estate monitoring
+# On the monitoring server: every server in the Mattermost estate and what it runs.
+# Prometheus jobs, health checks, alert rules and dashboards are all built from this.
+# This server is added automatically.
+#   - {name: app01, address: 10.10.1.12, components: [mattermost, nginx]}
+#   - {name: db01, address: 10.10.1.11, components: [postgresql]}
+monitoring_estate: []
+# Build the tiered alert rules and the dashboards in Grafana.
+monitoring_alerts_enabled: true
+monitoring_dashboards_enabled: true
+# URL users use. The monitoring server checks <url>/api/v4/system/ping from outside.
+monitoring_site_url: "{{ mattermost_site_url if 'mattermost' in (mmd_selected | default([])) else '' }}"
+# Check the site's certificate against the system trust store (plus the CA file below).
+monitoring_site_tls_verify: true
+monitoring_site_ca_file: ""
+# Per-rule changes, e.g. {disk-used: {tiers: {warning: 85}}, cpu-busy: {for: 30m}}.
+# A tier set to null is switched off. Rule ids are listed in docs/alerts.md.
+monitoring_alert_overrides: {}
+monitoring_alerts_disabled: []

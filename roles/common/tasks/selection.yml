@@ -1,0 +1,43 @@
+---
+- name: Normalise the requested profiles and components
+  ansible.builtin.set_fact:
+    _req_profiles: >-
+      {{ (deploy_profiles.split(',') if deploy_profiles is string else deploy_profiles)
+         | map('trim') | reject('equalto', '') | list }}
+    _req_components: >-
+      {{ (deploy_components.split(',') if deploy_components is string else deploy_components)
+         | map('trim') | reject('equalto', '') | list }}
+
+- name: Reject unknown profiles or components
+  ansible.builtin.assert:
+    that:
+      - _req_profiles | difference(mmd_profiles.keys() | list) | length == 0
+      - _req_components | difference(mmd_component_order) | length == 0
+      - (_req_profiles + _req_components) | length > 0
+    fail_msg: >-
+      Nothing valid to install. Unknown profiles: {{ _req_profiles | difference(mmd_profiles.keys() | list) }},
+      unknown components: {{ _req_components | difference(mmd_component_order) }}.
+      Profiles: {{ mmd_profiles.keys() | list | join(', ') }}.
+      Components: {{ mmd_component_order | join(', ') }}.
+    quiet: true
+
+- name: Expand profiles into components
+  ansible.builtin.set_fact:
+    _base_selection: >-
+      {{ ((_req_profiles | map('extract', mmd_profiles) | map(attribute='components') | flatten)
+          + _req_components) | unique }}
+
+- name: Add exporters where monitoring needs them
+  ansible.builtin.set_fact:
+    _with_exporters: "{{ deploy_monitoring_exporters | bool or 'prometheus' in _base_selection }}"
+
+- name: Settle the final component list in install order
+  ansible.builtin.set_fact:
+    mmd_selected: >-
+      {{ mmd_component_order | select('in', _base_selection
+           + (['node_exporter'] if _with_exporters else [])
+           + (['postgres_exporter'] if _with_exporters and 'postgresql' in _base_selection else [])
+           + (['nginx_exporter'] if _with_exporters and 'nginx' in _base_selection else [])
+           + (['opensearch_exporter'] if _with_exporters and 'opensearch' in _base_selection else [])
+           + (['blackbox_exporter'] if 'prometheus' in _base_selection else [])) | list }}
+    mmd_profiles_used: "{{ _req_profiles }}"

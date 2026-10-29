@@ -1,0 +1,93 @@
+---
+- name: Enable the requested Nginx module stream (RHEL 9)
+  ansible.builtin.command: dnf -y module enable nginx:{{ nginx_module_stream }}
+  register: _nginx_module
+  changed_when: "'Nothing to do' not in _nginx_module.stdout"
+  when:
+    - ansible_facts['distribution_major_version'] == '9'
+    - nginx_module_stream | length > 0
+
+- name: Install Nginx
+  ansible.builtin.dnf:
+    name: nginx
+    state: present
+
+- name: Read the Nginx version
+  ansible.builtin.command: nginx -v
+  register: _nginx_version_out
+  changed_when: false
+
+- name: Work out version-specific syntax
+  ansible.builtin.set_fact:
+    _nginx_version: "{{ _nginx_version_out.stderr | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') }}"
+    _nginx_http2_on: "{{ (_nginx_version_out.stderr | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+')) is version('1.25.1', '>=') }}"
+
+- name: Let Nginx connect to upstream services (SELinux)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: true
+    persistent: true
+  when:
+    - selinux_manage | bool
+    - ansible_facts['selinux']['status'] | default('disabled') == 'enabled'
+
+- name: Create the proxy cache directory
+  ansible.builtin.file:
+    path: "{{ nginx_cache_dir }}"
+    state: directory
+    owner: nginx
+    group: nginx
+    mode: "0700"
+
+- name: Install TLS material
+  ansible.builtin.include_tasks: tls.yml
+  when: tls_mode == 'provided'
+
+- name: Write the Mattermost site and roll back if Nginx rejects it
+  block:
+    - name: Write the Mattermost site
+      ansible.builtin.template:
+        src: mattermost.conf.j2
+        dest: "{{ nginx_conf_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      register: _ngx_site
+      notify: Reload nginx
+
+    - name: Test the new configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+  rescue:
+    - name: Put the previous site back
+      ansible.builtin.copy:
+        src: "{{ _ngx_site.backup_file }}"
+        dest: "{{ nginx_conf_file }}"
+        remote_src: true
+        mode: "0644"
+      when: _ngx_site.backup_file is defined
+
+    - name: Remove the new site when there was nothing before
+      ansible.builtin.file:
+        path: "{{ nginx_conf_file }}"
+        state: absent
+      when: _ngx_site.backup_file is not defined
+
+    - name: Stop with the Nginx error
+      ansible.builtin.fail:
+        msg: "nginx -t rejected the generated config, so it was rolled back. Run nginx -t to see why."
+
+- name: Enable and start Nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: Open HTTP and HTTPS
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: "{{ [{'port': 80, 'proto': 'tcp'}] + ([{'port': 443, 'proto': 'tcp'}] if tls_mode == 'provided' else []) }}"
+    fw_public: true

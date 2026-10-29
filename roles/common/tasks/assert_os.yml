@@ -1,0 +1,27 @@
+---
+- name: Require RHEL 9 or 10 (or a rebuild)
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'RedHat'
+      - ansible_facts['distribution_major_version'] in ['9', '10']
+      - ansible_facts['architecture'] in ['x86_64', 'aarch64']
+    fail_msg: >-
+      This toolkit supports RHEL 9 and 10 on x86_64 or aarch64. Found
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+      on {{ ansible_facts['architecture'] }}.
+    quiet: true
+
+- name: Note when this is not Red Hat Enterprise Linux itself
+  ansible.builtin.debug:
+    msg: >-
+      {{ ansible_facts['distribution'] }} is not RHEL. It should work, but Mattermost
+      support is written against RHEL, so test before you rely on it.
+  when: ansible_facts['distribution'] != 'RedHat'
+
+- name: Record run metadata
+  ansible.builtin.set_fact:
+    mmd_run_id: "{{ deploy_run_id | default(lookup('ansible.builtin.pipe', 'date -u +%Y%m%dT%H%M%SZ'), true) }}"
+    mmd_run_started: "{{ lookup('ansible.builtin.pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+    mmd_repo_dir: "{{ role_path | dirname | dirname }}"
+    mmd_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
+  when: mmd_run_id is not defined

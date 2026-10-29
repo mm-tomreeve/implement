@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: node_exporter
+  author: mattermost-implement
+  description: Prometheus node_exporter for host metrics
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions: [all]
+dependencies: []

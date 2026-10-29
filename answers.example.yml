@@ -1,0 +1,151 @@
+---
+# Example answer file for install.sh.
+#
+# Copy it, change what you need and run:
+#   sudo ./install.sh --answers my-answers.yml
+#
+# Anything you leave out takes the default from inventory/group_vars/all/defaults.yml.
+# Running install.sh without --answers asks these questions interactively and saves
+# the result to /etc/mattermost-implement/answers.yml.
+#
+# Passwords left blank are generated on first run and kept in
+# /etc/mattermost-implement/secrets.yml (root only). On a split deployment, copy the
+# database password from the database server's secrets.yml into the app server's
+# answer file.
+
+# ---------------------------------------------------------------- this server
+deploy_name: chat-prod
+
+# Profiles: core, app, database, calls, search, monitoring, all-in-one.
+# You can stack them, but one job per server is what we recommend for production.
+# The installer warns when it thinks you've put too much on one box.
+deploy_profiles: [core]
+
+# Extra components on top of the profiles, or instead of them:
+# postgresql, mattermost, nginx, rtcd, opensearch, prometheus, grafana,
+# node_exporter, postgres_exporter
+deploy_components: []
+
+# Where installers come from. Setting these here means install.sh doesn't ask.
+#   auto  check the vendor sites (README lists them) and download if they all answer;
+#         with artifact_source set, use that instead
+#   yes   don't check, just download
+#   no    no internet: use artifact_source (install.sh asks for it if it's empty)
+# Leave deploy_internet out to be asked, interactively, before anything is checked.
+deploy_internet: auto
+
+# ---------------------------------------------------------------- where artifacts come from
+# Blank: download from the vendors (needs internet).
+# A directory or http(s) URL: use an offline bundle built by tools/build-offline-bundle.sh.
+# A directory you filled by hand works too, as long as the file names match the vendors'.
+artifact_source: ""
+
+# Leave these on. They stop the install if a Mattermost or OpenSearch tarball
+# can't be checked against its signature, or anything lacks a checksum.
+artifact_require_signature: true
+artifact_allow_unverified: false
+
+# ---------------------------------------------------------------- mattermost
+mattermost_site_url: https://chat.example.com
+mattermost_edition: enterprise          # enterprise | team
+# latest-esr is the safer choice for most customers. latest-stable gets new
+# features monthly. pinned installs exactly mattermost_version.
+mattermost_version_channel: latest-esr
+mattermost_version: ""                  # e.g. 11.7.14 when pinned
+mattermost_sha256: ""                   # optional extra check for a pinned build
+mattermost_license_file: ""             # path on this server, e.g. /root/mattermost.mattermost-license
+
+# File storage. We consume storage, we don't build it: local disk, an NFS mount
+# at mattermost_data_dir, or an S3 bucket someone else runs.
+mattermost_file_driver: local           # local | amazons3
+mattermost_data_dir: /var/opt/mattermost/data
+mattermost_s3_endpoint: ""              # host[:port], no scheme
+mattermost_s3_bucket: ""
+mattermost_s3_region: ""
+mattermost_s3_access_key: ""
+mattermost_s3_secret_key: ""
+mattermost_s3_ssl: true
+
+# Only needed when PostgreSQL is on another server.
+mattermost_db_host: ""
+mattermost_db_port: 5432
+mattermost_db_name: mattermost
+mattermost_db_user: mmuser
+mattermost_db_password: ""
+mattermost_db_sslmode: auto             # auto = disable locally, require for remote
+
+# Only needed when these run on other servers.
+mattermost_rtcd_url: ""                 # e.g. http://calls01.internal:8045
+mattermost_opensearch_url: ""           # e.g. https://search01.internal:9200
+mattermost_opensearch_password: ""      # the 'mattermost' user on the search server
+mattermost_opensearch_ca_file: ""       # copy of root-ca.pem from the search server
+
+# Reverse proxies on other servers allowed to reach Mattermost on 8065.
+# Leave empty when Nginx is on this server.
+mattermost_proxy_sources: []
+
+# Arbitrary config.json settings, merged in last. Keys are case-sensitive.
+mattermost_config_overrides: {}
+#  TeamSettings:
+#    SiteName: Chat
+#  EmailSettings:
+#    SMTPServer: smtp.example.com
+
+# ---------------------------------------------------------------- postgresql
+postgresql_version: "16"
+# Mattermost app servers allowed to connect when the database has its own server.
+# Setting this also turns on TLS with a self-signed certificate.
+postgresql_allowed_clients: []          # e.g. ["10.10.1.11", "10.10.1.12"]
+postgresql_max_connections: 300
+
+# ---------------------------------------------------------------- nginx and tls
+# provided: use the certificate and key below.
+# later:    serve plain HTTP for now and add TLS on a later run.
+tls_mode: later
+tls_cert_file: ""                       # PEM, full chain preferred
+tls_key_file: ""
+tls_chain_file: ""                      # only if the chain is not in tls_cert_file
+# Or point at a directory with <server name>.crt/.key or tls.crt/tls.key in it.
+tls_source_dir: ""
+nginx_hsts: false                       # turn on once you're sure TLS is staying
+# Mattermost app servers behind this proxy. Leave empty when Mattermost is local.
+nginx_upstreams: []                     # e.g. ["10.10.1.11:8065", "10.10.1.12:8065"]
+
+# ---------------------------------------------------------------- calls (rtcd)
+rtcd_version: latest
+# The address clients use to reach this server. Needed behind NAT or a load
+# balancer, otherwise calls connect with no audio.
+rtcd_ice_host_override: ""
+# Mattermost servers allowed to use the rtcd API (8045).
+rtcd_api_sources: []
+
+# ---------------------------------------------------------------- opensearch
+opensearch_version: "2.19.7"
+opensearch_heap_mb: auto
+# Mattermost servers allowed to connect. Setting this turns on TLS and
+# authentication with a CA generated on this server.
+opensearch_allowed_clients: []
+opensearch_admin_password: ""
+
+# ---------------------------------------------------------------- monitoring
+# Add node_exporter (and postgres_exporter where PostgreSQL runs) so a Prometheus
+# on another server can scrape this one.
+deploy_monitoring_exporters: false
+monitoring_scrape_sources: []           # Prometheus servers allowed to scrape here
+
+prometheus_retention: 15d
+prometheus_allowed_sources: []          # who can reach the Prometheus UI (default: localhost only)
+# Other servers to scrape from this Prometheus.
+prometheus_scrape_targets: []
+#  - {job: node, targets: ["db01.internal:9100", "app01.internal:9100"]}
+#  - {job: mattermost, targets: ["app01.internal:8067"]}
+#  - {job: postgres, targets: ["db01.internal:9187"]}
+
+grafana_admin_password: ""
+grafana_prometheus_url: ""              # only when Prometheus is on another server
+grafana_allowed_sources: []             # default: open to all, Grafana has its own login
+
+# ---------------------------------------------------------------- host
+firewall_manage: true
+firewall_zone: public
+selinux_manage: true

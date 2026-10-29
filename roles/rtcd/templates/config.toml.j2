@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+[api]
+http.listen_address = "{{ '127.0.0.1' if (rtcd_api_sources + monitoring_scrape_sources) | length == 0 else '' }}:{{ rtcd_api_port }}"
+http.tls.enable = false
+http.tls.cert_file = ""
+http.tls.cert_key = ""
+# Mattermost registers itself on first contact. Only the servers in
+# rtcd_api_sources can reach this port, so self-registration is safe here.
+security.allow_self_registration = true
+security.enable_admin = false
+security.admin_secret_key = ""
+security.session_cache.expiration_minutes = 1440
+
+[rtc]
+ice_address_udp = ""
+ice_port_udp = {{ rtcd_rtc_port }}
+ice_address_tcp = ""
+ice_port_tcp = {{ rtcd_rtc_port }}
+enable_ipv6 = false
+ice_host_override = "{{ rtcd_ice_host_override }}"
+ice_servers = []
+turn.static_auth_secret = ""
+turn.credentials_expiration_minutes = 1440
+
+[store]
+data_source = "{{ rtcd_data_dir }}/db"
+
+[logger]
+enable_console = true
+console_json = false
+console_level = "INFO"
+enable_file = false
+file_json = true
+file_level = "INFO"
+file_location = "{{ rtcd_data_dir }}/rtcd.log"
+enable_color = false

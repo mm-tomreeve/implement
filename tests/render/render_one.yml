@@ -1,0 +1,64 @@
+---
+- name: "{{ scenario_file | basename }} | load the scenario"
+  ansible.builtin.include_vars:
+    file: "{{ scenario_file }}"
+    name: scenario
+
+- name: "{{ scenario_file | basename }} | fake the host facts"
+  fake_facts:
+    facts:
+      fqdn: "{{ scenario.host }}.example.internal"
+      hostname: "{{ scenario.host }}"
+      os_family: RedHat
+      distribution: RedHat
+      distribution_version: "{{ scenario.os | default('9.6') }}"
+      distribution_major_version: "{{ (scenario.os | default('9.6')).split('.')[0] }}"
+      architecture: x86_64
+      kernel: 5.14.0-570.el9.x86_64
+      memtotal_mb: "{{ scenario.ram | default(16000) }}"
+      processor_vcpus: "{{ scenario.cpus | default(8) }}"
+      default_ipv4: {address: 10.10.1.20}
+      all_ipv4_addresses: [10.10.1.20]
+      selinux: {status: enabled}
+
+- name: "{{ scenario_file | basename }} | run the plan with the scenario answers"
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: plan
+  vars: "{{ scenario.answers }}"
+
+- name: "{{ scenario_file | basename }} | fake what an install would have produced"
+  ansible.builtin.set_fact:
+    mmd_run_id: "render-{{ scenario_file | basename | splitext | first }}"
+    mmd_secrets: {db_password: x, opensearch_admin_password: x, opensearch_mattermost_password: x, grafana_admin_password: x}
+    mmd_artifact_mode: online
+    mmd_artifact_warnings: []
+    mmd_artifacts: >-
+      {% set out = {} %}{% for c in mmd_selected if c not in ['postgresql', 'nginx'] %}
+      {% set _ = out.update({c: {'name': c, 'version': '1.2.3', 'filename': c ~ '-1.2.3-linux-amd64.tar.gz',
+            'sha256': 'ab' * 32, 'checksum_verified': true, 'checksum_source': 'github-asset-digest',
+            'signature': 'verified' if c in ['mattermost', 'opensearch'] else 'not published',
+            'gpg_fingerprint': 'A1B31D46F0F3A10B02CF2D44F8F2C31744774B28', 'esr': true}}) %}{% endfor %}{{ out }}
+    mmd_versions: "{{ dict(mmd_selected | zip(mmd_selected | map('regex_replace', '.*', '1.2.3'))) }}"
+    mmd_results:
+      - {component: host, name: SELinux is enforcing, severity: warning, status: pass, detail: getenforce says Enforcing}
+      - {component: mattermost, name: API ping returns OK, severity: critical, status: pass, detail: "HTTP 200, status OK"}
+      - {component: nginx, name: Websocket upgrade reaches Mattermost, severity: warning, status: warn, detail: "HTTP 400 | odd"}
+      - {component: nginx, name: Mattermost answers over HTTPS, severity: critical, status: skip, detail: TLS not configured yet}
+    mmd_host_firewall: ["public (active)", "  services: ssh", "  ports: 80/tcp 443/tcp"]
+    mmd_host_selinux: Enforcing
+    mmd_host_disk: ["/ 34", "/var/lib/pgsql 12"]
+    mmd_tls_info: ["subject=CN = chat.example.com", "issuer=CN = Example CA", "notAfter=Oct 28 00:00:00 2027 GMT"]
+    mmd_deploy_failed: "{{ scenario.failed | default(false) }}"
+    mmd_deploy_error: "Install Mattermost: example failure"
+
+- name: "{{ scenario_file | basename }} | write the report"
+  ansible.builtin.include_role:
+    name: report
+  vars: "{{ scenario.answers | combine({'deploy_state_dir': render_out ~ '/state', 'deploy_config_dir': render_out ~ '/state'}) }}"
+
+- name: "{{ scenario_file | basename }} | keep a copy under a readable name"
+  ansible.builtin.copy:
+    src: "{{ mmd_report_path }}"
+    dest: "{{ render_out }}/{{ scenario_file | basename | splitext | first }}.md"
+    mode: "0644"

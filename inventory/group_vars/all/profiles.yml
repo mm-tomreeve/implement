@@ -1,0 +1,40 @@
+---
+# Named stacks. A server can take more than one profile, plus extra components.
+# install.sh shows these in its menu; tests/test_repo_consistency.py keeps the two in step.
+mmd_profiles:
+  core:
+    description: PostgreSQL, Mattermost and Nginx on one server. Fine for small teams.
+    components: [postgresql, mattermost, nginx]
+  app:
+    description: Mattermost application server with its Nginx proxy.
+    components: [mattermost, nginx]
+  database:
+    description: Dedicated PostgreSQL server for Mattermost.
+    components: [postgresql]
+  calls:
+    description: Dedicated Calls media server (rtcd).
+    components: [rtcd]
+  search:
+    description: Dedicated OpenSearch node for Enterprise search.
+    components: [opensearch]
+  monitoring:
+    description: Prometheus and Grafana with the Mattermost dashboards.
+    components: [prometheus, grafana]
+  all-in-one:
+    description: Everything on one box. Lab and proof-of-concept use only.
+    components: [postgresql, mattermost, nginx, rtcd, opensearch, prometheus, grafana]
+
+# Install order. Things other components depend on come first.
+mmd_component_order:
+  - postgresql
+  - opensearch
+  - rtcd
+  - mattermost
+  - nginx
+  - node_exporter
+  - postgres_exporter
+  - nginx_exporter
+  - opensearch_exporter
+  - blackbox_exporter
+  - prometheus
+  - grafana

@@ -1,0 +1,136 @@
+---
+- name: Probe the Grafana service
+  ansible.builtin.command: systemctl is-active grafana  # noqa: command-instead-of-module
+  register: _v_gf_service
+  changed_when: false
+  failed_when: false
+
+- name: Ask Grafana for its health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/health"
+    return_content: true
+    timeout: 10
+  register: _v_gf_health
+  failed_when: false
+
+- name: Ask Grafana whether the datasource works
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/datasources/uid/{{ grafana_datasource_uid }}/health"
+    user: admin
+    password: "{{ mmd_secrets.grafana_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    timeout: 15
+  register: _v_gf_ds
+  failed_when: false
+  no_log: true
+
+- name: Count the Mattermost dashboards
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/search?type=dash-db&query=Mattermost"
+    user: admin
+    password: "{{ mmd_secrets.grafana_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    timeout: 10
+  register: _v_gf_dash
+  failed_when: false
+  no_log: true
+
+- name: Work out which rules and dashboards should exist
+  ansible.builtin.include_tasks: build_spec.yml
+
+- name: Count the provisioned alert rules
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/v1/provisioning/alert-rules"
+    user: admin
+    password: "{{ mmd_secrets.grafana_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    timeout: 15
+  register: _v_gf_rules
+  failed_when: false
+  no_log: true
+
+- name: Count the generated dashboards
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/search?type=dash-db&tag=mattermost-implement"
+    user: admin
+    password: "{{ mmd_secrets.grafana_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    timeout: 10
+  register: _v_gf_mmi
+  failed_when: false
+  no_log: true
+
+- name: List contact points
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/v1/provisioning/contact-points"
+    user: admin
+    password: "{{ mmd_secrets.grafana_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    timeout: 10
+  register: _v_gf_cps
+  failed_when: false
+  no_log: true
+
+- name: Keep the Grafana version for the report
+  ansible.builtin.set_fact:
+    mmd_versions: "{{ mmd_versions | default({}) | combine({'grafana': _v_gf_health.json.version | default('unknown')}) }}"
+
+- name: Record Grafana checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    # Older Grafana ships a placeholder email contact point and 13 an empty one; anything else is real.
+    _real_contact_points: >-
+      {%- set n = namespace(c=0) -%}
+      {%- for cp in _v_gf_cps.json | default([]) -%}
+      {%-   if cp.type != 'email' or (cp.settings.addresses | default('')) != '<example@email.com>' -%}{%- set n.c = n.c + 1 -%}{%- endif -%}
+      {%- endfor -%}{{ n.c }}
+    checks:
+      - component: grafana
+        name: Service is active
+        ok: "{{ _v_gf_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_gf_service.stdout }}"
+      - component: grafana
+        name: Health endpoint reports ok
+        ok: "{{ _v_gf_health.json.database | default('') == 'ok' }}"
+        detail: "HTTP {{ _v_gf_health.status | default('none') }}, version {{ _v_gf_health.json.version | default('unknown') }}"
+      - component: grafana
+        name: Prometheus datasource answers
+        severity: warning
+        ok: "{{ _v_gf_ds.status | default(0) == 200 }}"
+        detail: >-
+          {{ 'datasource ' ~ mmd_prometheus_url ~ ' OK' if _v_gf_ds.status | default(0) == 200
+             else 'HTTP ' ~ (_v_gf_ds.status | default('none')) ~ ' (401 means the admin password was changed in the UI)' }}
+      - component: grafana
+        name: Estate alert rules are loaded
+        status: >-
+          {{ 'skip' if not (monitoring_alerts_enabled | bool)
+             else ('pass' if (_v_gf_rules.json | default([]) | selectattr('labels.mmi_rule', 'defined') | list | length) == mmd_observability.rules else 'fail') }}
+        detail: >-
+          {{ (_v_gf_rules.json | default([]) | selectattr('labels.mmi_rule', 'defined') | list | length) }} of {{ mmd_observability.rules }} rules
+          ({{ mmd_observability.by_severity.critical }} critical, {{ mmd_observability.by_severity.warning }} warning,
+          {{ mmd_observability.by_severity.info }} info) from {{ mmd_observability.checks }} checks
+      - component: grafana
+        name: Estate dashboards are loaded
+        status: >-
+          {{ 'skip' if not (monitoring_dashboards_enabled | bool)
+             else ('pass' if (_v_gf_mmi.json | default([]) | length) == (mmd_observability.dashboards | length) else 'warn') }}
+        detail: "{{ _v_gf_mmi.json | default([]) | length }} of {{ mmd_observability.dashboards | length }}: {{ mmd_observability.dashboards | join(', ') }}"
+      - component: grafana
+        name: Somewhere for alerts to go
+        severity: info
+        ok: "{{ _real_contact_points | int > 0 }}"
+        detail: >-
+          {{ (_real_contact_points ~ ' contact point(s) configured') if _real_contact_points | int > 0
+             else 'none yet, only the empty default Grafana ships with; add one under Alerting > Contact points and route on the severity label' }}
+      - component: grafana
+        name: Mattermost dashboards are loaded
+        severity: warning
+        ok: "{{ _v_gf_dash.json | default([]) | length > 0 }}"
+        detail: "{{ _v_gf_dash.json | default([]) | length }} dashboards in the Mattermost folder"

@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: grafana
+  author: mattermost-implement
+  description: Grafana OSS with a provisioned Prometheus datasource and Mattermost dashboards
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions: [all]
+dependencies: []

@@ -1,0 +1,9 @@
+---
+mattermost_local_socket: /var/tmp/mattermost_local.socket
+mattermost_version_dir: "{{ mattermost_install_root }}/mattermost-{{ mmd_artifacts.mattermost.version }}"
+# Mattermost reads ElasticsearchSettings.CA through its file store (local dir or S3),
+# so we trust the search CA at the OS level instead and leave that setting empty.
+mattermost_opensearch_ca_dest: /etc/pki/ca-trust/source/anchors/mattermost-implement-opensearch.pem
+mattermost_license_dest: "{{ mattermost_config_dir }}/mattermost.mattermost-license"
+# First start runs schema migrations, which can take a while on a big database.
+mattermost_start_wait_seconds: 600

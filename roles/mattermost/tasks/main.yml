@@ -1,0 +1,219 @@
+---
+- name: Create the mattermost group
+  ansible.builtin.group:
+    name: "{{ mattermost_group }}"
+    system: true
+
+- name: Create the mattermost user
+  ansible.builtin.user:
+    name: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ mattermost_dir }}"
+    create_home: false
+
+- name: Look at what is at {{ mattermost_dir }} now
+  ansible.builtin.stat:
+    path: "{{ mattermost_dir }}"
+  register: _mm_current
+
+- name: Refuse to overwrite an install this toolkit did not make
+  ansible.builtin.assert:
+    that: not _mm_current.stat.exists or _mm_current.stat.islnk
+    fail_msg: >-
+      {{ mattermost_dir }} is a real directory, so Mattermost was installed some other way.
+      Move it aside (and its config and data) before running this, or migrate it by hand.
+
+- name: Remember the previous version for the report
+  ansible.builtin.set_fact:
+    mmd_mattermost_previous: "{{ (_mm_current.stat.lnk_target | default('') | basename | regex_replace('^mattermost-', '')) if _mm_current.stat.exists else '' }}"
+
+- name: Create Mattermost directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    mode: "0750"
+  loop:
+    - "{{ mattermost_version_dir }}"
+    - "{{ mattermost_config_dir }}"
+    - "{{ mattermost_plugin_dir }}"
+    - "{{ mattermost_client_plugin_dir }}"
+    - "{{ mattermost_log_dir }}"
+
+- name: Create the local data directory
+  ansible.builtin.file:
+    path: "{{ mattermost_data_dir }}"
+    state: directory
+    owner: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    mode: "0750"
+  when: mattermost_file_driver == 'local'
+
+- name: Unpack Mattermost {{ mmd_artifacts.mattermost.version }}
+  ansible.builtin.unarchive:
+    src: "{{ mmd_artifacts.mattermost.path }}"
+    dest: "{{ mattermost_version_dir }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    owner: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    creates: "{{ mattermost_version_dir }}/bin/mattermost"
+
+- name: Trust the install for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: fapolicyd
+  vars:
+    fapolicyd_paths: ["{{ mattermost_version_dir }}/"]
+
+- name: Point {{ mattermost_dir }} at this version
+  ansible.builtin.file:
+    src: "{{ mattermost_version_dir }}"
+    dest: "{{ mattermost_dir }}"
+    state: link
+    force: true
+  notify: Restart mattermost
+
+- name: Look for an existing config.json
+  ansible.builtin.stat:
+    path: "{{ mattermost_config_dir }}/config.json"
+  register: _mm_config_stat
+
+- name: Seed config.json from the tarball default
+  ansible.builtin.copy:
+    src: "{{ mattermost_version_dir }}/config/config.json"
+    dest: "{{ mattermost_config_dir }}/config.json"
+    remote_src: true
+    owner: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    mode: "0600"
+  when: not _mm_config_stat.stat.exists
+  failed_when: false
+  register: _mm_seed
+
+- name: Start from an empty config when the tarball has none
+  ansible.builtin.copy:
+    content: "{}\n"
+    dest: "{{ mattermost_config_dir }}/config.json"
+    owner: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    mode: "0600"
+    force: false
+  when: not _mm_config_stat.stat.exists
+
+- name: Trust the OpenSearch CA system-wide
+  ansible.builtin.copy:
+    src: "{{ mmd_opensearch_ca_src }}"
+    dest: "{{ mattermost_opensearch_ca_dest }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: mmd_opensearch_ca_src | length > 0
+  register: _mm_os_ca
+  notify: Restart mattermost
+
+- name: Rebuild the system CA bundle
+  ansible.builtin.command: update-ca-trust extract
+  when: _mm_os_ca is changed
+  changed_when: true
+
+- name: Install the licence file
+  ansible.builtin.copy:
+    src: "{{ mattermost_license_file }}"
+    dest: "{{ mattermost_license_dest }}"
+    remote_src: true
+    owner: root
+    group: "{{ mattermost_group }}"
+    mode: "0640"
+  when: mattermost_license_file | length > 0
+  notify: Restart mattermost
+
+- name: Read the current config.json
+  ansible.builtin.slurp:
+    path: "{{ mattermost_config_dir }}/config.json"
+  register: _mm_config_raw
+  no_log: true
+
+- name: Merge our settings into config.json
+  ansible.builtin.set_fact:
+    _mm_config_current: "{{ _mm_config_raw.content | b64decode | from_json }}"
+    _mm_config_desired: >-
+      {{ (_mm_config_raw.content | b64decode | from_json)
+         | combine(lookup('ansible.builtin.template', 'config-overrides.yml.j2') | from_yaml, recursive=true)
+         | combine(mattermost_config_overrides, recursive=true) }}
+  no_log: true
+
+- name: Write config.json when it changed
+  ansible.builtin.copy:
+    content: "{{ _mm_config_desired | to_nice_json(indent=4) }}\n"
+    dest: "{{ mattermost_config_dir }}/config.json"
+    owner: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    mode: "0600"
+    backup: true
+  when: _mm_config_desired != _mm_config_current
+  notify: Restart mattermost
+  no_log: true
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: mattermost.service.j2
+    dest: /etc/systemd/system/mattermost.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart mattermost
+
+- name: Enable and start Mattermost
+  ansible.builtin.systemd:
+    name: mattermost
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Open Mattermost to remote proxies
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ mattermost_port }}", proto: tcp}]
+    fw_sources: "{{ mattermost_proxy_sources }}"
+    fw_public: "{{ mattermost_proxy_sources | length == 0 }}"
+  when: mmd_mattermost_listen != '127.0.0.1'
+
+- name: Open the metrics port to Prometheus servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ mattermost_metrics_port }}", proto: tcp}]
+    fw_sources: "{{ monitoring_scrape_sources }}"
+    fw_public: false
+  when: mmd_mattermost_metrics | bool and monitoring_scrape_sources | length > 0
+
+- name: Open the built-in Calls media port
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports:
+      - {port: "{{ mattermost_calls_port }}", proto: udp}
+      - {port: "{{ mattermost_calls_port }}", proto: tcp}
+    fw_public: true
+  when: mmd_calls_integrated | bool
+
+- name: Wait for Mattermost to answer (first start runs migrations)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ mattermost_port }}/api/v4/system/ping"
+    return_content: true
+  register: _mm_ping
+  until: _mm_ping.status == 200
+  retries: "{{ (mattermost_start_wait_seconds | int / 5) | int }}"
+  delay: 5

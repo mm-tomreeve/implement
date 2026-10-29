@@ -1,0 +1,76 @@
+---
+- name: Install elasticsearch_exporter (works with OpenSearch)
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: tarball_install
+  vars:
+    tb_name: opensearch_exporter
+    tb_artifact: "{{ mmd_artifacts.opensearch_exporter }}"
+    tb_user: "{{ opensearch_exporter_user }}"
+    tb_creates: elasticsearch_exporter
+
+- name: Restart when the version changed
+  ansible.builtin.debug:
+    msg: "opensearch_exporter now points at {{ mmd_artifacts.opensearch_exporter.version }}"
+  changed_when: tb_changed | bool
+  notify: Restart opensearch_exporter
+
+- name: Create the exporter config directory
+  ansible.builtin.file:
+    path: "{{ opensearch_exporter_conf_dir }}"
+    state: directory
+    owner: root
+    group: "{{ opensearch_exporter_user }}"
+    mode: "0750"
+
+- name: Give the exporter its own copy of the search CA
+  ansible.builtin.copy:
+    src: "{{ opensearch_conf_dir }}/certs/root-ca.pem"
+    dest: "{{ opensearch_exporter_conf_dir }}/ca.pem"
+    remote_src: true
+    owner: root
+    group: "{{ opensearch_exporter_user }}"
+    mode: "0644"
+  when: mmd_opensearch_security | bool
+  notify: Restart opensearch_exporter
+
+- name: Store the exporter credentials
+  ansible.builtin.copy:
+    dest: "{{ opensearch_exporter_conf_dir }}/env"
+    owner: root
+    group: "{{ opensearch_exporter_user }}"
+    mode: "0640"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      {% if mmd_opensearch_security | bool %}
+      ES_USERNAME=admin
+      ES_PASSWORD={{ mmd_secrets.opensearch_admin_password }}
+      {% endif %}
+  no_log: true
+  notify: Restart opensearch_exporter
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: opensearch_exporter.service.j2
+    dest: /etc/systemd/system/opensearch_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart opensearch_exporter
+
+- name: Enable and start opensearch_exporter
+  ansible.builtin.systemd:
+    name: opensearch_exporter
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Open the exporter to Prometheus servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ opensearch_exporter_port }}", proto: tcp}]
+    fw_sources: "{{ monitoring_scrape_sources }}"
+    fw_public: false
+  when: monitoring_scrape_sources | length > 0

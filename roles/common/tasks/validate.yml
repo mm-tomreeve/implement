@@ -1,0 +1,62 @@
+---
+- name: Check hard dependencies between components
+  ansible.builtin.assert:
+    that: item.ok | bool
+    fail_msg: "{{ item.message }}"
+    quiet: true
+  loop: "{{ mmd_dependency_checks | selectattr('component', 'in', mmd_selected) | list }}"
+  loop_control:
+    label: "{{ item.component }}: {{ item.message | truncate(60) }}"
+
+- name: Evaluate colocation advice
+  ansible.builtin.set_fact:
+    mmd_findings: >-
+      {%- set out = [] -%}
+      {%- set major = mmd_selected | intersect(common_major_components) -%}
+      {%- for r in mmd_colocation_rules -%}
+      {%-   set hit = namespace(v=false) -%}
+      {%-   if r.when_all is defined and r.when_all | difference(mmd_selected) | length == 0 -%}{%- set hit.v = true -%}{%- endif -%}
+      {%-   if r.when_count_at_least is defined and major | length >= r.when_count_at_least -%}{%- set hit.v = true -%}{%- endif -%}
+      {%-   if r.when_any_with is defined and (r.when_any_with | intersect(mmd_selected) | length > 0)
+             and (r.workloads | intersect(mmd_selected) | length > 0) -%}{%- set hit.v = true -%}{%- endif -%}
+      {%-   if hit.v -%}{%- set _ = out.append({'id': r.id, 'severity': r.severity, 'message': r.message, 'advice': r.advice}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Compare the host with the sizing hints
+  ansible.builtin.set_fact:
+    mmd_sizing:
+      ram_needed_mb: "{{ mmd_selected | map('extract', mmd_catalogue) | map(attribute='min_ram_mb') | sum }}"
+      ram_have_mb: "{{ ansible_facts['memtotal_mb'] }}"
+      cpus_needed: "{{ [mmd_selected | map('extract', mmd_catalogue) | map(attribute='min_cpus') | sum, 1] | max }}"
+      cpus_have: "{{ ansible_facts['processor_vcpus'] }}"
+
+- name: Add a sizing finding when the host looks small
+  ansible.builtin.set_fact:
+    mmd_findings: >-
+      {{ mmd_findings + [{
+           'id': 'undersized',
+           'severity': 'high',
+           'message': 'This server has ' ~ mmd_sizing.ram_have_mb ~ ' MB RAM and ' ~ mmd_sizing.cpus_have
+                      ~ ' vCPUs. The selected components want at least ' ~ mmd_sizing.ram_needed_mb ~ ' MB and '
+                      ~ mmd_sizing.cpus_needed ~ ' vCPUs between them.',
+           'advice': 'Expect poor performance or out-of-memory kills. Add resources or spread the components over more servers.'}] }}
+  when: >-
+    (mmd_sizing.ram_have_mb | int) < (mmd_sizing.ram_needed_mb | int)
+    or (mmd_sizing.cpus_have | int) < (mmd_sizing.cpus_needed | int)
+
+- name: Show the plan
+  ansible.builtin.debug:
+    msg: "{{ _plan_lines }}"
+  vars:
+    _plan_lines: >-
+      {{ ['Components on this server: ' ~ (mmd_selected | join(', '))]
+         + ['Profiles: ' ~ (mmd_profiles_used | join(', ') if mmd_profiles_used else 'none (custom selection)')]
+         + (mmd_findings | map(attribute='message') | map('regex_replace', '^', 'WARNING: ') | list) }}
+
+- name: Show colocation and sizing advice
+  ansible.builtin.debug:
+    msg: "[{{ item.severity | upper }}] {{ item.message }} {{ item.advice }}"
+  loop: "{{ mmd_findings }}"
+  loop_control:
+    label: "{{ item.id }}"

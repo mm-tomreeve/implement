@@ -1,0 +1,3 @@
+---
+opensearch_exporter_user: opensearch_exporter
+opensearch_exporter_conf_dir: /etc/opensearch_exporter

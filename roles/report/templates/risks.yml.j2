@@ -1,0 +1,51 @@
+{# Risks worked out from the deployment, on top of the colocation findings. #}
+{% set r = [] %}
+{% for f in mmd_findings %}
+{%   set _ = r.append({'severity': f.severity, 'title': f.message, 'advice': f.advice}) %}
+{% endfor %}
+{% if 'nginx' in mmd_selected and tls_mode != 'provided' %}
+{%   set _ = r.append({'severity': 'high', 'title': 'Mattermost is served over plain HTTP.', 'advice': 'TLS was left for later. Passwords and messages cross the network unencrypted, and the mobile apps will not connect. Put the certificate and key on the server, set tls_mode: provided and re-run install.sh.'}) %}
+{% endif %}
+{% if 'mattermost' in mmd_selected and mattermost_site_url is match('^http://') %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'SiteURL uses http://.', 'advice': 'Change mattermost_site_url to https:// once TLS is in place, or links in emails and notifications will point at the insecure address.'}) %}
+{% endif %}
+{% if 'mattermost' in mmd_selected and mmd_arch | default('amd64') == 'arm64' %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'The arm64 Mattermost tarball has no prepackaged plugins.', 'advice': 'Calls, the GitHub, GitLab and Jira integrations and the other bundled plugins are only in the amd64 tarball. Install the ones you need from the Marketplace or upload them with mmctl.'}) %}
+{% endif %}
+{% if 'mattermost' in mmd_selected and mattermost_edition == 'enterprise' and mattermost_license_file | length == 0 %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'No Enterprise licence installed.', 'advice': 'The server runs as a free instance until a licence is uploaded. Metrics, Enterprise search and HA stay off until then. Set mattermost_license_file or upload it in the System Console.'}) %}
+{% endif %}
+{% if 'mattermost' in mmd_selected and mmd_opensearch_url | length > 0 and not (mattermost_search_enable | bool) %}
+{%   set _ = r.append({'severity': 'low', 'title': 'OpenSearch is wired up but indexing is off.', 'advice': 'Indexing and searching are switched on once a licence is present (mattermost_search_enable). After that, run a bulk index from System Console > Environment > Elasticsearch.'}) %}
+{% endif %}
+{% if mmd_db_sslmode == 'disable' and not (mmd_db_host in ['127.0.0.1', 'localhost', '::1']) %}
+{%   set _ = r.append({'severity': 'high', 'title': 'Database traffic to ' ~ mmd_db_host ~ ' is not encrypted.', 'advice': 'Set mattermost_db_sslmode to require (and postgresql_ssl on the database server).'}) %}
+{% endif %}
+{% if 'rtcd' in mmd_selected and rtcd_ice_host_override | length == 0 %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'rtcd has no ICE host override.', 'advice': 'If clients reach this server through NAT or a load balancer, calls will connect but carry no audio. Set rtcd_ice_host_override to the address clients use.'}) %}
+{% endif %}
+{% if mmd_calls_integrated | bool %}
+{%   set _ = r.append({'severity': 'low', 'title': 'Calls media runs inside Mattermost.', 'advice': 'Fine for occasional small calls. For regular use, deploy the calls profile on its own server and set mattermost_rtcd_url.'}) %}
+{% endif %}
+{% set cp_check = mmd_results | default([]) | selectattr('name', 'equalto', 'Somewhere for alerts to go') | list %}
+{% if cp_check and cp_check[0].status != 'pass' %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'Alerts have nowhere to go yet.', 'advice': 'Grafana is evaluating the alert rules but has no contact point to send them to. Add contact points under Alerting > Contact points and route on the severity label (critical to on-call, warning to the team, info to a channel).'}) %}
+{% endif %}
+{% if 'mattermost' in mmd_selected %}
+{%   set _ = r.append({'severity': 'info', 'title': 'Single application server.', 'advice': 'There is no failover for Mattermost on this design. High availability needs an Enterprise licence, two or more app servers, shared file storage and a load balancer.'}) %}
+{% endif %}
+{% if 'postgresql' in mmd_selected %}
+{%   set _ = r.append({'severity': 'info', 'title': 'Single PostgreSQL instance.', 'advice': 'No replica or automatic failover. Backups are the recovery plan, so schedule them and test a restore.'}) %}
+{% endif %}
+{% if mmd_artifact_mode | default('') == 'directory' %}
+{%   set _ = r.append({'severity': 'low', 'title': 'Artifacts came from a hand-filled directory.', 'advice': 'Checksums came from files in the same directory. Mattermost and OpenSearch were also checked against signatures with keys shipped in this repo, but other components were not. Prefer bundles built with tools/build-offline-bundle.sh.'}) %}
+{% endif %}
+{% if mmd_deploy_failed | default(false) | bool %}
+{%   set _ = r.insert(0, {'severity': 'high', 'title': 'The install did not finish.', 'advice': 'Failed at: ' ~ mmd_deploy_error ~ '. Fix the cause and re-run install.sh; it picks up where it left off.'}) %}
+{% endif %}
+{%- set rank = {'high': 0, 'medium': 1, 'low': 2, 'info': 3} -%}
+{%- set ordered = [] -%}
+{%- for level in ['high', 'medium', 'low', 'info'] -%}
+{%-   for item in r if item.severity == level -%}{%- set _ = ordered.append(item) -%}{%- endfor -%}
+{%- endfor -%}
+{{ ordered | to_yaml }}

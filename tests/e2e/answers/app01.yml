@@ -1,0 +1,11 @@
+---
+deploy_profiles: [app]
+mattermost_site_url: https://app01.e2e.test
+mattermost_db_host: 172.30.10.11
+mattermost_rtcd_url: http://172.30.10.13:8045
+mattermost_opensearch_url: https://172.30.10.14:9200
+# The harness copies the search CA here from search01 before installing.
+mattermost_opensearch_ca_file: /root/search-ca.pem
+tls_mode: provided
+# The harness generates a throwaway CA and server certificate here.
+tls_source_dir: /root/certs

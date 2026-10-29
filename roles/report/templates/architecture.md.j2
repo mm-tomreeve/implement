@@ -1,0 +1,682 @@
+#jinja2: lstrip_blocks: True, trim_blocks: True
+{% macro cell(value) %}{{ (value if value is not none else '') | string | replace('|', '\\|') | replace('\n', ' ') | trim }}{% endmacro %}
+{% set fqdn = ansible_facts['fqdn'] %}
+{% set results = mmd_results | default([]) %}
+{% set n_pass = results | selectattr('status', 'equalto', 'pass') | list | length %}
+{% set n_warn = results | selectattr('status', 'equalto', 'warn') | list | length %}
+{% set n_fail = results | selectattr('status', 'equalto', 'fail') | list | length %}
+{% set n_skip = results | selectattr('status', 'equalto', 'skip') | list | length %}
+{% set n_run = n_pass + n_warn + n_fail %}
+{% set failed = mmd_deploy_failed | default(false) | bool %}
+{% set sel = mmd_selected %}
+{% set has = namespace(mm=('mattermost' in sel), pg=('postgresql' in sel), ngx=('nginx' in sel), rtcd=('rtcd' in sel),
+                       os=('opensearch' in sel), prom=('prometheus' in sel), graf=('grafana' in sel),
+                       ne=('node_exporter' in sel), pge=('postgres_exporter' in sel)) %}
+{% set remote = namespace(db=(not has.pg and has.mm), os=(not has.os and has.mm and mmd_opensearch_url | length > 0),
+                          rtcd=(not has.rtcd and has.mm and mmd_rtcd_url | length > 0),
+                          app=(has.ngx and not has.mm), prom=(has.graf and not has.prom),
+                          s3=(has.mm and mattermost_file_driver == 'amazons3')) %}
+{% set scheme = 'HTTPS 443' if mmd_tls_enabled else 'HTTP 80' %}
+{% set versions = mmd_versions | default({}) %}
+{% set names = sel | map('extract', mmd_catalogue) | map(attribute='title') | map('regex_replace', ' [0-9.]+$', '') | list %}
+{% macro and_join(items) %}{% if items | length > 1 %}{{ items[:-1] | join(', ') }} and {{ items[-1] }}{% else %}{{ items | first | default('nothing') }}{% endif %}{% endmacro %}
+{% macro plural(n, word) %}{{ n }} {{ word }}{{ '' if n == 1 else 's' }}{% endmacro %}
+{% set path_labels = {'install': 'Install', 'config': 'Config', 'data': 'Data', 'logs': 'Logs', 'tls': 'TLS'} %}
+{% set needs_users = has.ngx or has.mm or has.rtcd or remote.rtcd or has.graf %}
+{% macro version_of(c) %}{{ versions[c] | default((mmd_artifacts | default({}))[c].version | default('see package'), true) }}{% endmacro %}
+# Mattermost architecture: {{ deploy_name }} on {{ fqdn }}
+
+## Document control
+
+| | |
+|---|---|
+| Deployment | {{ deploy_name }} |
+| Server | {{ fqdn }} ({{ ansible_facts['default_ipv4']['address'] | default('no default IPv4') }}) |
+| Generated | {{ lookup('ansible.builtin.pipe', 'date -u +"%Y-%m-%d %H:%M UTC"') }} |
+| Run ID | {{ mmd_run_id }}{% if mmd_install_run_id is defined and mmd_install_run_id and mmd_install_run_id != mmd_run_id %} (tests re-run; installed in {{ mmd_install_run_id }}){% endif %} |
+| Operator | {{ deploy_operator }} |
+| Mattermost Implement | {{ deploy_tool_version }} |
+| Status | {% if failed %}Install incomplete{% elif n_fail > 0 %}Installed, {{ n_fail }} critical check{{ 's' if n_fail != 1 }} failing{% elif n_warn > 0 %}Installed, {{ n_warn }} warning{{ 's' if n_warn != 1 }}{% else %}Installed and verified{% endif %} |
+
+This document describes what this server runs, how it connects to the rest of the
+{{ deploy_name }} deployment, and how to look after it. Mattermost Implement rewrites it
+on every run, so make notes elsewhere or they will be lost.
+
+## Summary
+
+{% if failed %}
+The install stopped part way through, at {{ mmd_deploy_error }}. Fix that and run
+`install.sh` again; the roles are idempotent and carry on from where they stopped.
+Until then, treat the rest of this document as a picture of a half-built server.
+
+{% endif %}
+This server runs {{ and_join(names) }}.
+{% if mmd_profiles_used %}
+It was built from the {{ mmd_profiles_used | join(' + ') }} profile{{ 's' if mmd_profiles_used | length > 1 }}.
+{% else %}
+It was built from a custom component list rather than a named profile.
+{% endif %}
+{% if has.mm %}
+Users reach Mattermost at {{ mattermost_site_url }}.
+{% endif %}
+
+We ran {{ plural(n_run, 'check') }} after the install: {{ n_pass }} passed, {{ plural(n_warn, 'warning') }}
+and {{ n_fail }} failed{% if n_skip %} ({{ n_skip }} more did not apply){% endif %}.
+{% if failed %}
+Those checks ran against a partly installed server, so expect gaps.
+{% elif n_fail > 0 %}
+Do not hand this server over until the failures in [Verification results](#verification-results) are fixed.
+{% elif n_warn > 0 %}
+Nothing critical failed. Read the warnings before go-live; some will matter for production.
+{% else %}
+Everything we test for is in order.
+{% endif %}
+{% set high = _report_risks | selectattr('severity', 'equalto', 'high') | list %}
+{% if high %}
+
+Before production, deal with these:
+
+{% for risk in high %}
+- {{ risk.title }} {{ risk.advice }}
+{% endfor %}
+{% endif %}
+
+## Scope
+
+### On this server
+
+| Component | Version | What it does |
+|---|---|---|
+{% for c in sel %}
+| {{ mmd_catalogue[c].title | regex_replace(' [0-9.]+$', '') }} | {{ version_of(c) }} | {{ mmd_catalogue[c].summary }} |
+{% endfor %}
+
+### Elsewhere
+
+{% set ext = [] %}
+{% if remote.db %}{% set _ = ext.append(['PostgreSQL', mmd_db_host ~ ':' ~ mattermost_db_port, 'Mattermost database (sslmode=' ~ mmd_db_sslmode ~ ')']) %}{% endif %}
+{% if remote.os %}{% set _ = ext.append(['OpenSearch', mmd_opensearch_url, 'Enterprise search']) %}{% endif %}
+{% if remote.rtcd %}{% set _ = ext.append(['Calls rtcd', mmd_rtcd_url, 'Calls media']) %}{% endif %}
+{% if remote.app %}{% set _ = ext.append(['Mattermost app servers', mmd_nginx_upstreams | join(', '), 'Upstreams behind this proxy']) %}{% endif %}
+{% if remote.s3 %}{% set _ = ext.append(['S3 storage', mattermost_s3_endpoint ~ ' / ' ~ mattermost_s3_bucket, 'File uploads and attachments']) %}{% endif %}
+{% if remote.prom %}{% set _ = ext.append(['Prometheus', mmd_prometheus_url, 'Metrics source for Grafana']) %}{% endif %}
+{% if has.mm and mattermost_proxy_sources %}{% set _ = ext.append(['Reverse proxies', mattermost_proxy_sources | join(', '), 'Allowed to reach port ' ~ mattermost_port]) %}{% endif %}
+{% if has.pg and postgresql_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', postgresql_allowed_clients | join(', '), 'Allowed to connect to PostgreSQL']) %}{% endif %}
+{% if has.os and opensearch_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', opensearch_allowed_clients | join(', '), 'Allowed to query OpenSearch']) %}{% endif %}
+{% if has.rtcd and rtcd_api_sources %}{% set _ = ext.append(['Mattermost app servers', rtcd_api_sources | join(', '), 'Allowed to use the rtcd API']) %}{% endif %}
+{% if monitoring_scrape_sources %}{% set _ = ext.append(['Prometheus servers', monitoring_scrape_sources | join(', '), 'Allowed to scrape metrics here']) %}{% endif %}
+{% for job in prometheus_scrape_targets if has.prom %}{% set _ = ext.append(['Scrape job ' ~ job.job, job.targets | join(', '), 'Scraped by this Prometheus']) %}{% endfor %}
+{% if ext %}
+| What | Where | Why |
+|---|---|---|
+{% for row in ext %}
+| {{ cell(row[0]) }} | {{ cell(row[1]) }} | {{ cell(row[2]) }} |
+{% endfor %}
+{% else %}
+Nothing. Every component this server talks to runs on this server.
+{% endif %}
+
+## Architecture
+
+### Components and traffic
+
+Solid lines are requests, dotted lines are Calls media. Boxes outside the server
+outline live on other servers.
+
+```mermaid
+flowchart LR
+{% if needs_users %}
+  users(["Users<br/>web, desktop, mobile"])
+{% endif %}
+{% if remote.db %}
+  r_db[("PostgreSQL<br/>{{ mmd_db_host }}:{{ mattermost_db_port }}")]
+{% endif %}
+{% if remote.os %}
+  r_os["OpenSearch<br/>{{ mmd_opensearch_url | urlsplit('netloc') }}"]
+{% endif %}
+{% if remote.rtcd %}
+  r_rtcd["Calls rtcd<br/>{{ mmd_rtcd_url | urlsplit('netloc') }}"]
+{% endif %}
+{% if remote.app %}
+  r_app["Mattermost app servers<br/>{{ mmd_nginx_upstreams | join('<br/>') }}"]
+{% endif %}
+{% if remote.s3 %}
+  r_s3[("S3 bucket<br/>{{ mattermost_s3_bucket }}")]
+{% endif %}
+{% if remote.prom %}
+  r_prom["Prometheus<br/>{{ mmd_prometheus_url | urlsplit('netloc') }}"]
+{% endif %}
+{% if (has.pg or has.os or has.rtcd) and not has.mm %}
+  r_mm["Mattermost app servers"]
+{% endif %}
+{% if has.prom and prometheus_scrape_targets %}
+  r_targets["Other servers<br/>{{ prometheus_scrape_targets | map(attribute='job') | unique | join(', ') }}"]
+{% endif %}
+{% if (has.ne or has.pge or (has.mm and mmd_mattermost_metrics)) and not has.prom and monitoring_scrape_sources %}
+  r_scraper["Prometheus<br/>{{ monitoring_scrape_sources | join(', ') }}"]
+{% endif %}
+  subgraph host["{{ fqdn }}"]
+{% if has.ngx %}
+    ngx["Nginx<br/>:80{{ ' / :443' if mmd_tls_enabled else '' }}"]
+{% endif %}
+{% if has.mm %}
+    mm["Mattermost {{ version_of('mattermost') }}<br/>:{{ mattermost_port }}"]
+{% endif %}
+{% if has.pg %}
+    pg[("PostgreSQL {{ version_of('postgresql') }}<br/>:{{ postgresql_port }}")]
+{% endif %}
+{% if has.os %}
+    os["OpenSearch {{ version_of('opensearch') }}<br/>:{{ opensearch_port }}"]
+{% endif %}
+{% if has.rtcd %}
+    rtcd["Calls rtcd {{ version_of('rtcd') }}<br/>API :{{ rtcd_api_port }}, media :{{ rtcd_rtc_port }}"]
+{% endif %}
+{% if has.prom %}
+    prom["Prometheus<br/>:{{ prometheus_port }}"]
+{% endif %}
+{% if has.graf %}
+    graf["Grafana<br/>:{{ grafana_port }}"]
+{% endif %}
+{% if has.ne %}
+    ne["node_exporter<br/>:{{ node_exporter_port }}"]
+{% endif %}
+{% if has.pge %}
+    pge["postgres_exporter<br/>:{{ postgres_exporter_port }}"]
+{% endif %}
+  end
+{% if has.ngx %}
+  users -->|"{{ scheme }}"| ngx
+  ngx -->|"HTTP {{ mattermost_port }}"| {{ 'mm' if has.mm else 'r_app' }}
+{% elif has.mm %}
+  users -->|"HTTP {{ mattermost_port }} via your proxy"| mm
+{% endif %}
+{% if has.mm %}
+  mm -->|"SQL {{ mattermost_db_port }}"| {{ 'pg' if has.pg else 'r_db' }}
+  {% if has.os or remote.os %}
+  mm -->|"REST {{ opensearch_port if has.os else (mmd_opensearch_url | urlsplit('port') or 9200) }}"| {{ 'os' if has.os else 'r_os' }}
+  {% endif %}
+  {% if has.rtcd or remote.rtcd %}
+  mm -->|"API {{ rtcd_api_port if has.rtcd else (mmd_rtcd_url | urlsplit('port') or rtcd_api_port) }}"| {{ 'rtcd' if has.rtcd else 'r_rtcd' }}
+  {% endif %}
+  {% if remote.s3 %}
+  mm -->|"S3 {{ 'HTTPS' if mattermost_s3_ssl | bool else 'HTTP' }}"| r_s3
+  {% endif %}
+  {% if mmd_calls_integrated %}
+  users -.->|"Calls media UDP/TCP {{ mattermost_calls_port }}"| mm
+  {% endif %}
+{% endif %}
+{% if has.rtcd %}
+  users -.->|"Calls media UDP/TCP {{ rtcd_rtc_port }}"| rtcd
+{% endif %}
+{% if remote.rtcd %}
+  users -.->|"Calls media"| r_rtcd
+{% endif %}
+{% if (has.pg or has.os or has.rtcd) and not has.mm %}
+  {% if has.pg %}
+  r_mm -->|"SQL {{ postgresql_port }}"| pg
+  {% endif %}
+  {% if has.os %}
+  r_mm -->|"REST {{ opensearch_port }}"| os
+  {% endif %}
+  {% if has.rtcd %}
+  r_mm -->|"API {{ rtcd_api_port }}"| rtcd
+  {% endif %}
+{% endif %}
+{% if has.prom %}
+  {% if has.ne %}
+  prom -->|scrape| ne
+  {% endif %}
+  {% if has.pge %}
+  prom -->|scrape| pge
+  {% endif %}
+  {% if has.mm and mmd_mattermost_metrics %}
+  prom -->|"scrape {{ mattermost_metrics_port }}"| mm
+  {% endif %}
+  {% if has.rtcd %}
+  prom -->|scrape| rtcd
+  {% endif %}
+  {% if prometheus_scrape_targets %}
+  prom -->|scrape| r_targets
+  {% endif %}
+{% elif monitoring_scrape_sources %}
+  {% if has.ne %}
+  r_scraper -->|scrape| ne
+  {% endif %}
+  {% if has.pge %}
+  r_scraper -->|scrape| pge
+  {% endif %}
+  {% if has.mm and mmd_mattermost_metrics %}
+  r_scraper -->|"scrape {{ mattermost_metrics_port }}"| mm
+  {% endif %}
+{% endif %}
+{% if has.pge %}
+  pge -->|"socket"| pg
+{% endif %}
+{% if has.graf %}
+  graf -->|"PromQL"| {{ 'prom' if has.prom else 'r_prom' }}
+  users -->|"HTTP {{ grafana_port }}"| graf
+{% endif %}
+```
+
+{% if has.mm or has.ngx %}
+### How a request flows
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as User
+{% if has.ngx %}
+  participant N as Nginx
+{% endif %}
+  participant M as Mattermost
+  participant D as PostgreSQL
+{% if has.os or remote.os %}
+  participant S as OpenSearch
+{% endif %}
+{% if has.rtcd or remote.rtcd %}
+  participant R as rtcd
+{% endif %}
+{% set entry = 'N' if has.ngx else 'M' %}
+  U->>{{ entry }}: {{ scheme if has.ngx else 'HTTP' }} request
+{% if has.ngx %}
+  N->>M: proxied over HTTP/1.1 keep-alive ({{ mattermost_port }})
+{% endif %}
+  M->>D: SQL ({{ mattermost_db_port }})
+  D-->>M: rows
+  M-->>{{ entry }}: JSON
+{% if has.ngx %}
+  N-->>U: response
+{% endif %}
+  U->>{{ entry }}: WebSocket upgrade (/api/v4/websocket)
+{% if has.ngx %}
+  N->>M: upgrade passed through
+{% endif %}
+  M-->>U: real-time events (posts, typing, presence)
+{% if has.os or remote.os %}
+  opt Search
+    M->>S: query
+    S-->>M: matching post IDs
+  end
+{% endif %}
+{% if has.rtcd or remote.rtcd %}
+  opt Calls
+    M->>R: create session (API {{ rtcd_api_port }})
+    U-->>R: audio, video and screen share (UDP {{ rtcd_rtc_port }}, TCP fallback)
+  end
+{% elif mmd_calls_integrated %}
+  opt Calls
+    U-->>M: audio, video and screen share (UDP {{ mattermost_calls_port }})
+  end
+{% endif %}
+```
+{% endif %}
+
+## Server
+
+| | |
+|---|---|
+| Hostname | {{ fqdn }} |
+| Operating system | {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} |
+| Kernel | {{ ansible_facts['kernel'] | default('unknown') }} |
+| Architecture | {{ ansible_facts['architecture'] }} |
+| vCPUs | {{ ansible_facts['processor_vcpus'] }} (the selected components want at least {{ mmd_sizing.cpus_needed }}) |
+| Memory | {{ ansible_facts['memtotal_mb'] }} MB (the selected components want at least {{ mmd_sizing.ram_needed_mb }} MB) |
+| IPv4 addresses | {{ ansible_facts['all_ipv4_addresses'] | default(['not reported']) | join(', ') }} |
+| SELinux | {{ mmd_host_selinux | default(ansible_facts['selinux']['status'] | default('unknown')) }} |
+| Firewall zone | {{ firewall_zone }}{{ '' if firewall_manage | bool else ' (not managed by this toolkit)' }} |
+
+Disk use where data lives:
+
+| Mount | Used |
+|---|---|
+{% for line in mmd_host_disk | default([]) %}
+{% set f = line.split(' ') %}
+| {{ f[0] }} | {{ f[1] | default('?') }}% |
+{% endfor %}
+
+## Components
+
+{% for c in sel %}
+{% set cat = mmd_catalogue[c] %}
+{% set art = (mmd_artifacts | default({}))[c] | default({}) %}
+### {{ cat.title | regex_replace(' [0-9.]+$', '') }}
+
+{{ cat.summary }}
+
+| | |
+|---|---|
+| Version | {{ version_of(c) }}{% if c == 'mattermost' and mmd_mattermost_previous | default('') and mmd_mattermost_previous != version_of(c) %} (upgraded from {{ mmd_mattermost_previous }}){% endif %} |
+{% if c == 'mattermost' %}
+| Edition | {{ mattermost_edition | capitalize }}{{ ', ESR' if art.esr | default(false) else '' }} (channel {{ mattermost_version_channel }}) |
+{% endif %}
+| Source | {{ cat.source }} |
+{% if art %}
+| Artifact | `{{ art.filename }}` |
+| SHA-256 | `{{ art.sha256 }}` |
+| Checked against | {{ art.checksum_source if art.checksum_verified else 'no published checksum' }}; signature {{ art.signature }} |
+{% endif %}
+| Service | `{{ cat.service }}.service`, runs as `{{ cat.user }}` |
+{% for k, v in cat.paths.items() %}
+| {{ path_labels[k] | default(k | capitalize) }} | `{{ v }}` |
+{% endfor %}
+| Listens on | {{ cat.ports | rejectattr('allowed', 'equalto', 'not used') | map(attribute='port') | zip(cat.ports | rejectattr('allowed', 'equalto', 'not used') | map(attribute='proto')) | map('join', '/') | join(', ') | default('nothing', true) }} |
+
+{% if c == 'mattermost' %}
+Mattermost reads `{{ mattermost_config_dir }}/config.json` (via `MM_CONFIG`), not the copy inside the
+install directory. We only set the keys we own: SiteURL, listen address, database, file storage,
+log and plugin paths, metrics, search and the Calls rtcd URL. Everything else stays editable in the
+System Console. Database: `{{ mmd_db_host }}:{{ mattermost_db_port }}/{{ mattermost_db_name }}` as
+`{{ mattermost_db_user }}`, sslmode `{{ mmd_db_sslmode }}`. Files: {{ 'local disk at `' ~ mattermost_data_dir ~ '`' if mattermost_file_driver == 'local' else 'S3 bucket `' ~ mattermost_s3_bucket ~ '` at `' ~ mattermost_s3_endpoint ~ '`' }}.
+Calls: {{ 'rtcd at ' ~ mmd_rtcd_url if mmd_rtcd_url else ('built-in media server on port ' ~ mattermost_calls_port if mmd_calls_integrated else 'not configured') }}.
+Search: {{ 'OpenSearch at ' ~ mmd_opensearch_url ~ (', indexing on' if mattermost_search_enable | bool else ', indexing off until a licence is installed') if mmd_opensearch_url else 'database search (no OpenSearch configured)' }}.
+{% if mmd_opensearch_ca_src %}
+The search CA is trusted system-wide (`/etc/pki/ca-trust/source/anchors/mattermost-implement-opensearch.pem`).
+{% endif %}
+
+{% elif c == 'postgresql' %}
+Tuned for {{ ansible_facts['memtotal_mb'] }} MB of RAM{{ ', sharing the box with Mattermost' if has.mm else '' }}:
+shared_buffers is {{ postgresql_shared_buffers_pct }}% of RAM and max_connections is {{ postgresql_max_connections }}.
+Listens on `{{ mmd_postgresql_listen }}`. Passwords use SCRAM-SHA-256.
+{{ 'TLS is on with a self-signed certificate in the data directory.' if mmd_postgresql_ssl else 'TLS is off because only local clients connect.' }}
+
+{% elif c == 'nginx' %}
+{% if mmd_tls_enabled %}
+TLS terminates here with the certificate in `{{ tls_install_dir }}`. Protocols: {{ nginx_ssl_protocols }}.
+
+{% for line in mmd_tls_info | default([]) %}
+- {{ line }}
+{% endfor %}
+
+{% else %}
+TLS is not configured yet, so Nginx serves Mattermost over plain HTTP on port 80.
+{% endif %}
+Upstreams: {{ mmd_nginx_upstreams | join(', ') }}. Static assets are cached in `{{ nginx_cache_dir }}`.
+
+{% elif c == 'rtcd' %}
+Mattermost registers with rtcd on first contact (self-registration), which is why only
+{{ rtcd_api_sources | join(', ') if rtcd_api_sources else 'localhost' }} can reach the API port.
+ICE host override: {{ rtcd_ice_host_override if rtcd_ice_host_override else 'not set' }}.
+
+{% elif c == 'opensearch' %}
+Single node, heap {{ _os_heap_mb | default('auto') }} MB, with the analysis-icu plugin.
+{% if mmd_opensearch_security %}
+The security plugin is on with a CA we generated (`{{ opensearch_conf_dir }}/certs/root-ca.pem`;
+copy it to each Mattermost server and set `mattermost_opensearch_ca_file`). Users are `admin` and
+`mattermost`. The demo users and certificates that ship with OpenSearch are not used.
+{% else %}
+Bound to 127.0.0.1 with the security plugin off, which is fine while only the local Mattermost uses it.
+{% endif %}
+
+{% endif %}
+{% endfor %}
+## Network and firewall
+
+| Component | Port | Protocol | Purpose | Allowed from |
+|---|---|---|---|---|
+{% for c in sel %}
+{% for p in mmd_catalogue[c].ports %}
+{% if p.allowed != 'not used' %}
+| {{ c }} | {{ p.port }} | {{ p.proto }} | {{ cell(p.purpose) }} | {{ cell(p.allowed) }} |
+{% endif %}
+{% endfor %}
+{% endfor %}
+
+"localhost only" means the service binds to 127.0.0.1 and no firewall port is open.
+Live firewalld configuration for zone `{{ firewall_zone }}` at the time of the run:
+
+```text
+{{ mmd_host_firewall | default(['not captured']) | join('\n') }}
+```
+
+## Security
+
+SELinux is {{ mmd_host_selinux | default('unknown') }} and we leave it that way.{% if has.ngx %} The `httpd_can_network_connect` boolean is on so Nginx can reach the upstream.{% endif %}
+
+
+{% if has.ngx %}
+Users reach Nginx over {{ 'HTTPS' if mmd_tls_enabled else 'plain HTTP, because TLS is still pending' }}{% if has.mm %}, and Nginx talks to Mattermost over HTTP on 127.0.0.1{% endif %}.
+{% endif %}
+{% if has.mm %}
+Mattermost connects to the database with sslmode `{{ mmd_db_sslmode }}`.
+{% endif %}
+{% if has.os %}
+OpenSearch is {{ 'HTTPS with authentication' if mmd_opensearch_security else 'plain HTTP, reachable on localhost only' }}.
+{% endif %}
+
+Secrets are not in this document. Generated passwords live in `{{ deploy_config_dir }}/secrets.yml`
+(root, 0600) and the answer file is at `{{ mmd_answers_file | default(deploy_config_dir ~ '/answers.yml') }}`.
+{% if has.mm %}
+Mattermost keeps its database password in `{{ mattermost_config_dir }}/config.json` (0600, owned by `{{ mattermost_user }}`).
+{% endif %}
+
+Services run as {% for c in sel %}`{{ mmd_catalogue[c].user }}`{{ ', ' if not loop.last }}{% endfor %}. These are system
+accounts with no login shell, apart from `postgres`, which comes from the RPM.
+
+We checked every tarball before installing it:
+
+{% for name, a in (mmd_artifacts | default({})).items() %}
+- `{{ a.filename }}`: {{ 'checksum matched (' ~ a.checksum_source ~ ')' if a.checksum_verified else 'no published checksum' }}{{ ', GPG signature verified against key ' ~ a.gpg_fingerprint if a.signature == 'verified' else '' }}.
+{% endfor %}
+{% if not mmd_artifacts | default({}) %}
+- Nothing was downloaded for this server. PostgreSQL and Nginx come from the RHEL repositories.
+{% endif %}
+
+## Data and backups
+
+| Data | Where | How to back it up |
+|---|---|---|
+{% if remote.db %}
+| Mattermost database | {{ mmd_db_host }} | Backed up on the database server. Take the dump and the file backup at the same time. |
+{% endif %}
+{% if has.pg %}
+| Mattermost database | `{{ postgresql_data_dir }}` | `runuser -u postgres -- pg_dump -Fc {{ mattermost_db_name }} > mattermost-$(date +%F).dump` nightly, kept off this server. Test a restore every quarter. |
+{% endif %}
+{% if has.mm %}
+| Mattermost config | `{{ mattermost_config_dir }}` | Copy with every change. It holds the database password, so keep the copy encrypted. |
+{% if mattermost_file_driver == 'local' %}
+| Uploaded files | `{{ mattermost_data_dir }}` | Filesystem backup or snapshot, taken at the same time as the database dump so they line up. |
+{% else %}
+| Uploaded files | S3 bucket `{{ mattermost_s3_bucket }}` | Bucket versioning or replication, owned by the storage team. |
+{% endif %}
+| Plugins | `{{ mattermost_plugin_dir }}` | Optional. Plugins can be reinstalled, but a copy saves time. |
+{% endif %}
+{% if has.os %}
+| Search index | `{{ opensearch_data_dir }}` | No backup needed. Rebuild it from the database with a bulk index in the System Console. |
+{% endif %}
+{% if has.prom %}
+| Metrics | `{{ prometheus_data_dir }}` | Usually not backed up. Retention is {{ prometheus_retention }}. |
+{% endif %}
+{% if has.graf %}
+| Grafana | `/var/lib/grafana` | Dashboards are provisioned from this repo. Back up only if people build their own. |
+{% endif %}
+| Deployer state | `{{ deploy_state_dir }}`, `{{ deploy_config_dir }}` | Copy both. The second holds the secrets. |
+
+## Monitoring
+
+{% if has.prom %}
+Prometheus on this server scrapes every server in the estate every {{ prometheus_scrape_interval }}
+and keeps {{ prometheus_retention }} of data. Each target is labelled with its server's name.
+
+| Server | Address | Runs | Scraped |
+|---|---|---|---|
+{% set scrape_jobs = {'postgresql': 'postgres_exporter', 'nginx': 'nginx_exporter', 'opensearch': 'opensearch_exporter', 'mattermost': 'Mattermost metrics', 'rtcd': 'rtcd metrics', 'prometheus': 'Prometheus', 'grafana': 'Grafana'} %}
+{% for s in mmd_estate | default([]) %}
+| {{ s.name }} | {{ s.address }} | {{ s.components | join(', ') | default('host only', true) }} | node_exporter{% for c in s.components %}{% if c in scrape_jobs %}, {{ scrape_jobs[c] }}{% endif %}{% endfor %}{{ ', Calls port check' if 'rtcd' in s.components and 'blackbox_exporter' in sel else '' }} |
+{% endfor %}
+{% if 'blackbox_exporter' in sel and monitoring_site_url %}
+
+The monitoring server also checks `{{ monitoring_site_url }}/api/v4/system/ping` from outside, the way a
+user's browser would, and watches the certificate's expiry date.
+{% endif %}
+{% if mmd_estate | default([]) | length > 1 %}
+
+Every other server needs `deploy_monitoring_exporters: true` and
+`monitoring_scrape_sources: [<this server's address>]` in its answer file, or its targets show as down.
+{% endif %}
+{% elif monitoring_scrape_sources %}
+Metrics on this server are open to the Prometheus servers at {{ monitoring_scrape_sources | join(', ') }}. Add these targets to their scrape config:
+
+{% if has.ne %}
+- `{{ fqdn }}:{{ node_exporter_port }}` (node_exporter)
+{% endif %}
+{% if has.pge %}
+- `{{ fqdn }}:{{ postgres_exporter_port }}` (postgres_exporter)
+{% endif %}
+{% if has.mm and mmd_mattermost_metrics %}
+- `{{ fqdn }}:{{ mattermost_metrics_port }}` (Mattermost, needs an Enterprise licence)
+{% endif %}
+{% if has.rtcd %}
+- `{{ fqdn }}:{{ rtcd_api_port }}` (rtcd)
+{% endif %}
+{% else %}
+Nothing on this server is set up for monitoring. Set `deploy_monitoring_exporters: true` and
+`monitoring_scrape_sources` in the answer file to expose host and database metrics to Prometheus.
+{% endif %}
+{% if has.graf %}
+
+Grafana is at `http://{{ fqdn }}:{{ grafana_port }}/` (user `admin`, password in
+`{{ deploy_config_dir }}/secrets.yml`).
+{% endif %}
+{% set obs = mmd_observability | default({}) %}
+{% if has.graf and obs %}
+
+### Alerts and dashboards
+
+Grafana holds {{ obs.rules }} alert rules, built from {{ obs.checks }} checks across {{ obs.modules | join(', ') }}:
+{{ obs.by_severity.critical }} critical, {{ obs.by_severity.warning }} warning and {{ obs.by_severity.info }} info.
+The tiers don't overlap, so a disk at 96% raises the critical alert only. Every rule carries a
+`severity` label, plus `module` and `mmi_rule`. They sit in the {{ grafana_alert_folder | default('Mattermost Implement') }} folder under
+Alerting and are provisioned from files, so change thresholds with `monitoring_alert_overrides`
+in the answer file rather than in the UI. `docs/alerts.md` in the repo lists every
+check, its tiers and what to do when it fires.
+
+Nothing is sent anywhere yet. Add contact points in Grafana (Alerting > Contact points), then
+set the notification policy to route on `severity`. A sensible starting point:
+
+| Severity | Route to | Repeat |
+|---|---|---|
+| critical | On-call: phone, SMS or a paging tool | every hour until resolved |
+| warning | The team's email or a Mattermost ops channel | every 4 hours |
+| info | A Mattermost channel or a daily digest. Never page for these. | every 24 hours |
+
+Dashboards, all tagged `mattermost-implement` and linked to each other: {{ obs.dashboards | join(', ') }}.
+{% if has.mm or (mmd_estate | default([]) | selectattr('components', 'contains', 'mattermost') | list) %}
+Mattermost's own community dashboards are in a separate folder.
+{% endif %}
+{% endif %}
+
+Logs: {% for c in sel %}{{ c }} `{{ mmd_catalogue[c].paths.logs | default('journalctl -u ' ~ mmd_catalogue[c].service) }}`{{ '; ' if not loop.last else '.' }}{% endfor %}
+
+
+## Verification results
+
+{{ n_pass }} passed, {{ plural(n_warn, 'warning') }}, {{ n_fail }} failed, {{ n_skip }} not applicable.
+Run `./install.sh --verify-only` to repeat them.
+
+| Result | Component | Check | Detail |
+|---|---|---|---|
+{% for r in results | sort(attribute='component') %}
+| {{ {'pass': 'PASS', 'fail': 'FAIL', 'warn': 'WARN', 'skip': 'n/a'}[r.status] }} | {{ r.component }} | {{ cell(r.name) }} | {{ cell(r.detail) }} |
+{% endfor %}
+
+## Risks and decisions
+
+### Risks
+
+{% if _report_risks %}
+| Severity | Risk | What to do |
+|---|---|---|
+{% for risk in _report_risks %}
+| {{ risk.severity | capitalize }} | {{ cell(risk.title) }} | {{ cell(risk.advice) }} |
+{% endfor %}
+{% else %}
+None found.
+{% endif %}
+
+### Decisions
+
+These are built into the toolkit. Change them in the toolkit so every server stays the same.
+
+1. Tarball installs, not RPMs, for Mattermost, rtcd, OpenSearch and the monitoring tools. Each
+   version gets its own directory under `/opt` and a symlink points at the live one, so upgrades and
+   rollbacks are a symlink swap. PostgreSQL and Nginx come from RHEL AppStream so they get RHEL errata.
+2. Every downloaded artifact is checked against the vendor checksum, and Mattermost and OpenSearch
+   also against their GPG signatures. Trust comes from keys and fingerprints held in this repo, not
+   from the download source.
+3. Mattermost config lives in `{{ mattermost_config_dir }}`, outside the install directory, and we merge
+   only the keys we own. Admins can still use the System Console for everything else.
+4. Services that only local components use bind to 127.0.0.1 and get no firewall opening. Remote
+   access is opt-in per component, by source address.
+5. SELinux stays enforcing and firewalld stays on. Where fapolicyd runs, we add trust entries for our
+   install directories instead of turning it off.
+6. OpenSearch uses certificates from its own CA, never the demo certificates that ship with it.
+7. Storage is out of scope. Uploaded files go to local disk, NFS or an S3 bucket you provide.
+
+## Operations
+
+### Services
+
+```bash
+{% for c in sel %}
+systemctl status {{ mmd_catalogue[c].service }}
+{% endfor %}
+```
+
+Start order after a reboot is handled by systemd{% if has.mm and has.pg %}; Mattermost waits for PostgreSQL and stops with it{% endif %}.
+
+### Re-run tests or rebuild this document
+
+```bash
+./install.sh --answers {{ mmd_answers_file | default(deploy_config_dir ~ '/answers.yml') }} --verify-only
+./install.sh --answers {{ mmd_answers_file | default(deploy_config_dir ~ '/answers.yml') }} --report-only
+```
+
+{% if has.mm %}
+### Upgrade Mattermost
+
+1. Take a database backup and copy `{{ mattermost_config_dir }}`.
+2. Set `mattermost_version_channel` (or pin `mattermost_version`) in the answer file and run `./install.sh --answers ...`.
+3. The new version unpacks to `{{ mattermost_install_root }}/mattermost-<version>`, the symlink moves and Mattermost restarts. The old directory stays put.
+
+Rolling back means pointing `{{ mattermost_dir }}` back at the old directory and restarting. Database
+migrations only go forwards, so after anything more than a patch release you also need to restore
+the backup from step 1.
+
+{% endif %}
+{% if has.ngx %}
+### Certificates
+
+{% if mmd_tls_enabled %}
+Put the new certificate and key where the answer file points (`tls_cert_file`/`tls_key_file` or
+`tls_source_dir`) and re-run `install.sh`. It checks the pair match before Nginx reloads.
+{% else %}
+When the certificate is ready, set `tls_mode: provided` with `tls_cert_file` and `tls_key_file` (or
+`tls_source_dir`), change `mattermost_site_url` to `https://`, and re-run `install.sh`.
+{% endif %}
+
+{% endif %}
+## Appendix A: artifacts
+
+{% if mmd_artifacts | default({}) %}
+Source: {{ {'online': 'vendor downloads', 'bundle': 'offline bundle at ' ~ artifact_source, 'directory': 'hand-filled directory at ' ~ artifact_source}[mmd_artifact_mode | default('online')] | default(mmd_artifact_mode) }}.
+
+| Artifact | Version | SHA-256 | Signature |
+|---|---|---|---|
+{% for name, a in mmd_artifacts.items() %}
+| `{{ a.filename }}` | {{ a.version }} | `{{ a.sha256 }}` | {{ a.signature }} |
+{% endfor %}
+{% for w in mmd_artifact_warnings | default([]) %}
+
+Note from the resolver: {{ w }}
+{% endfor %}
+{% else %}
+Nothing was downloaded for this server.
+{% endif %}
+
+## Appendix B: answer file
+
+Values that look like secrets are redacted.
+
+```yaml
+{{ _report_answers | default({}) | to_nice_yaml(indent=2) if _report_answers else '# answer file not available' }}
+```

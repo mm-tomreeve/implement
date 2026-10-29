@@ -1,0 +1,80 @@
+---
+- name: Save the deployment state
+  ansible.builtin.copy:
+    dest: "{{ deploy_state_dir }}/deployment.json"
+    owner: root
+    group: root
+    mode: "0640"
+    content: >-
+      {{ {'run_id': mmd_run_id, 'finished': lookup('ansible.builtin.pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ'),
+          'selected': mmd_selected, 'profiles': mmd_profiles_used,
+          'artifacts': mmd_artifacts | default({}), 'artifact_mode': mmd_artifact_mode | default('none'),
+          'artifact_warnings': mmd_artifact_warnings | default([]),
+          'mattermost_previous': mmd_mattermost_previous | default(''),
+          'findings': mmd_findings, 'deploy_failed': mmd_deploy_failed | default(false),
+          'deploy_error': mmd_deploy_error | default('')} | to_nice_json }}
+  when: not (mmd_skip_state_save | default(false))
+
+- name: Start a fresh set of results
+  ansible.builtin.set_fact:
+    mmd_results: []
+    mmd_versions: {}
+
+- name: Run host checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: verify
+
+- name: Run component checks
+  ansible.builtin.include_role:
+    name: "{{ component }}"
+    tasks_from: verify
+  loop: "{{ mmd_selected }}"
+  loop_control:
+    loop_var: component
+
+- name: Save the results
+  ansible.builtin.copy:
+    dest: "{{ deploy_state_dir }}/results/{{ mmd_run_id }}.json"
+    owner: root
+    group: root
+    mode: "0640"
+    content: "{{ {'run_id': mmd_run_id, 'results': mmd_results, 'versions': mmd_versions} | to_nice_json }}"
+
+- name: Point latest.json at these results
+  ansible.builtin.file:
+    src: "{{ deploy_state_dir }}/results/{{ mmd_run_id }}.json"
+    dest: "{{ deploy_state_dir }}/results/latest.json"
+    state: link
+    force: true
+
+- name: Write the architecture report
+  ansible.builtin.include_role:
+    name: report
+
+- name: Summarise the checks
+  ansible.builtin.debug:
+    msg:
+      - "Checks: {{ mmd_results | selectattr('status', 'equalto', 'pass') | list | length }} passed,
+         {{ mmd_results | selectattr('status', 'equalto', 'warn') | list | length }} warnings,
+         {{ mmd_results | selectattr('status', 'equalto', 'fail') | list | length }} failed,
+         {{ mmd_results | selectattr('status', 'equalto', 'skip') | list | length }} skipped"
+      - "Report: {{ mmd_report_path }}"
+
+- name: Show failed and warning checks
+  ansible.builtin.debug:
+    msg: "[{{ item.status | upper }}] {{ item.component }}: {{ item.name }} ({{ item.detail }})"
+  loop: "{{ mmd_results | selectattr('status', 'in', ['fail', 'warn']) | list }}"
+  loop_control:
+    label: "{{ item.component }}: {{ item.name }}"
+
+- name: Fail the run if the install broke or a critical check failed
+  ansible.builtin.assert:
+    that:
+      - not (mmd_deploy_failed | default(false) | bool)
+      - mmd_results | selectattr('status', 'equalto', 'fail') | list | length == 0
+    fail_msg: >-
+      {{ ('Install failed at ' ~ mmd_deploy_error ~ '. ') if mmd_deploy_failed | default(false) | bool else '' }}{{
+      (mmd_results | selectattr('status', 'equalto', 'fail') | list | length) }} critical checks failed.
+      The report at {{ mmd_report_path }} has the detail.
+    success_msg: "Deployment verified. Report: {{ mmd_report_path }}"

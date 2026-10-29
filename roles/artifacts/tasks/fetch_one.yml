@@ -1,0 +1,106 @@
+---
+# Fetch one artifact into the cache, then prove it is the file the vendor published.
+- name: "{{ _art_item.key }} | set paths"
+  ansible.builtin.set_fact:
+    _art: "{{ _art_item.value }}"
+    _art_dir: "{{ artifact_cache_dir }}/{{ _art_item.key }}/{{ _art_item.value.version }}"
+    _art_remote: "{{ _art_item.value.url is match('^https?://') }}"
+    _gpg_ok: false
+
+- name: "{{ _art.name }} | create cache directory"
+  ansible.builtin.file:
+    path: "{{ _art_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: "{{ _art.name }} | download {{ _art.version }}"
+  ansible.builtin.get_url:
+    url: "{{ _art.url }}"
+    dest: "{{ _art_dir }}/{{ _art.filename }}"
+    checksum: "{{ _art.checksum | default('', true) }}"
+    mode: "0644"
+    timeout: 120
+  when: _art_remote | bool
+  register: _dl
+  retries: 3
+  delay: 5
+  until: _dl is succeeded
+
+- name: "{{ _art.name }} | copy {{ _art.version }} from the offline source"
+  ansible.builtin.copy:
+    src: "{{ _art.url }}"
+    dest: "{{ _art_dir }}/{{ _art.filename }}"
+    remote_src: true
+    mode: "0644"
+  when: not (_art_remote | bool)
+
+- name: "{{ _art.name }} | compute checksums"
+  ansible.builtin.stat:
+    path: "{{ _art_dir }}/{{ _art.filename }}"
+    checksum_algorithm: "{{ (_art.checksum.split(':')[0]) if _art.checksum else 'sha256' }}"
+  register: _art_stat
+
+- name: "{{ _art.name }} | compute sha256 for the record"
+  ansible.builtin.stat:
+    path: "{{ _art_dir }}/{{ _art.filename }}"
+    checksum_algorithm: sha256
+  register: _art_sha256
+
+- name: "{{ _art.name }} | fetch the detached signature"
+  when: _art.sig_url | default('') | length > 0
+  block:
+    - name: "{{ _art.name }} | download signature"
+      ansible.builtin.get_url:
+        url: "{{ _art.sig_url }}"
+        dest: "{{ _art_dir }}/{{ _art.filename }}.sig"
+        mode: "0644"
+      when: _art.sig_url is match('^https?://')
+
+    - name: "{{ _art.name }} | copy signature"
+      ansible.builtin.copy:
+        src: "{{ _art.sig_url }}"
+        dest: "{{ _art_dir }}/{{ _art.filename }}.sig"
+        remote_src: true
+        mode: "0644"
+      when: not (_art.sig_url is match('^https?://'))
+
+    - name: "{{ _art.name }} | verify signature"
+      ansible.builtin.include_tasks: gpg_verify.yml
+      vars:
+        _gpg_file: "{{ _art_dir }}/{{ _art.filename }}"
+        _gpg_sig: "{{ _art_dir }}/{{ _art.filename }}.sig"
+        _gpg_key: "{{ role_path }}/files/{{ _art.gpg_key }}"
+        _gpg_fpr: "{{ _art.gpg_fingerprint }}"
+
+- name: "{{ _art.name }} | record the result"
+  ansible.builtin.set_fact:
+    mmd_artifacts: >-
+      {{ mmd_artifacts | combine({_art.name: _art | combine({
+           'path': _art_dir ~ '/' ~ _art.filename,
+           'sha256': _art_sha256.stat.checksum,
+           'checksum_verified': _checksum_ok,
+           'signature': _sig_state,
+         })}) }}
+  vars:
+    _expected: "{{ _art.checksum.split(':')[-1] if _art.checksum else '' }}"
+    _checksum_ok: "{{ (_expected | length > 0) and (_art_stat.stat.checksum == _expected) }}"
+    _sig_state: >-
+      {{ ('verified' if _gpg_ok | default(false) | bool else 'FAILED')
+         if (_art.sig_url | default('') | length > 0) else 'not published' }}
+
+- name: "{{ _art.name }} | refuse anything that failed verification"
+  ansible.builtin.assert:
+    that:
+      - _rec.signature != 'FAILED'
+      - _rec.checksum_verified | bool or _rec.checksum | length == 0
+      - _rec.checksum_verified | bool or _rec.signature == 'verified' or artifact_allow_unverified | bool
+      - not (artifact_require_signature | bool and _rec.name in artifacts_signed and _rec.signature != 'verified')
+      - _rec.name != 'mattermost' or mattermost_sha256 | length == 0 or mattermost_sha256 | lower == _rec.sha256
+    fail_msg: >-
+      {{ _rec.name }} {{ _rec.version }} failed verification
+      (checksum verified: {{ _rec.checksum_verified }}, signature: {{ _rec.signature }}).
+      The file is in {{ _rec.path }}. Do not install it. Check the source, or set
+      artifact_allow_unverified only if you have checked it some other way.
+    success_msg: "{{ _rec.name }} {{ _rec.version }}: checksum {{ 'ok' if _rec.checksum_verified else 'n/a' }}, signature {{ _rec.signature }}"
+  vars:
+    _rec: "{{ mmd_artifacts[_art_item.key] }}"

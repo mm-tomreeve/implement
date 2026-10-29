@@ -1,0 +1,119 @@
+---
+# Our own CA and certificates. Never the OpenSearch demo certificates, whose keys are public.
+- name: Create the certificate directory
+  ansible.builtin.file:
+    path: "{{ opensearch_cert_dir }}"
+    state: directory
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    mode: "0750"
+
+- name: Create the root CA
+  ansible.builtin.command:
+    argv: [openssl, req, -x509, -newkey, rsa:3072, -nodes, -days, "{{ opensearch_cert_days }}",
+           -subj, "{{ opensearch_cert_org }}/CN=mattermost-implement search CA",
+           -keyout, "{{ opensearch_cert_dir }}/root-ca-key.pem", -out, "{{ opensearch_cert_dir }}/root-ca.pem"]
+    creates: "{{ opensearch_cert_dir }}/root-ca.pem"
+
+- name: Write the node certificate extensions
+  ansible.builtin.copy:
+    dest: "{{ opensearch_cert_dir }}/node.ext"
+    mode: "0640"
+    content: |
+      subjectAltName = DNS:{{ ansible_facts['fqdn'] }}, DNS:{{ ansible_facts['hostname'] }}, DNS:localhost, IP:127.0.0.1{% for ip in ansible_facts['all_ipv4_addresses'] | default([]) | reject('equalto', '127.0.0.1') %}, IP:{{ ip }}{% endfor %}
+
+      extendedKeyUsage = serverAuth, clientAuth
+      keyUsage = digitalSignature, keyEncipherment
+
+- name: Create the node and admin keys and certificates
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cd {{ opensearch_cert_dir }}
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out {{ item.name }}-key.pem
+    openssl req -new -key {{ item.name }}-key.pem -subj "{{ item.subj }}" -out {{ item.name }}.csr
+    openssl x509 -req -in {{ item.name }}.csr -CA root-ca.pem -CAkey root-ca-key.pem -CAcreateserial \
+      -days {{ opensearch_cert_days }} -sha256 {{ item.ext }} -out {{ item.name }}.pem
+    rm -f {{ item.name }}.csr
+  args:
+    executable: /bin/bash
+    creates: "{{ opensearch_cert_dir }}/{{ item.name }}.pem"
+  loop:
+    - {name: node, subj: "{{ opensearch_cert_org }}/CN={{ ansible_facts['fqdn'] }}", ext: "-extfile node.ext"}
+    - {name: admin, subj: "{{ opensearch_cert_org }}/CN=admin", ext: ""}
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart opensearch
+
+- name: Set certificate ownership and modes
+  ansible.builtin.file:
+    path: "{{ opensearch_cert_dir }}/{{ item.file }}"
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {file: root-ca.pem, mode: "0644"}
+    - {file: root-ca-key.pem, mode: "0600"}
+    - {file: node.pem, mode: "0644"}
+    - {file: node-key.pem, mode: "0600"}
+    - {file: admin.pem, mode: "0644"}
+    - {file: admin-key.pem, mode: "0600"}
+
+# bcrypt hashes differ on every run, so keep them and only re-hash when a
+# password actually changes. Otherwise every run would restart OpenSearch.
+- name: Read stored password hashes
+  ansible.builtin.slurp:
+    path: "{{ opensearch_conf_dir }}/.mmd-user-hashes.json"
+  register: _os_hash_raw
+  failed_when: false
+  no_log: true
+
+- name: Settle which users need a new hash
+  ansible.builtin.set_fact:
+    _os_hash_store: "{{ (_os_hash_raw.content | b64decode | from_json) if _os_hash_raw.content is defined else {} }}"
+    _os_users_wanted:
+      admin: "{{ mmd_secrets.opensearch_admin_password }}"
+      mattermost: "{{ mmd_secrets.opensearch_mattermost_password }}"
+  no_log: true
+
+- name: Hash new or changed passwords
+  ansible.builtin.command:
+    # The tarball ships these tools without the execute bit, so run them through bash.
+    argv: [bash, "{{ opensearch_version_dir }}/plugins/opensearch-security/tools/hash.sh", -env, MMD_OS_PASSWORD]
+  environment:
+    OPENSEARCH_JAVA_HOME: "{{ opensearch_version_dir }}/jdk"
+    JAVA_HOME: "{{ opensearch_version_dir }}/jdk"
+    MMD_OS_PASSWORD: "{{ item.value }}"
+  loop: "{{ _os_users_wanted | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: (_os_hash_store[item.key].fp | default('')) != (item.value | hash('sha256'))
+  register: _os_new_hashes
+  changed_when: true
+  no_log: true
+
+- name: Update the stored hashes
+  ansible.builtin.set_fact:
+    _os_hash_store: >-
+      {{ _os_hash_store | combine({item.item.key: {'fp': item.item.value | hash('sha256'),
+                                                   'hash': item.stdout_lines | last}}) }}
+  loop: "{{ _os_new_hashes.results | selectattr('stdout_lines', 'defined') | list }}"
+  no_log: true
+
+- name: Save the hashes
+  ansible.builtin.copy:
+    content: "{{ _os_hash_store | to_nice_json }}"
+    dest: "{{ opensearch_conf_dir }}/.mmd-user-hashes.json"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Write internal_users.yml
+  ansible.builtin.template:
+    src: internal_users.yml.j2
+    dest: "{{ opensearch_conf_dir }}/opensearch-security/internal_users.yml"
+    owner: "{{ opensearch_user }}"
+    group: "{{ opensearch_user }}"
+    mode: "0600"
+  register: _os_users
+  no_log: true

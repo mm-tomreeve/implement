@@ -1,0 +1,131 @@
+---
+- name: Enable the PostgreSQL {{ postgresql_version }} module stream (RHEL 9)
+  ansible.builtin.command: dnf -y module enable postgresql:{{ postgresql_version }}
+  register: _pg_module
+  changed_when: "'Nothing to do' not in _pg_module.stdout"
+  when: ansible_facts['distribution_major_version'] == '9'
+
+- name: Install PostgreSQL
+  ansible.builtin.dnf:
+    name: "{{ postgresql_packages }}"
+    state: present
+
+- name: Initialise the cluster
+  ansible.builtin.command: postgresql-setup --initdb
+  args:
+    creates: "{{ postgresql_data_dir }}/PG_VERSION"
+  environment:
+    PGSETUP_INITDB_OPTIONS: "{{ postgresql_initdb_options }}"
+
+- name: Label a non-standard port for SELinux
+  ansible.builtin.command: semanage port -a -t postgresql_port_t -p tcp {{ postgresql_port }}
+  register: _pg_seport
+  changed_when: _pg_seport.rc == 0
+  failed_when: _pg_seport.rc != 0 and 'already defined' not in _pg_seport.stderr
+  when:
+    - selinux_manage | bool
+    - postgresql_port | int != 5432
+
+- name: Create the conf.d directory
+  ansible.builtin.file:
+    path: "{{ postgresql_data_dir }}/conf.d"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+
+- name: Include conf.d from postgresql.conf
+  ansible.builtin.lineinfile:
+    path: "{{ postgresql_data_dir }}/postgresql.conf"
+    regexp: "^#?include_dir\\s*="
+    line: "include_dir = 'conf.d'"
+  notify: Restart postgresql
+
+- name: Create a self-signed server certificate for remote clients
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -x509
+      - -newkey
+      - rsa:3072
+      - -nodes
+      - -days
+      - "1825"
+      - -subj
+      - "/CN={{ ansible_facts['fqdn'] }}"
+      - -keyout
+      - "{{ postgresql_data_dir }}/server.key"
+      - -out
+      - "{{ postgresql_data_dir }}/server.crt"
+    creates: "{{ postgresql_data_dir }}/server.crt"
+  when: mmd_postgresql_ssl | bool
+  notify: Restart postgresql
+
+- name: Lock down the server key
+  ansible.builtin.file:
+    path: "{{ postgresql_data_dir }}/{{ item }}"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  loop: [server.key, server.crt]
+  when: mmd_postgresql_ssl | bool
+
+- name: Write Mattermost tuning
+  ansible.builtin.template:
+    src: mattermost.conf.j2
+    dest: "{{ postgresql_data_dir }}/conf.d/mattermost.conf"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  notify: Restart postgresql
+
+- name: Write pg_hba.conf
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ postgresql_data_dir }}/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+    backup: true
+  notify: Reload postgresql
+
+- name: Start PostgreSQL
+  ansible.builtin.systemd:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Apply pending restarts before creating the database
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for PostgreSQL to accept connections
+  ansible.builtin.wait_for:
+    port: "{{ postgresql_port }}"
+    host: 127.0.0.1
+    timeout: 60
+
+- name: Create the Mattermost role and database
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -v, ON_ERROR_STOP=1, -p, "{{ postgresql_port }}", -d, postgres]
+    stdin: |
+      \set mm_user '{{ mattermost_db_user | replace("\\", "\\\\") | replace("'", "''") }}'
+      \set mm_db '{{ mattermost_db_name | replace("\\", "\\\\") | replace("'", "''") }}'
+      \set mm_pass '{{ mmd_secrets.db_password | replace("\\", "\\\\") | replace("'", "''") }}'
+      SELECT format('CREATE ROLE %I LOGIN', :'mm_user') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'mm_user')\gexec
+      SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'mm_user', :'mm_pass')\gexec
+      SELECT format('CREATE DATABASE %I OWNER %I ENCODING ''UTF8'' TEMPLATE template0', :'mm_db', :'mm_user') WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'mm_db')\gexec
+      SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', :'mm_db')\gexec
+  register: _pg_sql
+  changed_when: "'CREATE' in _pg_sql.stdout"
+  no_log: true
+
+- name: Open the PostgreSQL port to the Mattermost servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ postgresql_port }}", proto: tcp}]
+    fw_sources: "{{ postgresql_allowed_clients }}"
+    fw_public: false
+  when: postgresql_allowed_clients | length > 0

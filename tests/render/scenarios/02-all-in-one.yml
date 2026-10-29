@@ -1,0 +1,13 @@
+---
+# Render scenario: an answer file plus render_* keys for the fake host.
+render_host: lab01
+render_ram: 8000
+render_cpus: 4
+deploy_name: lab
+deploy_profiles: [all-in-one]
+mattermost_site_url: https://lab.example.internal
+mattermost_license_file: /root/licence.mattermost-license
+tls_mode: provided
+tls_cert_file: /root/lab.crt
+tls_key_file: /root/lab.key
+rtcd_ice_host_override: 203.0.113.10

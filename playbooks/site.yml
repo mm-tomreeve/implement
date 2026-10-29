@@ -1,0 +1,34 @@
+---
+# Deploy the selected Mattermost components on this server, test them and
+# write the architecture report. Run through install.sh, which sets
+# deploy_online and passes the answer file.
+- name: Deploy Mattermost components on this server
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: Plan, secrets and baseline
+      ansible.builtin.include_role:
+        name: common
+
+    - name: Install the components
+      block:
+        - name: Fetch and verify artifacts
+          ansible.builtin.include_role:
+            name: artifacts
+
+        - name: Install each component in order
+          ansible.builtin.include_role:
+            name: "{{ component }}"
+          loop: "{{ mmd_selected }}"
+          loop_control:
+            loop_var: component
+      rescue:
+        - name: Remember what failed so the report can say so
+          ansible.builtin.set_fact:
+            mmd_deploy_failed: true
+            mmd_deploy_error: >-
+              {{ ansible_failed_task.name | default('unknown task') }}:
+              {{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('no message')) | string | truncate(400) }}
+
+    - name: Save state, verify and report
+      ansible.builtin.include_tasks: tasks/finish.yml

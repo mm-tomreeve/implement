@@ -1,0 +1,59 @@
+# Settings this toolkit owns in config.json. Everything else stays as Mattermost
+# or the System Console set it.
+{% set dsn = 'postgres://' ~ (mattermost_db_user | urlencode | replace('/', '%2F')) ~ ':'
+   ~ (mmd_secrets.db_password | urlencode | replace('/', '%2F')) ~ '@' ~ mmd_db_host ~ ':' ~ mattermost_db_port
+   ~ '/' ~ mattermost_db_name ~ '?sslmode=' ~ mmd_db_sslmode ~ '&connect_timeout=10&binary_parameters=yes' %}
+ServiceSettings:
+  SiteURL: {{ mattermost_site_url | to_json }}
+  ListenAddress: {{ ((mmd_mattermost_listen if mmd_mattermost_listen != '0.0.0.0' else '') ~ ':' ~ mattermost_port) | to_json }}
+  EnableLocalMode: true
+  LocalModeSocketLocation: {{ mattermost_local_socket | to_json }}
+{% if mattermost_license_file | length > 0 %}
+  LicenseFileLocation: {{ mattermost_license_dest | to_json }}
+{% endif %}
+SqlSettings:
+  DriverName: postgres
+  DataSource: {{ dsn | to_json }}
+FileSettings:
+  DriverName: {{ mattermost_file_driver | to_json }}
+{% if mattermost_file_driver == 'local' %}
+  Directory: {{ (mattermost_data_dir ~ '/') | to_json }}
+{% else %}
+  AmazonS3Endpoint: {{ mattermost_s3_endpoint | to_json }}
+  AmazonS3Bucket: {{ mattermost_s3_bucket | to_json }}
+  AmazonS3Region: {{ mattermost_s3_region | to_json }}
+  AmazonS3AccessKeyId: {{ mattermost_s3_access_key | to_json }}
+  AmazonS3SecretAccessKey: {{ mattermost_s3_secret_key | to_json }}
+  AmazonS3SSL: {{ mattermost_s3_ssl | bool | to_json }}
+  AmazonS3PathPrefix: {{ mattermost_s3_path_prefix | to_json }}
+{% endif %}
+LogSettings:
+  FileLocation: {{ mattermost_log_dir | to_json }}
+PluginSettings:
+  Directory: {{ mattermost_plugin_dir | to_json }}
+  ClientDirectory: {{ mattermost_client_plugin_dir | to_json }}
+{% if mmd_rtcd_url | length > 0 %}
+  Plugins:
+    com.mattermost.calls:
+      rtcdserviceurl: {{ mmd_rtcd_url | to_json }}
+{% endif %}
+{% if mmd_mattermost_metrics | bool %}
+MetricsSettings:
+  Enable: true
+  ListenAddress: {{ ((mmd_exporter_bind if mmd_exporter_bind != '0.0.0.0' else '') ~ ':' ~ mattermost_metrics_port) | to_json }}
+{% endif %}
+{% if mmd_opensearch_url | length > 0 %}
+ElasticsearchSettings:
+  ConnectionURL: {{ mmd_opensearch_url | to_json }}
+  Backend: opensearch
+{% if mmd_opensearch_url is match('^https://') %}
+  Username: {{ mattermost_opensearch_username | to_json }}
+  Password: {{ mmd_secrets.opensearch_mattermost_password | to_json }}
+  SkipTLSVerification: false
+  # The search CA is in the system trust store; CA here would be read from the file store.
+  CA: ""
+{% endif %}
+  EnableIndexing: {{ mattermost_search_enable | bool | to_json }}
+  EnableSearching: {{ mattermost_search_enable | bool | to_json }}
+  EnableAutocomplete: {{ mattermost_search_enable | bool | to_json }}
+{% endif %}

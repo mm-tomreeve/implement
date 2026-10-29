@@ -1,0 +1,159 @@
+---
+- name: Probe the Mattermost service
+  ansible.builtin.command: systemctl is-active mattermost  # noqa: command-instead-of-module
+  register: _v_mm_service
+  changed_when: false
+  failed_when: false
+
+- name: Ask Mattermost for its health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ mattermost_port }}/api/v4/system/ping?get_server_status=true"
+    return_content: true
+    timeout: 15
+  register: _v_mm_ping
+  failed_when: false
+
+- name: Ask mmctl for the server version over the local socket
+  ansible.builtin.command:
+    argv: ["{{ mattermost_dir }}/bin/mmctl", --local, system, version]
+  environment:
+    MMCTL_LOCAL_SOCKET_PATH: "{{ mattermost_local_socket }}"
+  register: _v_mm_version
+  changed_when: false
+  failed_when: false
+
+- name: Read the live config.json
+  ansible.builtin.slurp:
+    path: "{{ mattermost_config_dir }}/config.json"
+  register: _v_mm_config
+  failed_when: false
+  no_log: true
+
+- name: Check the data directory is writable by Mattermost
+  ansible.builtin.command:
+    argv: [runuser, -u, "{{ mattermost_user }}", --, test, -w, "{{ mattermost_data_dir }}"]
+  register: _v_mm_datadir
+  changed_when: false
+  failed_when: false
+  when: mattermost_file_driver == 'local'
+
+- name: Count recent errors in the Mattermost log
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    tail -n 500 {{ mattermost_log_dir }}/mattermost.log 2>/dev/null | grep -c '"level":"error"' || true
+  args:
+    executable: /bin/bash
+  register: _v_mm_errors
+  changed_when: false
+  failed_when: false
+
+- name: Fetch Mattermost metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ mattermost_metrics_port }}/metrics"
+    timeout: 10
+  register: _v_mm_metrics
+  failed_when: false
+  when: mmd_mattermost_metrics | bool
+
+- name: Check rtcd is reachable from Mattermost
+  ansible.builtin.uri:
+    url: "{{ mmd_rtcd_url | regex_replace('/+$', '') }}/version"
+    timeout: 10
+    return_content: true
+  register: _v_mm_rtcd
+  failed_when: false
+  when: mmd_rtcd_url | length > 0
+
+- name: Check OpenSearch is reachable from Mattermost
+  ansible.builtin.uri:
+    url: "{{ mmd_opensearch_url | regex_replace('/+$', '') }}/_cluster/health"
+    timeout: 10
+    return_content: true
+    user: "{{ mattermost_opensearch_username if mmd_opensearch_url is match('^https://') else omit }}"
+    password: "{{ mmd_secrets.opensearch_mattermost_password if mmd_opensearch_url is match('^https://') else omit }}"
+    force_basic_auth: "{{ mmd_opensearch_url is match('^https://') }}"
+  register: _v_mm_search
+  failed_when: false
+  no_log: true
+  when: mmd_opensearch_url | length > 0
+
+- name: Keep the running Mattermost version for the report
+  ansible.builtin.set_fact:
+    mmd_versions: "{{ mmd_versions | default({}) | combine({'mattermost': _running}) }}"
+  vars:
+    _running: "{{ _v_mm_version.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('unknown', true) }}"
+
+- name: Record Mattermost checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _ping: "{{ _v_mm_ping.json | default({}) }}"
+    _cfg: "{{ (_v_mm_config.content | b64decode | from_json) if _v_mm_config.content is defined else {} }}"
+    _expected_version: "{{ mmd_artifacts.mattermost.version | default('unknown') }}"
+    _licensed: "{{ mattermost_license_file | length > 0 }}"
+    checks:
+      - component: mattermost
+        name: Service is active
+        ok: "{{ _v_mm_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_mm_service.stdout }}"
+      - component: mattermost
+        name: API ping returns OK
+        ok: "{{ _ping.status | default('') == 'OK' }}"
+        detail: "HTTP {{ _v_mm_ping.status | default('none') }}, status {{ _ping.status | default('none') }}"
+      - component: mattermost
+        name: Database reachable from Mattermost
+        ok: "{{ _ping.database_status | default('') == 'OK' }}"
+        detail: "database_status {{ _ping.database_status | default('unknown') }} ({{ mmd_db_host }}:{{ mattermost_db_port }}, sslmode={{ mmd_db_sslmode }})"
+      - component: mattermost
+        name: File store reachable from Mattermost
+        ok: "{{ _ping.filestore_status | default('') == 'OK' }}"
+        detail: "filestore_status {{ _ping.filestore_status | default('unknown') }} ({{ mattermost_file_driver }})"
+      - component: mattermost
+        name: Running version matches the verified artifact
+        ok: "{{ _expected_version in _v_mm_version.stdout }}"
+        detail: "expected {{ _expected_version }}, mmctl says: {{ _v_mm_version.stdout | default('') | trim | truncate(80) }}"
+      - component: mattermost
+        name: mmctl local mode works
+        severity: warning
+        ok: "{{ _v_mm_version.rc == 0 }}"
+        detail: "{{ 'socket ' ~ mattermost_local_socket if _v_mm_version.rc == 0 else _v_mm_version.stderr | default('') | truncate(120) }}"
+      - component: mattermost
+        name: SiteURL is set as requested
+        ok: "{{ _cfg.ServiceSettings.SiteURL | default('') == mattermost_site_url }}"
+        detail: "SiteURL = {{ _cfg.ServiceSettings.SiteURL | default('unset') }}"
+      - component: mattermost
+        name: Data directory writable by {{ mattermost_user }}
+        status: "{{ ('pass' if _v_mm_datadir.rc == 0 else 'fail') if mattermost_file_driver == 'local' else 'skip' }}"
+        detail: "{{ mattermost_data_dir if mattermost_file_driver == 'local' else 'S3 storage in use' }}"
+      - component: mattermost
+        name: No errors in the last 500 log lines
+        severity: warning
+        ok: "{{ (_v_mm_errors.stdout | default('0') | trim | int) == 0 }}"
+        detail: "{{ _v_mm_errors.stdout | default('0') | trim }} error lines in {{ mattermost_log_dir }}/mattermost.log"
+      - component: mattermost
+        name: Metrics endpoint answers
+        severity: info
+        status: >-
+          {{ 'skip' if not (mmd_mattermost_metrics | bool)
+             else ('pass' if _v_mm_metrics.status | default(0) == 200 else 'warn') }}
+        detail: >-
+          {{ 'Team Edition has no metrics' if not (mmd_mattermost_metrics | bool)
+             else ('HTTP 200' if _v_mm_metrics.status | default(0) == 200
+                   else 'not answering; metrics need an Enterprise licence' ~ ('' if _licensed else ' and none is installed yet')) }}
+      - component: mattermost
+        name: Calls plugin points at rtcd
+        status: >-
+          {{ 'skip' if mmd_rtcd_url | length == 0
+             else ('pass' if (_cfg.PluginSettings.Plugins['com.mattermost.calls'].rtcdserviceurl | default('')) == mmd_rtcd_url else 'fail') }}
+        detail: "{{ mmd_rtcd_url if mmd_rtcd_url | length > 0 else 'built-in Calls media server' }}"
+      - component: mattermost
+        name: rtcd reachable from Mattermost
+        status: "{{ 'skip' if mmd_rtcd_url | length == 0 else ('pass' if _v_mm_rtcd.status | default(0) == 200 else 'fail') }}"
+        detail: "{{ ('HTTP ' ~ (_v_mm_rtcd.status | default('none'))) if mmd_rtcd_url | length > 0 else 'no rtcd configured' }}"
+      - component: mattermost
+        name: OpenSearch reachable from Mattermost
+        status: "{{ 'skip' if mmd_opensearch_url | length == 0 else ('pass' if _v_mm_search.status | default(0) == 200 else 'fail') }}"
+        detail: >-
+          {{ ('HTTP ' ~ (_v_mm_search.status | default('none')) ~ ', cluster ' ~ (_v_mm_search.json.status | default('unknown')))
+             if mmd_opensearch_url | length > 0 else 'no search backend configured' }}

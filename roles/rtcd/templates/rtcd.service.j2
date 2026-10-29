@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Mattermost Calls rtcd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ rtcd_bin }} --config {{ rtcd_conf_dir }}/config.toml
+WorkingDirectory={{ rtcd_data_dir }}
+User={{ rtcd_user }}
+Group={{ rtcd_user }}
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths={{ rtcd_data_dir }}
+
+[Install]
+WantedBy=multi-user.target

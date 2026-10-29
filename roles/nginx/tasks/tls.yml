@@ -1,0 +1,91 @@
+---
+# Take the certificate and key from the paths in the answer file, or from a
+# directory holding <server_name>.crt/.key or tls.crt/tls.key.
+- name: Look for certificates in tls_source_dir
+  ansible.builtin.stat:
+    path: "{{ tls_source_dir }}/{{ item }}"
+  loop:
+    - "{{ nginx_server_name }}.crt"
+    - "{{ nginx_server_name }}.key"
+    - tls.crt
+    - tls.key
+    - chain.crt
+  register: _tls_dir_files
+  when: tls_source_dir | length > 0
+
+- name: Settle certificate paths
+  ansible.builtin.set_fact:
+    _tls_cert_src: >-
+      {{ tls_cert_file if tls_cert_file | length > 0
+         else (_found | select('search', '\.crt$') | reject('search', 'chain\.crt$') | first | default('')) }}
+    _tls_key_src: >-
+      {{ tls_key_file if tls_key_file | length > 0
+         else (_found | select('search', '\.key$') | first | default('')) }}
+    _tls_chain_src: >-
+      {{ tls_chain_file if tls_chain_file | length > 0
+         else (_found | select('search', 'chain\.crt$') | first | default('')) }}
+  vars:
+    _found: >-
+      {{ (_tls_dir_files.results | default([])) | selectattr('stat', 'defined')
+         | selectattr('stat.exists') | map(attribute='stat.path') | list }}
+
+- name: Stop if the certificate or key is missing
+  ansible.builtin.assert:
+    that:
+      - _tls_cert_src | length > 0
+      - _tls_key_src | length > 0
+    fail_msg: >-
+      tls_mode is 'provided' but no certificate and key were found. Set tls_cert_file and
+      tls_key_file, or put {{ nginx_server_name }}.crt/.key (or tls.crt/tls.key) in
+      tls_source_dir. To carry on without TLS for now, set tls_mode: later.
+
+- name: Check the certificate and key belong together
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    test "$(openssl x509 -in '{{ _tls_cert_src }}' -noout -pubkey | openssl sha256)"
+    = "$(openssl pkey -in '{{ _tls_key_src }}' -pubout | openssl sha256)"
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Create the TLS directory
+  ansible.builtin.file:
+    path: "{{ tls_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Read the certificate
+  ansible.builtin.slurp:
+    path: "{{ _tls_cert_src }}"
+  register: _tls_cert
+
+- name: Read the chain
+  ansible.builtin.slurp:
+    path: "{{ _tls_chain_src }}"
+  register: _tls_chain
+  when: _tls_chain_src | length > 0
+
+- name: Install the full-chain certificate
+  ansible.builtin.copy:
+    content: |-
+      {{ _tls_cert.content | b64decode | trim }}
+      {% if _tls_chain.content is defined %}
+      {{ _tls_chain.content | b64decode | trim }}
+      {% endif %}
+    dest: "{{ tls_install_dir }}/mattermost.crt"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Install the private key
+  ansible.builtin.copy:
+    src: "{{ _tls_key_src }}"
+    dest: "{{ tls_install_dir }}/mattermost.key"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reload nginx

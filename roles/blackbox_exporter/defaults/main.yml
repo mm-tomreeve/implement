@@ -1,0 +1,3 @@
+---
+blackbox_exporter_user: blackbox_exporter
+blackbox_exporter_conf_dir: /etc/blackbox_exporter

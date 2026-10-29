@@ -1,0 +1,12 @@
+---
+# Smoke test: the core profile in a container. firewalld and SELinux don't work in
+# containers, so the roles leave them alone here.
+deploy_name: smoke
+deploy_profiles: [core]
+deploy_internet: auto
+mattermost_site_url: http://localhost
+mattermost_edition: enterprise
+mattermost_version_channel: latest-esr
+tls_mode: later
+firewall_manage: false
+selinux_manage: false

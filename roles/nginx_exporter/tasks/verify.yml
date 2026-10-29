@@ -1,0 +1,20 @@
+---
+- name: Fetch nginx exporter metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ nginx_exporter_port }}/metrics"
+    return_content: true
+    timeout: 10
+  register: _v_ngxe
+  failed_when: false
+
+- name: Record nginx_exporter checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    checks:
+      - component: nginx_exporter
+        name: Exporter reads Nginx stub_status (nginx_up 1)
+        severity: warning
+        ok: "{{ _v_ngxe.content | default('') is search('(?m)^nginx_up 1') }}"
+        detail: "HTTP {{ _v_ngxe.status | default('none') }} on port {{ nginx_exporter_port }}"

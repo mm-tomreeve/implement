@@ -1,0 +1,11 @@
+---
+opensearch_user: opensearch
+opensearch_version_dir: "/opt/opensearch-{{ mmd_artifacts.opensearch.version }}"
+opensearch_cert_dir: "{{ opensearch_conf_dir }}/certs"
+opensearch_cert_days: 1825
+opensearch_cert_org: /O=Mattermost/OU=mattermost-implement
+opensearch_admin_dn: CN=admin,OU=mattermost-implement,O=Mattermost
+opensearch_node_dn: "CN={{ ansible_facts['fqdn'] }},OU=mattermost-implement,O=Mattermost"
+opensearch_env:
+  OPENSEARCH_PATH_CONF: "{{ opensearch_conf_dir }}"
+  OPENSEARCH_JAVA_HOME: "{{ opensearch_dir }}/jdk"

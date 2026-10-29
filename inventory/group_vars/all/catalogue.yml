@@ -1,0 +1,309 @@
+---
+# What each component is, where it lives and what it listens on.
+# The report role reads this, so keep it accurate when a role changes.
+# Values that depend on wiring use the mmd_* facts set by roles/common/tasks/wiring.yml.
+
+mmd_catalogue:
+  postgresql:
+    title: PostgreSQL {{ postgresql_version }}
+    summary: Primary relational database for Mattermost.
+    source: RHEL AppStream (dnf)
+    service: postgresql
+    user: postgres
+    paths:
+      config: "{{ postgresql_data_dir }}/postgresql.conf, {{ postgresql_data_dir }}/conf.d/mattermost.conf"
+      data: "{{ postgresql_data_dir }}"
+      logs: "{{ postgresql_data_dir }}/log"
+    min_ram_mb: 2048
+    min_cpus: 2
+    ports:
+      - port: "{{ postgresql_port }}"
+        proto: tcp
+        purpose: SQL from Mattermost app servers
+        allowed: "{{ postgresql_allowed_clients | join(', ') if postgresql_allowed_clients else 'localhost only' }}"
+
+  mattermost:
+    title: Mattermost {{ mattermost_edition | capitalize }}
+    summary: Mattermost application server (tarball install).
+    source: releases.mattermost.com tarball
+    service: mattermost
+    user: "{{ mattermost_user }}"
+    paths:
+      install: "{{ mattermost_dir }} -> {{ mattermost_install_root }}/mattermost-<version>"
+      config: "{{ mattermost_config_dir }}/config.json"
+      data: "{{ mattermost_data_dir if mattermost_file_driver == 'local' else 's3://' ~ mattermost_s3_bucket }}"
+      logs: "{{ mattermost_log_dir }}"
+    min_ram_mb: 4096
+    min_cpus: 2
+    ports:
+      - port: "{{ mattermost_port }}"
+        proto: tcp
+        purpose: HTTP and websocket (behind the reverse proxy)
+        allowed: "{{ 'localhost only' if mmd_mattermost_listen == '127.0.0.1' else (mattermost_proxy_sources | join(', ') if mattermost_proxy_sources else 'any') }}"
+      - port: "{{ mattermost_metrics_port }}"
+        proto: tcp
+        purpose: Prometheus metrics (Enterprise)
+        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+      - port: "{{ mattermost_calls_port }}"
+        proto: udp/tcp
+        purpose: Built-in Calls media (only when no rtcd is configured)
+        allowed: "{{ 'any' if mmd_calls_integrated else 'not used' }}"
+
+  nginx:
+    title: Nginx reverse proxy
+    summary: TLS termination and reverse proxy in front of Mattermost.
+    source: RHEL AppStream (dnf)
+    service: nginx
+    user: nginx
+    paths:
+      config: /etc/nginx/conf.d/mattermost.conf
+      tls: "{{ tls_install_dir if tls_mode == 'provided' else 'not configured yet' }}"
+      logs: /var/log/nginx
+    min_ram_mb: 512
+    min_cpus: 1
+    ports:
+      - port: 80
+        proto: tcp
+        purpose: "{{ 'Redirect to HTTPS' if tls_mode == 'provided' else 'Mattermost over plain HTTP (TLS pending)' }}"
+        allowed: any
+      - port: 443
+        proto: tcp
+        purpose: "{{ 'Mattermost over HTTPS' if tls_mode == 'provided' else 'not used until TLS is configured' }}"
+        allowed: "{{ 'any' if tls_mode == 'provided' else 'not used' }}"
+
+  rtcd:
+    title: Mattermost Calls rtcd
+    summary: Dedicated WebRTC media server for Mattermost Calls.
+    source: github.com/mattermost/rtcd release binary
+    service: rtcd
+    user: rtcd
+    paths:
+      install: "{{ rtcd_dir }}/bin/rtcd"
+      config: /etc/rtcd/config.toml
+      data: /var/lib/rtcd
+      logs: journald (journalctl -u rtcd)
+    min_ram_mb: 1024
+    min_cpus: 2
+    ports:
+      - port: "{{ rtcd_rtc_port }}"
+        proto: udp/tcp
+        purpose: Calls media from clients
+        allowed: any
+      - port: "{{ rtcd_api_port }}"
+        proto: tcp
+        purpose: rtcd API and metrics (Mattermost and Prometheus)
+        allowed: "{{ (rtcd_api_sources + monitoring_scrape_sources) | unique | join(', ') if (rtcd_api_sources + monitoring_scrape_sources) else 'localhost only' }}"
+
+  opensearch:
+    title: OpenSearch {{ opensearch_version }}
+    summary: Search backend for Mattermost Enterprise search.
+    source: artifacts.opensearch.org tarball (bundled JDK)
+    service: opensearch
+    user: opensearch
+    paths:
+      install: "{{ opensearch_dir }} -> /opt/opensearch-<version>"
+      config: "{{ opensearch_conf_dir }}/opensearch.yml"
+      data: "{{ opensearch_data_dir }}"
+      logs: "{{ opensearch_log_dir }}"
+    min_ram_mb: 4096
+    min_cpus: 2
+    ports:
+      - port: "{{ opensearch_port }}"
+        proto: tcp
+        purpose: "REST API ({{ 'HTTPS with auth' if mmd_opensearch_security else 'HTTP, no auth, localhost' }})"
+        allowed: "{{ opensearch_allowed_clients | join(', ') if opensearch_allowed_clients else 'localhost only' }}"
+
+  prometheus:
+    title: Prometheus {{ prometheus_version }}
+    summary: Metrics collection and storage.
+    source: github.com/prometheus/prometheus release tarball
+    service: prometheus
+    user: prometheus
+    paths:
+      install: /opt/prometheus -> /opt/prometheus-<version>
+      config: /etc/prometheus/prometheus.yml
+      data: "{{ prometheus_data_dir }}"
+      logs: journald (journalctl -u prometheus)
+    min_ram_mb: 2048
+    min_cpus: 1
+    ports:
+      - port: "{{ prometheus_port }}"
+        proto: tcp
+        purpose: Prometheus UI and API
+        allowed: "{{ prometheus_allowed_sources | join(', ') if prometheus_allowed_sources else 'localhost only' }}"
+
+  grafana:
+    title: Grafana OSS {{ grafana_version }}
+    summary: Dashboards for Mattermost and host metrics.
+    source: dl.grafana.com standalone tarball
+    service: grafana
+    user: grafana
+    paths:
+      install: /opt/grafana -> /opt/grafana-<version>
+      config: /etc/grafana/grafana.ini
+      data: /var/lib/grafana
+      logs: /var/log/grafana
+    min_ram_mb: 512
+    min_cpus: 1
+    ports:
+      - port: "{{ grafana_port }}"
+        proto: tcp
+        purpose: Grafana web UI
+        allowed: "{{ grafana_allowed_sources | join(', ') if grafana_allowed_sources else 'any' }}"
+
+  node_exporter:
+    title: node_exporter {{ node_exporter_version }}
+    summary: Host metrics for Prometheus.
+    source: github.com/prometheus/node_exporter release tarball
+    service: node_exporter
+    user: node_exporter
+    paths:
+      install: /opt/node_exporter -> /opt/node_exporter-<version>
+      logs: journald (journalctl -u node_exporter)
+    min_ram_mb: 64
+    min_cpus: 0
+    ports:
+      - port: "{{ node_exporter_port }}"
+        proto: tcp
+        purpose: Host metrics
+        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+
+  postgres_exporter:
+    title: postgres_exporter {{ postgres_exporter_version }}
+    summary: PostgreSQL metrics for Prometheus.
+    source: github.com/prometheus-community/postgres_exporter release tarball
+    service: postgres_exporter
+    user: postgres_exporter
+    paths:
+      install: /opt/postgres_exporter -> /opt/postgres_exporter-<version>
+      logs: journald (journalctl -u postgres_exporter)
+    min_ram_mb: 64
+    min_cpus: 0
+    ports:
+      - port: "{{ postgres_exporter_port }}"
+        proto: tcp
+        purpose: PostgreSQL metrics
+        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+
+
+  # -- exporters added automatically with their component
+  nginx_exporter:
+    title: nginx-prometheus-exporter {{ nginx_exporter_version }}
+    summary: Nginx connection and request metrics from stub_status.
+    source: github.com/nginx/nginx-prometheus-exporter release tarball
+    service: nginx_exporter
+    user: nginx_exporter
+    paths:
+      install: /opt/nginx_exporter -> /opt/nginx_exporter-<version>
+      logs: journald (journalctl -u nginx_exporter)
+    min_ram_mb: 32
+    min_cpus: 0
+    ports:
+      - port: "{{ nginx_exporter_port }}"
+        proto: tcp
+        purpose: Nginx metrics
+        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+
+  opensearch_exporter:
+    title: elasticsearch_exporter {{ opensearch_exporter_version }}
+    summary: OpenSearch cluster, JVM and disk metrics.
+    source: github.com/prometheus-community/elasticsearch_exporter release tarball
+    service: opensearch_exporter
+    user: opensearch_exporter
+    paths:
+      install: /opt/opensearch_exporter -> /opt/opensearch_exporter-<version>
+      config: /etc/opensearch_exporter
+      logs: journald (journalctl -u opensearch_exporter)
+    min_ram_mb: 64
+    min_cpus: 0
+    ports:
+      - port: "{{ opensearch_exporter_port }}"
+        proto: tcp
+        purpose: OpenSearch metrics
+        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+
+  blackbox_exporter:
+    title: blackbox_exporter {{ blackbox_exporter_version }}
+    summary: Checks the site and Calls ports from the outside, the way users reach them.
+    source: github.com/prometheus/blackbox_exporter release tarball
+    service: blackbox_exporter
+    user: blackbox_exporter
+    paths:
+      install: /opt/blackbox_exporter -> /opt/blackbox_exporter-<version>
+      config: /etc/blackbox_exporter/blackbox.yml
+      logs: journald (journalctl -u blackbox_exporter)
+    min_ram_mb: 32
+    min_cpus: 0
+    ports:
+      - port: "{{ blackbox_exporter_port }}"
+        proto: tcp
+        purpose: Probe endpoint for Prometheus
+        allowed: localhost only
+
+# Hard dependencies. Each entry is checked by roles/common/tasks/validate.yml.
+mmd_dependency_checks:
+  - component: mattermost
+    ok: "{{ 'postgresql' in mmd_selected or mattermost_db_host | length > 0 }}"
+    message: Mattermost needs a database. Add postgresql to this server or set mattermost_db_host.
+  - component: mattermost
+    ok: "{{ 'postgresql' in mmd_selected or mattermost_db_password | length > 0 }}"
+    message: With a remote database, set mattermost_db_password to the password used on the database server.
+  - component: mattermost
+    ok: "{{ mattermost_file_driver == 'local' or (mattermost_s3_endpoint | length > 0 and mattermost_s3_bucket | length > 0) }}"
+    message: mattermost_file_driver is amazons3 but mattermost_s3_endpoint or mattermost_s3_bucket is empty.
+  - component: nginx
+    ok: "{{ 'mattermost' in mmd_selected or nginx_upstreams | length > 0 }}"
+    message: Nginx has nothing to proxy. Add mattermost to this server or list nginx_upstreams.
+  - component: nginx
+    ok: "{{ tls_mode in ['provided', 'later'] }}"
+    message: tls_mode must be 'provided' or 'later'.
+  - component: nginx
+    ok: "{{ tls_mode != 'provided' or tls_source_dir | length > 0 or (tls_cert_file | length > 0 and tls_key_file | length > 0) }}"
+    message: tls_mode is 'provided' but no tls_cert_file/tls_key_file or tls_source_dir is set.
+  - component: postgres_exporter
+    ok: "{{ 'postgresql' in mmd_selected }}"
+    message: postgres_exporter runs next to PostgreSQL. Add postgresql to this server.
+  - component: grafana
+    ok: "{{ 'prometheus' in mmd_selected or grafana_prometheus_url | length > 0 }}"
+    message: Grafana needs a Prometheus. Add prometheus to this server or set grafana_prometheus_url.
+  - component: mattermost
+    ok: "{{ mattermost_version_channel in ['latest-stable', 'latest-esr', 'pinned'] }}"
+    message: mattermost_version_channel must be latest-stable, latest-esr or pinned.
+  - component: mattermost
+    ok: "{{ mattermost_version_channel != 'pinned' or mattermost_version | length > 0 }}"
+    message: mattermost_version_channel is pinned but mattermost_version is empty.
+
+# Colocation advice. These never block a deployment. They show in the wrapper
+# summary, in the Ansible output and in the Risks section of the report.
+mmd_colocation_rules:
+  - id: all-in-one
+    when_count_at_least: 5
+    severity: high
+    message: Five or more major components share this server.
+    advice: Fine for a lab or proof of concept. For production split the database, search, Calls and monitoring onto their own servers.
+  - id: search-with-app
+    when_all: [opensearch, mattermost]
+    severity: high
+    message: OpenSearch shares the server with Mattermost.
+    advice: OpenSearch wants half the RAM for its JVM heap and competes with Mattermost for memory and IO. Give it its own server once you have more than a few hundred users.
+  - id: calls-with-app
+    when_all: [rtcd, mattermost]
+    severity: medium
+    message: rtcd shares the server with Mattermost.
+    advice: Calls media is CPU and network heavy. Busy calls will slow the app for everyone. Move rtcd to its own server for anything beyond light use.
+  - id: database-with-app
+    when_all: [postgresql, mattermost]
+    severity: medium
+    message: PostgreSQL shares the server with Mattermost.
+    advice: Fine up to roughly 1,000 users. Beyond that, or if you want HA later, run PostgreSQL on its own server.
+  - id: monitoring-with-workload
+    when_any_with: [prometheus, grafana]
+    workloads: [mattermost, postgresql, opensearch, rtcd]
+    severity: medium
+    message: Monitoring runs on a server it is meant to watch.
+    advice: If this server goes down you lose the dashboards and alerts that would tell you why. Put Prometheus and Grafana somewhere else.
+  - id: search-with-database
+    when_all: [opensearch, postgresql]
+    severity: medium
+    message: OpenSearch and PostgreSQL share the server.
+    advice: Both are memory and disk hungry. Expect contention and keep their data on separate volumes at the very least.

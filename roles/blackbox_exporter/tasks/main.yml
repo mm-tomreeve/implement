@@ -1,0 +1,74 @@
+---
+- name: Install blackbox_exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: tarball_install
+  vars:
+    tb_name: blackbox_exporter
+    tb_artifact: "{{ mmd_artifacts.blackbox_exporter }}"
+    tb_user: "{{ blackbox_exporter_user }}"
+
+- name: Restart when the version changed
+  ansible.builtin.debug:
+    msg: "blackbox_exporter now points at {{ mmd_artifacts.blackbox_exporter.version }}"
+  changed_when: tb_changed | bool
+  notify: Restart blackbox_exporter
+
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ blackbox_exporter_conf_dir }}"
+    state: directory
+    owner: root
+    group: "{{ blackbox_exporter_user }}"
+    mode: "0750"
+
+- name: Copy the CA the site's certificate chains to
+  ansible.builtin.copy:
+    src: "{{ monitoring_site_ca_file }}"
+    dest: "{{ blackbox_exporter_conf_dir }}/site-ca.pem"
+    remote_src: true
+    owner: root
+    group: "{{ blackbox_exporter_user }}"
+    mode: "0644"
+  when: monitoring_site_ca_file | length > 0
+  notify: Restart blackbox_exporter
+
+- name: Write the probe modules
+  ansible.builtin.template:
+    src: blackbox.yml.j2
+    dest: "{{ blackbox_exporter_conf_dir }}/blackbox.yml"
+    owner: root
+    group: "{{ blackbox_exporter_user }}"
+    mode: "0640"
+  notify: Restart blackbox_exporter
+
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/blackbox_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      [Unit]
+      Description=Prometheus blackbox exporter
+      After=network-online.target
+
+      [Service]
+      User={{ blackbox_exporter_user }}
+      ExecStart=/opt/blackbox_exporter/blackbox_exporter --config.file={{ blackbox_exporter_conf_dir }}/blackbox.yml --web.listen-address=127.0.0.1:{{ blackbox_exporter_port }}
+      Restart=always
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=true
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart blackbox_exporter
+
+- name: Enable and start blackbox_exporter
+  ansible.builtin.systemd:
+    name: blackbox_exporter
+    state: started
+    enabled: true
+    daemon_reload: true

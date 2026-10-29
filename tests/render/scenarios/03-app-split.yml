@@ -1,0 +1,20 @@
+---
+# Render scenario: an answer file plus render_* keys for the fake host.
+render_host: app01
+render_os: "10.0"
+deploy_name: chat-prod
+deploy_profiles: [app]
+mattermost_site_url: https://chat.example.com
+mattermost_db_host: db01.example.internal
+mattermost_db_password: from-db01
+mattermost_rtcd_url: http://calls01.example.internal:8045
+mattermost_opensearch_url: https://search01.example.internal:9200
+mattermost_opensearch_password: from-search01
+mattermost_opensearch_ca_file: /root/search-ca.pem
+mattermost_file_driver: amazons3
+mattermost_s3_endpoint: s3.example.internal:9000
+mattermost_s3_bucket: mattermost-prod
+deploy_monitoring_exporters: true
+monitoring_scrape_sources: [10.10.9.5]
+tls_mode: provided
+tls_source_dir: /root/certs

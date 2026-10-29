@@ -1,0 +1,35 @@
+---
+# Shared helper. Open ports to everyone (fw_public) or to listed sources only.
+# With neither, nothing is opened and the service stays reachable on localhost.
+#   fw_ports:   [{port: 443, proto: tcp}]
+#   fw_sources: ["10.0.0.0/24"]
+#   fw_public:  false
+- name: Open ports to everyone
+  ansible.posix.firewalld:
+    port: "{{ item.port }}/{{ item.proto }}"
+    zone: "{{ firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ fw_ports }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto }}"
+  when:
+    - firewall_manage | bool
+    - fw_public | default(false) | bool
+
+- name: Open ports to listed sources only
+  ansible.posix.firewalld:
+    rich_rule: >-
+      rule family="{{ 'ipv6' if ':' in item.0 else 'ipv4' }}" source address="{{ item.0 }}"
+      port port="{{ item.1.port }}" protocol="{{ item.1.proto }}" accept
+    zone: "{{ firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ fw_sources | default([]) | product(fw_ports) | list }}"
+  loop_control:
+    label: "{{ item.0 }} -> {{ item.1.port }}/{{ item.1.proto }}"
+  when:
+    - firewall_manage | bool
+    - not (fw_public | default(false) | bool)

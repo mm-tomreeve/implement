@@ -1,0 +1,43 @@
+---
+- name: Install nginx-prometheus-exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: tarball_install
+  vars:
+    tb_name: nginx_exporter
+    tb_artifact: "{{ mmd_artifacts.nginx_exporter }}"
+    tb_user: "{{ nginx_exporter_user }}"
+    tb_strip: 0
+    tb_creates: nginx-prometheus-exporter
+
+- name: Restart when the version changed
+  ansible.builtin.debug:
+    msg: "nginx_exporter now points at {{ mmd_artifacts.nginx_exporter.version }}"
+  changed_when: tb_changed | bool
+  notify: Restart nginx_exporter
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: nginx_exporter.service.j2
+    dest: /etc/systemd/system/nginx_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart nginx_exporter
+
+- name: Enable and start nginx_exporter
+  ansible.builtin.systemd:
+    name: nginx_exporter
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Open the exporter to Prometheus servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ nginx_exporter_port }}", proto: tcp}]
+    fw_sources: "{{ monitoring_scrape_sources }}"
+    fw_public: false
+  when: monitoring_scrape_sources | length > 0

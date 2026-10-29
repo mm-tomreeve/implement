@@ -1,0 +1,21 @@
+---
+# Shared helper used by every role's verify.yml. Pass `checks`, a list of:
+#   component, name, severity (critical | warning | info),
+#   ok (bool) or status (pass | fail | warn | skip), detail
+# A failed critical check is 'fail'. A failed warning or info check is 'warn'.
+- name: Record verification results
+  ansible.builtin.set_fact:
+    mmd_results: "{{ mmd_results | default([]) + _normalised }}"
+  vars:
+    _normalised: >-
+      {%- set out = [] -%}
+      {%- for c in checks -%}
+      {%-   set sev = c.severity | default('critical') -%}
+      {%-   if c.status is defined -%}{%- set status = c.status -%}
+      {%-   elif c.ok | bool -%}{%- set status = 'pass' -%}
+      {%-   elif sev == 'critical' -%}{%- set status = 'fail' -%}
+      {%-   else -%}{%- set status = 'warn' -%}{%- endif -%}
+      {%-   set _ = out.append({'component': c.component, 'name': c.name, 'severity': sev, 'status': status,
+                               'detail': (c.detail | default('') | string | replace('\n', ' ') | truncate(240))}) -%}
+      {%- endfor -%}
+      {{ out }}

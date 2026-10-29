@@ -1,0 +1,5 @@
+---
+# Kept small on purpose so offline bundles stay simple. Everything else uses ansible.builtin.
+collections:
+  - name: ansible.posix
+    version: ">=1.5.4,<2.0.0"  # 2.x needs ansible-core 2.15+, RHEL 9 ships 2.14

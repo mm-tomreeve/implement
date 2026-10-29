@@ -1,0 +1,48 @@
+---
+- name: Probe the Prometheus service
+  ansible.builtin.command: systemctl is-active prometheus  # noqa: command-instead-of-module
+  register: _v_prom_service
+  changed_when: false
+  failed_when: false
+
+- name: Ask Prometheus whether it is ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ prometheus_port }}/-/ready"
+    timeout: 10
+  register: _v_prom_ready
+  failed_when: false
+
+- name: Give scrapes a moment on a fresh install
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ prometheus_port }}/api/v1/targets?state=active"
+    return_content: true
+    timeout: 10
+  register: _v_prom_targets
+  until: >-
+    _v_prom_targets.json is defined and
+    (_v_prom_targets.json.data.activeTargets | selectattr('health', 'equalto', 'unknown') | list | length == 0)
+  retries: 8
+  delay: 10
+  failed_when: false
+
+- name: Record Prometheus checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _targets: "{{ _v_prom_targets.json.data.activeTargets | default([]) }}"
+    _down: "{{ _targets | rejectattr('health', 'equalto', 'up') | map(attribute='scrapeUrl') | list }}"
+    checks:
+      - component: prometheus
+        name: Service is active
+        ok: "{{ _v_prom_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_prom_service.stdout }}"
+      - component: prometheus
+        name: Prometheus is ready
+        ok: "{{ _v_prom_ready.status | default(0) == 200 }}"
+        detail: "HTTP {{ _v_prom_ready.status | default('none') }}"
+      - component: prometheus
+        name: All scrape targets are up
+        severity: warning
+        ok: "{{ _targets | length > 0 and _down | length == 0 }}"
+        detail: "{{ (_targets | length) - (_down | length) }}/{{ _targets | length }} up{{ (', down: ' ~ (_down | join(', '))) if _down else '' }}"

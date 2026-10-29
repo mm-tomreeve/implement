@@ -1,0 +1,82 @@
+---
+- name: Read the SELinux mode
+  ansible.builtin.command: getenforce
+  register: _v_selinux
+  changed_when: false
+  failed_when: false
+
+- name: Probe firewalld
+  ansible.builtin.command: systemctl is-active firewalld  # noqa: command-instead-of-module
+  register: _v_firewalld
+  changed_when: false
+  failed_when: false
+
+- name: List firewalld ports and rich rules
+  ansible.builtin.command: firewall-cmd --zone={{ firewall_zone }} --list-all
+  register: _v_fw_list
+  changed_when: false
+  failed_when: false
+
+- name: Check time sync
+  ansible.builtin.command: chronyc tracking
+  register: _v_chrony
+  changed_when: false
+  failed_when: false
+
+- name: Check free space where data lives
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    df -P {{ _paths | join(' ') }} 2>/dev/null | awk 'NR>1 {gsub("%","",$5); print $6" "$5}' | sort -u
+  args:
+    executable: /bin/bash
+  vars:
+    _paths: >-
+      {{ ['/'] + (['/var/lib/pgsql'] if 'postgresql' in mmd_selected else [])
+         + ([mattermost_data_dir] if 'mattermost' in mmd_selected and mattermost_file_driver == 'local' else [])
+         + ([opensearch_data_dir] if 'opensearch' in mmd_selected else [])
+         + ([prometheus_data_dir] if 'prometheus' in mmd_selected else []) }}
+  register: _v_disk
+  changed_when: false
+  failed_when: false
+
+- name: Keep host details for the report
+  ansible.builtin.set_fact:
+    mmd_host_firewall: "{{ _v_fw_list.stdout_lines | default([]) }}"
+    mmd_host_selinux: "{{ _v_selinux.stdout | default('unknown') }}"
+    mmd_host_disk: "{{ _v_disk.stdout_lines | default([]) }}"
+
+- name: Record host checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _full: >-
+      {%- set out = [] -%}{%- for line in _v_disk.stdout_lines | default([]) -%}{%- set f = line.split(' ') -%}{%- if f | length == 2 and f[1] | int >= 85 -%}{%- set _ = out.append(f[0]) -%}{%- endif -%}{%- endfor -%}{{ out }}
+    checks:
+      - component: host
+        name: SELinux is enforcing
+        severity: warning
+        ok: "{{ _v_selinux.stdout | default('') == 'Enforcing' }}"
+        detail: "getenforce says {{ _v_selinux.stdout | default('unknown') }}"
+      - component: host
+        name: firewalld is running
+        severity: warning
+        status: "{{ ('pass' if _v_firewalld.stdout == 'active' else 'warn') if firewall_manage | bool else 'skip' }}"
+        detail: "{{ 'systemctl reports ' ~ _v_firewalld.stdout if firewall_manage | bool else 'firewall_manage is off' }}"
+      - component: host
+        name: Clock is synchronised
+        severity: warning
+        ok: "{{ 'Leap status     : Normal' in _v_chrony.stdout | default('') }}"
+        detail: "{{ _v_chrony.stdout_lines | default([]) | select('match', '^(Reference ID|System time|Leap status)') | join('; ') | default('chronyc not answering', true) }}"
+      - component: host
+        name: Data filesystems below 85% full
+        severity: warning
+        ok: "{{ _full | length == 0 }}"
+        detail: "{{ _v_disk.stdout_lines | default([]) | map('regex_replace', '^(\\S+) (\\d+)$', '\\1 \\2%') | join(', ') }}"
+      - component: host
+        name: Artifacts verified before install
+        ok: >-
+          {{ mmd_artifacts | default({}) | dict2items | map(attribute='value')
+             | selectattr('checksum_verified', 'equalto', false) | selectattr('signature', 'ne', 'verified') | list | length == 0 }}
+        detail: >-
+          {%- set parts = [] -%}{%- for n, a in (mmd_artifacts | default({})).items() -%}{%- set _ = parts.append(n ~ ' ' ~ a.version ~ ' (' ~ ('checksum ok' if a.checksum_verified else 'no checksum') ~ ', signature ' ~ a.signature ~ ')') -%}{%- endfor -%}{{ parts | join('; ') if parts else 'no downloaded artifacts on this server' }}

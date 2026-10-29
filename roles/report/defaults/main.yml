@@ -1,0 +1,6 @@
+---
+report_dir: "{{ deploy_state_dir }}/reports"
+# Answer file keys whose values never appear in the report.
+report_redact_pattern: "(?i)(password|secret|_key$|token|access_key)"
+report_owner: root
+report_group: root

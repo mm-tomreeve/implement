@@ -1,0 +1,60 @@
+---
+# Tiered alert rules and dashboards for every module in the estate. Rules are
+# file-provisioned, so they change through the answer file, not the UI. Contact
+# points and notification policies are left to you in the Grafana UI.
+- name: Build the rules and dashboards
+  ansible.builtin.include_tasks: build_spec.yml
+
+- name: Install the alert rules
+  ansible.builtin.copy:
+    content: "{{ _obs_files['alerting/mattermost-implement.json'] }}"
+    dest: "{{ grafana_conf_dir }}/provisioning/alerting/mattermost-implement.json"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+  when: monitoring_alerts_enabled | bool
+  notify: Restart grafana
+
+- name: Remove the alert rules when they are switched off
+  ansible.builtin.file:
+    path: "{{ grafana_conf_dir }}/provisioning/alerting/mattermost-implement.json"
+    state: absent
+  when: not (monitoring_alerts_enabled | bool)
+  notify: Restart grafana
+
+- name: Install the dashboards
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ grafana_implement_dashboard_dir }}/{{ item.key | basename }}"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+  loop: "{{ _obs_files | dict2items | selectattr('key', 'match', '^dashboards/') | list }}"
+  loop_control:
+    label: "{{ item.key | basename }}"
+  when: monitoring_dashboards_enabled | bool
+
+- name: Find dashboards for modules no longer in the estate
+  ansible.builtin.find:
+    paths: "{{ grafana_implement_dashboard_dir }}"
+    patterns: "mmi-*.json"
+  register: _obs_existing
+
+- name: Remove them
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _obs_existing.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: >-
+    not (monitoring_dashboards_enabled | bool)
+    or ('dashboards/' ~ (item.path | basename)) not in _obs_files
+
+- name: Save the summary for the report
+  ansible.builtin.copy:
+    content: "{{ mmd_observability | to_nice_json }}"
+    dest: "{{ deploy_state_dir }}/observability.json"
+    owner: root
+    group: root
+    mode: "0640"

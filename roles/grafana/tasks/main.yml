@@ -1,0 +1,156 @@
+---
+- name: Install Grafana
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: tarball_install
+  vars:
+    tb_name: grafana
+    tb_artifact: "{{ mmd_artifacts.grafana }}"
+    tb_user: "{{ grafana_user }}"
+    tb_creates: bin/grafana
+
+- name: Restart when the version changed
+  ansible.builtin.debug:
+    msg: "Grafana now points at {{ mmd_artifacts.grafana.version }}"
+  changed_when: tb_changed | bool
+  notify: Restart grafana
+
+- name: Create Grafana directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ grafana_user }}"
+    mode: "0750"
+  loop:
+    - {path: "{{ grafana_conf_dir }}", owner: root}
+    - {path: "{{ grafana_conf_dir }}/provisioning", owner: root}
+    - {path: "{{ grafana_conf_dir }}/provisioning/datasources", owner: root}
+    - {path: "{{ grafana_conf_dir }}/provisioning/dashboards", owner: root}
+    - {path: "{{ grafana_conf_dir }}/provisioning/plugins", owner: root}
+    - {path: "{{ grafana_conf_dir }}/provisioning/alerting", owner: root}
+    - {path: "{{ grafana_data_dir }}", owner: "{{ grafana_user }}"}
+    - {path: "{{ grafana_data_dir }}/plugins", owner: "{{ grafana_user }}"}
+    - {path: "{{ grafana_dashboard_dir }}", owner: root}
+    - {path: "{{ grafana_implement_dashboard_dir }}", owner: root}
+    - {path: "{{ grafana_log_dir }}", owner: "{{ grafana_user }}"}
+
+- name: Write grafana.ini
+  ansible.builtin.template:
+    src: grafana.ini.j2
+    dest: "{{ grafana_conf_dir }}/grafana.ini"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+  notify: Restart grafana
+  no_log: true
+
+- name: Provision the Prometheus datasource
+  ansible.builtin.copy:
+    dest: "{{ grafana_conf_dir }}/provisioning/datasources/prometheus.yml"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          uid: {{ grafana_datasource_uid }}
+          type: prometheus
+          access: proxy
+          url: {{ mmd_prometheus_url }}
+          isDefault: true
+          editable: false
+  notify: Restart grafana
+
+- name: Provision the dashboard folder
+  ansible.builtin.copy:
+    dest: "{{ grafana_conf_dir }}/provisioning/dashboards/mattermost.yml"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      apiVersion: 1
+      providers:
+        - name: mattermost-implement
+          folder: {{ grafana_alert_folder }}
+          type: file
+          disableDeletion: true
+          allowUiUpdates: false
+          options:
+            path: {{ grafana_implement_dashboard_dir }}
+        - name: mattermost-community
+          folder: Mattermost (community dashboards)
+          type: file
+          disableDeletion: true
+          allowUiUpdates: false
+          options:
+            path: {{ grafana_dashboard_dir }}
+  notify: Restart grafana
+
+- name: Build the estate's alert rules and dashboards
+  ansible.builtin.include_tasks: observability.yml
+
+- name: Install the Mattermost community dashboards
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', item) | replace('${DS_PROMETHEUS}', grafana_datasource_uid) }}"
+    dest: "{{ grafana_dashboard_dir }}/{{ item | basename }}"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+  with_fileglob: "dashboards/*.json"
+  when: mmd_estate | default([]) | selectattr('components', 'contains', 'mattermost') | list | length > 0
+
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/grafana.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      [Unit]
+      Description=Grafana
+      After=network-online.target{{ ' prometheus.service' if 'prometheus' in mmd_selected else '' }}
+
+      [Service]
+      User={{ grafana_user }}
+      Group={{ grafana_user }}
+      WorkingDirectory=/opt/grafana
+      ExecStart=/opt/grafana/bin/grafana server --homepath=/opt/grafana --config={{ grafana_conf_dir }}/grafana.ini
+      Restart=on-failure
+      LimitNOFILE=10000
+      NoNewPrivileges=true
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart grafana
+
+- name: Enable and start Grafana
+  ansible.builtin.systemd:
+    name: grafana
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Open Grafana
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ grafana_port }}", proto: tcp}]
+    fw_sources: "{{ grafana_allowed_sources }}"
+    fw_public: "{{ grafana_allowed_sources | length == 0 }}"
+
+- name: Wait for Grafana
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/health"
+  register: _grafana_up
+  until: _grafana_up.status == 200
+  retries: 24
+  delay: 5

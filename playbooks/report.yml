@@ -1,0 +1,27 @@
+---
+# Rebuild the architecture report from the last saved state and test results.
+- name: Rebuild the architecture report
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: Work out the plan
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: plan
+
+    - name: Load the saved deployment state
+      ansible.builtin.include_tasks: tasks/load_state.yml
+
+    - name: Load the last test results
+      ansible.builtin.slurp:
+        path: "{{ deploy_state_dir }}/results/latest.json"
+      register: _last_results
+
+    - name: Use the last test results
+      ansible.builtin.set_fact:
+        mmd_results: "{{ (_last_results.content | b64decode | from_json).results }}"
+        mmd_versions: "{{ (_last_results.content | b64decode | from_json).versions | default({}) }}"
+
+    - name: Write the report
+      ansible.builtin.include_role:
+        name: report

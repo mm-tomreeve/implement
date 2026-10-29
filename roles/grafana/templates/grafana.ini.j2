@@ -1,0 +1,29 @@
+; {{ ansible_managed }}
+[paths]
+data = {{ grafana_data_dir }}
+logs = {{ grafana_log_dir }}
+plugins = {{ grafana_data_dir }}/plugins
+provisioning = {{ grafana_conf_dir }}/provisioning
+
+[server]
+http_addr =
+http_port = {{ grafana_port }}
+
+[security]
+; Only used when Grafana creates its database on first start. Change it in the
+; UI or with grafana cli afterwards; editing this file will not change it.
+admin_user = admin
+admin_password = {{ mmd_secrets.grafana_admin_password }}
+disable_gravatar = true
+cookie_secure = false
+
+[users]
+allow_sign_up = false
+
+[analytics]
+reporting_enabled = false
+check_for_updates = false
+check_for_plugin_updates = false
+
+[log]
+mode = file

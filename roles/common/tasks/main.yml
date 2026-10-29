@@ -1,0 +1,9 @@
+---
+- name: Plan the deployment
+  ansible.builtin.include_tasks: plan.yml
+
+- name: Load or generate secrets
+  ansible.builtin.include_tasks: secrets.yml
+
+- name: Apply the baseline
+  ansible.builtin.include_tasks: baseline.yml

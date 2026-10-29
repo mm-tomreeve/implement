@@ -1,0 +1,23 @@
+---
+- name: Probe the site through blackbox_exporter
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ blackbox_exporter_port }}/probe?module=http_mattermost&target={{ (monitoring_site_url | regex_replace('/+$', '') ~ '/api/v4/system/ping') | urlencode }}"
+    return_content: true
+    timeout: 20
+  register: _v_bb
+  failed_when: false
+  when: monitoring_site_url | length > 0
+
+- name: Record blackbox_exporter checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    checks:
+      - component: blackbox_exporter
+        name: Site health check succeeds from this server
+        severity: warning
+        status: >-
+          {{ 'skip' if monitoring_site_url | length == 0
+             else ('pass' if _v_bb.content | default('') is search('(?m)^probe_success 1') else 'warn') }}
+        detail: "{{ monitoring_site_url ~ '/api/v4/system/ping' if monitoring_site_url | length > 0 else 'no site URL to check' }}"

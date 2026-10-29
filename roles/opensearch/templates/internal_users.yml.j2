@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# Only these users exist. The OpenSearch demo users are removed on purpose.
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+admin:
+  hash: "{{ _os_hash_store.admin.hash }}"
+  reserved: true
+  backend_roles:
+    - "admin"
+  description: "Cluster administrator (mattermost-implement)"
+
+mattermost:
+  hash: "{{ _os_hash_store.mattermost.hash }}"
+  reserved: false
+  backend_roles:
+    - "admin"
+  description: "Mattermost server connection (mattermost-implement)"

@@ -1,0 +1,6 @@
+---
+- name: Restart opensearch_exporter
+  ansible.builtin.systemd:
+    name: opensearch_exporter
+    state: restarted
+    daemon_reload: true

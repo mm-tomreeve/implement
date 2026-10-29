@@ -1,0 +1,3 @@
+---
+deploy_profiles: [database]
+postgresql_allowed_clients: [172.30.10.12]

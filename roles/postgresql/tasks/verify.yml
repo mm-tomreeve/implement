@@ -1,0 +1,69 @@
+---
+- name: Probe the PostgreSQL service
+  ansible.builtin.command: systemctl is-active postgresql  # noqa: command-instead-of-module
+  register: _v_pg_service
+  changed_when: false
+  failed_when: false
+
+- name: Probe the PostgreSQL port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ postgresql_port }}"
+    timeout: 5
+  register: _v_pg_port
+  ignore_errors: true
+
+- name: Log in as the Mattermost user over TCP
+  ansible.builtin.command:
+    argv: [psql, -X, -h, 127.0.0.1, -p, "{{ postgresql_port }}", -U, "{{ mattermost_db_user }}", -d, "{{ mattermost_db_name }}", -tAc, "SELECT 1"]
+  environment:
+    PGPASSWORD: "{{ mmd_secrets.db_password }}"
+    PGCONNECT_TIMEOUT: "5"
+  register: _v_pg_login
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Read server settings
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -p, "{{ postgresql_port }}", -tAc,
+           "SELECT current_setting('server_version') || '|' || current_setting('password_encryption') || '|' || current_setting('ssl')"]
+  register: _v_pg_settings
+  changed_when: false
+  failed_when: false
+
+- name: Keep the PostgreSQL version for the report
+  ansible.builtin.set_fact:
+    mmd_versions: "{{ mmd_versions | default({}) | combine({'postgresql': _pg_parts[0] | default('unknown')}) }}"
+  vars:
+    _pg_parts: "{{ _v_pg_settings.stdout.split('|') }}"
+
+- name: Record PostgreSQL checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _pg_parts: "{{ _v_pg_settings.stdout.split('|') if _v_pg_settings.rc == 0 else ['', '', ''] }}"
+    checks:
+      - component: postgresql
+        name: Service is active
+        ok: "{{ _v_pg_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_pg_service.stdout }}"
+      - component: postgresql
+        name: Listening on port {{ postgresql_port }}
+        ok: "{{ _v_pg_port is succeeded }}"
+        detail: "{{ 'listening on ' ~ mmd_postgresql_listen if _v_pg_port is succeeded else 'nothing listening' }}"
+      - component: postgresql
+        name: Mattermost user can log in and query
+        ok: "{{ _v_pg_login.rc == 0 and _v_pg_login.stdout | trim == '1' }}"
+        detail: "{{ 'SELECT 1 as ' ~ mattermost_db_user ~ ' on ' ~ mattermost_db_name if _v_pg_login.rc == 0 else 'login failed (see journalctl -u postgresql)' }}"
+      - component: postgresql
+        name: Passwords stored as SCRAM-SHA-256
+        severity: warning
+        ok: "{{ _pg_parts[1] | default('') == 'scram-sha-256' }}"
+        detail: "password_encryption = {{ _pg_parts[1] | default('unknown') }}"
+      - component: postgresql
+        name: TLS on for remote clients
+        severity: warning
+        status: "{{ ('pass' if _pg_parts[2] | default('') == 'on' else 'warn') if postgresql_allowed_clients | length > 0 else 'skip' }}"
+        detail: "{{ 'ssl = ' ~ (_pg_parts[2] | default('unknown')) if postgresql_allowed_clients | length > 0 else 'no remote clients configured' }}"
