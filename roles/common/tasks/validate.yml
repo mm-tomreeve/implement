@@ -45,6 +45,79 @@
     (mmd_sizing.ram_have_mb | int) < (mmd_sizing.ram_needed_mb | int)
     or (mmd_sizing.cpus_have | int) < (mmd_sizing.cpus_needed | int)
 
+- name: Add a finding when PostgreSQL may run out of connections
+  ansible.builtin.set_fact:
+    mmd_findings: >-
+      {{ mmd_findings + [{
+           'id': 'db-connections',
+           'severity': 'high' if _short else 'medium',
+           'message': ('max_connections is ' ~ mmd_postgresql_max_connections ~ ', but ' ~ mmd_postgresql_app_servers
+                       ~ ' app server(s) may each open ' ~ mattermost_db_max_open_conns ~ ' connections.')
+                      if _short else
+                      ('postgresql_allowed_clients lists a subnet, so max_connections ('
+                       ~ mmd_postgresql_max_connections ~ ') assumes one app server per entry.'),
+           'advice': 'Set postgresql_app_servers to the number of Mattermost servers using this database, '
+                     ~ 'or leave postgresql_max_connections on auto.'}] }}
+  vars:
+    _short: >-
+      {{ mmd_postgresql_max_connections | int
+         < mmd_postgresql_app_servers | int * mattermost_db_max_open_conns | int + 10 }}
+    _subnet: >-
+      {{ postgresql_app_servers == 'auto'
+         and postgresql_allowed_clients | select('search', '/(?!32$|128$)') | list | length > 0 }}
+  when:
+    - "'postgresql' in mmd_selected"
+    - _short | bool or _subnet | bool
+
+- name: Add a finding when Mattermost will be upgraded
+  ansible.builtin.set_fact:
+    mmd_findings: >-
+      {{ mmd_findings + [{
+           'id': 'mattermost-upgrade',
+           'severity': 'medium',
+           'message': 'Mattermost ' ~ mmd_mattermost_installed ~ ' is installed and this run may upgrade it.',
+           'advice': 'Mattermost is stopped for the upgrade. Database migrations only go forwards, so '
+                     ~ ('the database is dumped to ' ~ mattermost_backup_dir ~ ' first.'
+                        if mattermost_upgrade_backup | bool else 'have a backup ready: mattermost_upgrade_backup is off.')}] }}
+  when:
+    - "'mattermost' in mmd_selected"
+    - mmd_mattermost_installed | length > 0
+    - not (mmd_mattermost_hold | bool)
+    - mattermost_version_channel != 'pinned' or mattermost_version is version(mmd_mattermost_installed, '>')
+
+- name: Add a finding when the pinned Mattermost is older than the installed one
+  ansible.builtin.set_fact:
+    mmd_findings: >-
+      {{ mmd_findings + [{
+           'id': 'mattermost-downgrade',
+           'severity': 'high',
+           'message': 'mattermost_version ' ~ mattermost_version ~ ' is older than the installed '
+                      ~ mmd_mattermost_installed ~ ', so the install will stop.',
+           'advice': 'Its database has already been migrated forwards. Pin ' ~ mmd_mattermost_installed
+                     ~ ' or newer, or restore the pre-upgrade dump and move ' ~ mattermost_dir ~ ' back by hand.'}] }}
+  when:
+    - "'mattermost' in mmd_selected"
+    - mmd_mattermost_installed | length > 0
+    - mattermost_version_channel == 'pinned'
+    - mattermost_version is version(mmd_mattermost_installed, '<')
+
+- name: Add a finding about how replication fails over
+  ansible.builtin.set_fact:
+    mmd_findings: >-
+      {{ mmd_findings + [{
+           'id': 'db-replication',
+           'severity': 'medium',
+           'message': ('This server is a read-only replica of ' ~ postgresql_primary_host ~ '.')
+                      if postgresql_replication == 'replica' else
+                      ('This server feeds read replicas on ' ~ postgresql_replica_hosts | join(', ')
+                       ~ '. Each may hold up to ' ~ mmd_postgresql_slot_wal_cap_mb ~ ' MB of WAL here while it is down.'),
+           'advice': 'Replication spreads reads; it is not automatic failover. If the primary is lost, promote a replica '
+                     ~ 'by hand (pg_ctl promote), point mattermost_db_host at it and re-run the app servers. '
+                     ~ 'A replica that falls further behind than the WAL limit has to be rebuilt.'}] }}
+  when:
+    - "'postgresql' in mmd_selected"
+    - postgresql_replication in ['primary', 'replica']
+
 - name: Show the plan
   ansible.builtin.debug:
     msg: "{{ _plan_lines }}"

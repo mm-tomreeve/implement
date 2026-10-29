@@ -11,6 +11,7 @@
           'artifacts': mmd_artifacts | default({}), 'artifact_mode': mmd_artifact_mode | default('none'),
           'artifact_warnings': mmd_artifact_warnings | default([]),
           'mattermost_previous': mmd_mattermost_previous | default(''),
+          'mattermost_backup': mmd_mattermost_backup | default(''),
           'findings': mmd_findings, 'deploy_failed': mmd_deploy_failed | default(false),
           'deploy_error': mmd_deploy_error | default('')} | to_nice_json }}
   when: not (mmd_skip_state_save | default(false))

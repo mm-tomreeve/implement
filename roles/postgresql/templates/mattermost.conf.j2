@@ -2,7 +2,8 @@
 # Mattermost tuning. Sized from {{ ansible_facts['memtotal_mb'] }} MB RAM on {{ ansible_facts['fqdn'] }}.
 listen_addresses = '{{ mmd_postgresql_listen }}'
 port = {{ postgresql_port }}
-max_connections = {{ postgresql_max_connections }}
+# {{ mmd_postgresql_app_servers }} app server(s) x {{ mattermost_db_max_open_conns }} connections{{ " + " ~ postgresql_spare_connections ~ " spare" if postgresql_max_connections == "auto" else " (set by hand)" }}
+max_connections = {{ mmd_postgresql_max_connections }}
 password_encryption = scram-sha-256
 
 shared_buffers = {{ (ansible_facts['memtotal_mb'] * (postgresql_shared_buffers_pct | int) / 100) | int }}MB

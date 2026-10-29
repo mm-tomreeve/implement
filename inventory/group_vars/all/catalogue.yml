@@ -5,8 +5,13 @@
 
 mmd_catalogue:
   postgresql:
-    title: PostgreSQL {{ postgresql_version }}
-    summary: Primary relational database for Mattermost.
+    title: >-
+      PostgreSQL {{ postgresql_version }}{{ ' (replication primary)' if postgresql_replication == 'primary'
+      else (' (read replica)' if postgresql_replication == 'replica' else '') }}
+    summary: >-
+      {{ 'Read-only replica of ' ~ postgresql_primary_host ~ ', for Mattermost reads.' if postgresql_replication == 'replica'
+         else 'Relational database for Mattermost' ~ (', feeding read replicas on ' ~ postgresql_replica_hosts | join(', ')
+              if postgresql_replication == 'primary' else '') ~ '.' }}
     source: RHEL AppStream (dnf)
     service: postgresql
     user: postgres
@@ -19,8 +24,8 @@ mmd_catalogue:
     ports:
       - port: "{{ postgresql_port }}"
         proto: tcp
-        purpose: SQL from Mattermost app servers
-        allowed: "{{ postgresql_allowed_clients | join(', ') if postgresql_allowed_clients else 'localhost only' }}"
+        purpose: SQL from Mattermost app servers{{ ', streaming to replicas' if postgresql_replication == 'primary' else '' }}
+        allowed: "{{ mmd_postgresql_remote | join(', ') if mmd_postgresql_remote else 'localhost only' }}"
 
   mattermost:
     title: Mattermost {{ mattermost_edition | capitalize }}
@@ -260,6 +265,28 @@ mmd_dependency_checks:
   - component: nginx
     ok: "{{ tls_mode != 'provided' or tls_source_dir | length > 0 or (tls_cert_file | length > 0 and tls_key_file | length > 0) }}"
     message: tls_mode is 'provided' but no tls_cert_file/tls_key_file or tls_source_dir is set.
+  - component: postgresql
+    ok: "{{ postgresql_replication in ['none', 'primary', 'replica'] }}"
+    message: postgresql_replication must be none, primary or replica.
+  - component: postgresql
+    ok: "{{ postgresql_replication != 'primary' or postgresql_replica_hosts | length > 0 }}"
+    message: postgresql_replication is primary but postgresql_replica_hosts is empty. List the replica servers.
+  - component: postgresql
+    ok: "{{ postgresql_replication != 'replica' or postgresql_primary_host | length > 0 }}"
+    message: postgresql_replication is replica but postgresql_primary_host is empty.
+  - component: postgresql
+    ok: "{{ postgresql_replication != 'replica' or postgresql_replication_password | length > 0 }}"
+    message: A replica needs postgresql_replication_password, copied from replication_password in the primary's secrets.yml.
+  - component: postgresql
+    ok: "{{ postgresql_replication != 'replica' or mattermost_db_password | length > 0 }}"
+    message: >-
+      A replica has the primary's logins, so set mattermost_db_password to db_password from the primary's
+      secrets.yml. The post-deploy tests log in with it.
+  - component: mattermost
+    ok: "{{ postgresql_replication != 'replica' or 'postgresql' not in mmd_selected or mattermost_db_host | length > 0 }}"
+    message: >-
+      The PostgreSQL on this server is a read-only replica, so Mattermost can't write to it. Set mattermost_db_host
+      to the primary (and mattermost_db_replica_hosts to send reads here).
   - component: postgres_exporter
     ok: "{{ 'postgresql' in mmd_selected }}"
     message: postgres_exporter runs next to PostgreSQL. Add postgresql to this server.

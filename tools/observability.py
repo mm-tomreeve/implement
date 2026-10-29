@@ -361,6 +361,11 @@ def postgres_board(spec):
     b.timeseries("Locks by mode", [("sum by (mode) (pg_locks_count{%s})" % dsel, "{{mode}}")])
     b.timeseries("Deadlocks and conflicts", [("increase(pg_stat_database_deadlocks{%s}[15m])" % dsel, "deadlocks"),
                                              ("increase(pg_stat_database_conflicts{%s}[15m])" % dsel, "conflicts")])
+    # Empty unless a primary feeds a read replica.
+    b.timeseries("Replica lag", [("pg_replication_lag_seconds{%s}" % sel, "{{instance}}")], unit="s",
+                 steps=tiers_of("pg-replication-lag", spec))
+    b.timeseries("WAL held for replicas", [("pg_replication_slots_pg_wal_lsn_diff{%s}" % sel, "{{instance}} slot {{slot_name}}"),
+                                           ("pg_settings_max_slot_wal_keep_size_bytes{%s} > 0" % sel, "{{instance}} limit")], unit="bytes")
     b.timeseries("Database size", [("pg_database_size_bytes{%s}" % dsel, "{{instance}}")], unit="bytes", w=24)
     return b.json()
 

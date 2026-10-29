@@ -69,6 +69,91 @@
   vars:
     fapolicyd_paths: ["{{ mattermost_version_dir }}/"]
 
+- name: Back up before upgrading from {{ mmd_mattermost_installed }}
+  when:
+    - mmd_mattermost_installed | length > 0
+    - mmd_mattermost_installed != mmd_artifacts.mattermost.version
+    - mattermost_upgrade_backup | bool
+  vars:
+    _mm_backup_base: "{{ mattermost_backup_dir }}/mattermost-{{ mmd_mattermost_installed }}-{{ mmd_run_id }}"
+  block:
+    - name: Enable the PostgreSQL {{ postgresql_version }} module stream for pg_dump (RHEL 9)
+      ansible.builtin.command: dnf -y module enable postgresql:{{ postgresql_version }}
+      register: _mm_pg_module
+      changed_when: "'Nothing to do' not in _mm_pg_module.stdout"
+      when:
+        - not (mmd_db_local | bool)
+        - ansible_facts['distribution_major_version'] == '9'
+
+    - name: Install pg_dump
+      ansible.builtin.dnf:
+        name: postgresql
+        state: present
+      when: not (mmd_db_local | bool)
+
+    - name: Create the backup directory
+      ansible.builtin.file:
+        path: "{{ mattermost_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    # Mattermost's own upgrade steps: stop the server, back up, then upgrade. The
+    # restart handler starts the new version once the symlink has moved.
+    - name: Stop Mattermost {{ mmd_mattermost_installed }}
+      ansible.builtin.systemd:
+        name: mattermost
+        state: stopped
+
+    - name: Dump the database and keep the old config
+      block:
+        - name: Dump the Mattermost database
+          ansible.builtin.command:
+            argv: [pg_dump, --format=custom, --no-password, --file, "{{ _mm_backup_base }}.dump"]
+          environment:
+            PGHOST: "{{ mmd_db_host }}"
+            PGPORT: "{{ mattermost_db_port }}"
+            PGDATABASE: "{{ mattermost_db_name }}"
+            PGUSER: "{{ mattermost_db_user }}"
+            PGPASSWORD: "{{ mmd_secrets.db_password }}"
+            PGSSLMODE: "{{ mmd_db_sslmode }}"
+            PGCONNECT_TIMEOUT: "10"
+          register: _mm_dump
+          changed_when: true
+          no_log: true
+
+        - name: Keep a copy of config.json
+          ansible.builtin.copy:
+            src: "{{ mattermost_config_dir }}/config.json"
+            dest: "{{ _mm_backup_base }}.config.json"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Remember the backup for the report
+          ansible.builtin.set_fact:
+            mmd_mattermost_backup: "{{ _mm_backup_base }}.dump"
+      rescue:
+        - name: Remove the partial dump
+          ansible.builtin.file:
+            path: "{{ _mm_backup_base }}.dump"
+            state: absent
+
+        - name: Start Mattermost {{ mmd_mattermost_installed }} again
+          ansible.builtin.systemd:
+            name: mattermost
+            state: started
+
+        - name: Stop the upgrade
+          ansible.builtin.fail:
+            msg: >-
+              The database backup failed, so Mattermost stayed on {{ mmd_mattermost_installed }}.
+              pg_dump said: {{ _mm_dump.stderr | default(ansible_failed_result.msg | default('nothing')) | trim }}.
+              {{ '' if mmd_db_local | bool else 'pg_dump must be the same major version as the database server or newer; set postgresql_version to match. ' }}Fix
+              it and re-run, or take your own backup and set mattermost_upgrade_backup: false.
+
 - name: Point {{ mattermost_dir }} at this version
   ansible.builtin.file:
     src: "{{ mattermost_version_dir }}"
@@ -168,15 +253,16 @@
     mode: "0644"
   notify: Restart mattermost
 
+# Restart first, so a new version or config starts once, not started and then restarted.
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
 - name: Enable and start Mattermost
   ansible.builtin.systemd:
     name: mattermost
     state: started
     enabled: true
     daemon_reload: true
-
-- name: Apply pending restarts
-  ansible.builtin.meta: flush_handlers
 
 - name: Open Mattermost to remote proxies
   ansible.builtin.include_role:

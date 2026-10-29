@@ -15,7 +15,8 @@
   notify: Restart postgres_exporter
 
 # The OS user and the database role share a name, so the default peer rule in
-# pg_hba.conf lets the exporter in over the socket without a password.
+# pg_hba.conf lets the exporter in over the socket without a password. A replica
+# is read-only: the role comes from the primary, which has to run the exporter too.
 - name: Create the monitoring database role
   ansible.builtin.command:
     argv: [runuser, -u, postgres, --, psql, -X, -v, ON_ERROR_STOP=1, -p, "{{ postgresql_port }}", -d, postgres]
@@ -24,6 +25,7 @@
       GRANT pg_monitor TO {{ postgres_exporter_user }};
   register: _pge_sql
   changed_when: "'CREATE ROLE' in _pge_sql.stdout"
+  when: postgresql_replication != 'replica'
 
 - name: Install the systemd unit
   ansible.builtin.copy:

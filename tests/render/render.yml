@@ -30,7 +30,7 @@
 
     - name: Fake what an install would have produced
       ansible.builtin.set_fact:
-        mmd_secrets: {db_password: x, opensearch_admin_password: x, opensearch_mattermost_password: x, grafana_admin_password: x}
+        mmd_secrets: {db_password: x, opensearch_admin_password: x, opensearch_mattermost_password: x, grafana_admin_password: x, replication_password: x}
         mmd_artifact_mode: online
         mmd_artifact_warnings: []
         mmd_artifacts: >-

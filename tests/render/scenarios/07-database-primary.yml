@@ -1,0 +1,10 @@
+---
+# Render scenario: an answer file plus render_* keys for the fake host.
+render_host: db01
+deploy_name: chat-prod
+deploy_profiles: [database]
+postgresql_allowed_clients: [10.10.1.11, 10.10.1.12]
+postgresql_replication: primary
+postgresql_replica_hosts: [10.10.1.22]
+deploy_monitoring_exporters: true
+monitoring_scrape_sources: [10.10.9.5]

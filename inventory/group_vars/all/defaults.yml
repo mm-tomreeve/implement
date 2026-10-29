@@ -36,6 +36,14 @@ mattermost_edition: enterprise            # enterprise | team
 mattermost_version_channel: latest-stable # latest-stable | latest-esr | pinned
 mattermost_version: ""                    # required when the channel is pinned
 mattermost_sha256: ""                     # optional extra check for a pinned build
+# Once Mattermost is installed, re-runs stay on the installed version even when the
+# channel has moved on. Set this (or pass install.sh --upgrade) to move to the newer
+# release. A pinned version that changes is an upgrade on its own. Downgrades are refused.
+mattermost_allow_upgrade: false
+# Before an upgrade, stop Mattermost and pg_dump its database. Only switch this off
+# if you have just taken your own backup.
+mattermost_upgrade_backup: true
+mattermost_backup_dir: /var/lib/mattermost-implement/backups
 mattermost_gpg_fingerprint: A1B31D46F0F3A10B02CF2D44F8F2C31744774B28
 mattermost_site_url: "https://{{ ansible_facts['fqdn'] }}"
 mattermost_user: mattermost
@@ -69,6 +77,11 @@ mattermost_db_name: mattermost
 mattermost_db_user: mmuser
 mattermost_db_password: ""      # blank = generated and stored in secrets.yml
 mattermost_db_sslmode: auto     # auto = disable locally, require for remote
+# SqlSettings.MaxOpenConns on each app server. PostgreSQL sizes max_connections from it.
+mattermost_db_max_open_conns: 300
+# PostgreSQL read replicas Mattermost sends reads to (SqlSettings.DataSourceReplicas,
+# Enterprise only). Same port, database, login and password as the primary.
+mattermost_db_replica_hosts: []
 
 # File storage. We consume storage, we do not build it.
 mattermost_file_driver: local   # local | amazons3
@@ -92,13 +105,40 @@ postgresql_version: "16"
 postgresql_port: "{{ mattermost_db_port }}"
 # Mattermost app servers allowed to connect (CIDRs). Empty = localhost only.
 postgresql_allowed_clients: []
-postgresql_max_connections: 300
+# Mattermost app servers that use this database. auto = one per entry in
+# postgresql_allowed_clients (plus this server when Mattermost is local). Set it
+# when a client entry is a subnet holding several app servers.
+postgresql_app_servers: auto
+# auto = mattermost_db_max_open_conns for every app server, plus
+# postgresql_spare_connections for the exporter, admin sessions and maintenance.
+postgresql_max_connections: auto
+postgresql_spare_connections: 50
 # auto = on when remote clients are allowed (self-signed certificate).
 postgresql_ssl: auto
 postgresql_data_dir: /var/lib/pgsql/data
 # Share of RAM for shared_buffers and effective_cache_size. Lower when Mattermost shares the box.
 postgresql_shared_buffers_pct: "{{ 15 if 'mattermost' in mmd_selected else 25 }}"
 postgresql_effective_cache_pct: "{{ 50 if 'mattermost' in mmd_selected else 75 }}"
+# Streaming replication. none = a standalone server. primary = this server feeds
+# read replicas. replica = a read-only copy of postgresql_primary_host.
+postgresql_replication: none
+# On the primary: replica servers allowed to stream WAL from here (IPs or CIDRs).
+postgresql_replica_hosts: []
+# On a replica: the primary to copy from and follow.
+postgresql_primary_host: ""
+postgresql_replication_user: replicator
+# Blank = generated on the primary. Copy it from there into each replica's answers.
+postgresql_replication_password: ""
+postgresql_replication_sslmode: require
+# Where a replica keeps the replication password (the postgres user's home).
+postgresql_passfile: /var/lib/pgsql/.pgpass
+# The slot this replica holds on the primary. One per replica.
+postgresql_replication_slot: "{{ ansible_facts['hostname'] | lower | regex_replace('[^a-z0-9_]', '_') }}"
+# Most WAL the primary keeps for a replica that is down or behind, so a lost
+# replica can't fill the primary's disk. Past this the replica has to be rebuilt.
+# auto = postgresql_slot_wal_keep_pct of the data filesystem. Or a size in MB.
+postgresql_max_slot_wal_keep_size: auto
+postgresql_slot_wal_keep_pct: 20
 
 # ---------------------------------------------------------------- nginx / tls
 nginx_server_name: "{{ mattermost_site_url | urlsplit('hostname') }}"
@@ -118,6 +158,9 @@ tls_install_dir: /etc/pki/tls/mattermost
 
 # ---------------------------------------------------------------- rtcd
 rtcd_version: latest
+# With rtcd_version latest, re-runs keep the installed rtcd unless this is set
+# (install.sh --upgrade sets it too).
+rtcd_allow_upgrade: false
 rtcd_dir: /opt/rtcd
 rtcd_api_port: 8045
 rtcd_rtc_port: 8443

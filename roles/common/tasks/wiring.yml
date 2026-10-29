@@ -1,13 +1,33 @@
 ---
 # One place that decides how the pieces on this server reach each other and the
 # pieces on other servers. Roles and the report read these facts.
+- name: Look for a Mattermost installed by an earlier run
+  ansible.builtin.stat:
+    path: "{{ mattermost_dir }}"
+  register: _mm_installed_link
+  when: "'mattermost' in mmd_selected"
+
+- name: Look for an rtcd installed by an earlier run
+  ansible.builtin.stat:
+    path: "{{ rtcd_dir }}/bin/rtcd"
+    follow: false
+  register: _rtcd_installed_link
+  when: "'rtcd' in mmd_selected"
+
 - name: Decide local versus remote wiring
   ansible.builtin.set_fact:
     mmd_db_local: "{{ 'postgresql' in mmd_selected }}"
     mmd_db_host: "{{ mattermost_db_host if mattermost_db_host | length > 0 else '127.0.0.1' }}"
-    mmd_postgresql_listen: "{{ '*' if postgresql_allowed_clients | length > 0 else 'localhost' }}"
+    # Anything that connects from another server: app servers, and replicas on a primary.
+    mmd_postgresql_remote: >-
+      {{ postgresql_allowed_clients
+         + (postgresql_replica_hosts if postgresql_replication == 'primary' else []) }}
+    mmd_postgresql_listen: >-
+      {{ '*' if (postgresql_allowed_clients + (postgresql_replica_hosts if postgresql_replication == 'primary' else [])) | length > 0
+         else 'localhost' }}
     mmd_postgresql_ssl: >-
-      {{ (postgresql_allowed_clients | length > 0) if postgresql_ssl == 'auto' else postgresql_ssl | bool }}
+      {{ ((postgresql_allowed_clients + (postgresql_replica_hosts if postgresql_replication == 'primary' else [])) | length > 0)
+         if postgresql_ssl == 'auto' else postgresql_ssl | bool }}
     mmd_mattermost_listen: >-
       {{ mattermost_listen_address if mattermost_listen_address != 'auto'
          else ('127.0.0.1' if ('nginx' in mmd_selected and mattermost_proxy_sources | length == 0) else '0.0.0.0') }}
@@ -22,6 +42,17 @@
     mmd_exporter_bind: "{{ '0.0.0.0' if monitoring_scrape_sources | length > 0 else '127.0.0.1' }}"
     mmd_tls_enabled: "{{ 'nginx' in mmd_selected and tls_mode == 'provided' }}"
     mmd_mattermost_metrics: "{{ mattermost_edition == 'enterprise' }}"
+    # The version /opt/mattermost points at now, blank on a first install. Re-runs
+    # stay on it unless an upgrade was asked for (a changed pin counts as asking).
+    mmd_mattermost_installed: >-
+      {{ (_mm_installed_link.stat.lnk_target | basename | regex_replace('^mattermost-', ''))
+         if ((_mm_installed_link.stat | default({})).islnk | default(false)) else '' }}
+    mmd_rtcd_installed: >-
+      {{ (_rtcd_installed_link.stat.lnk_target | basename | regex_replace('^rtcd-', ''))
+         if ((_rtcd_installed_link.stat | default({})).islnk | default(false)) else '' }}
+    mmd_postgresql_app_servers: >-
+      {{ (postgresql_app_servers if postgresql_app_servers != 'auto'
+          else [postgresql_allowed_clients | length + (1 if 'mattermost' in mmd_selected else 0), 1] | max) | int }}
     # Containers can't set host-wide kernel tunables. We still try, but don't fail.
     mmd_in_container: >-
       {{ ansible_facts['virtualization_role'] | default('') == 'guest'
@@ -37,6 +68,34 @@
 
 - name: Derive the settings that depend on the facts above
   ansible.builtin.set_fact:
+    mmd_mattermost_hold: >-
+      {{ mmd_mattermost_installed | length > 0 and mattermost_version_channel != 'pinned'
+         and not (mattermost_allow_upgrade | bool) }}
+    # rtcd has to stay compatible with the Calls plugin, so it doesn't drift either.
+    mmd_rtcd_hold: >-
+      {{ mmd_rtcd_installed | length > 0 and rtcd_version in ['latest', '']
+         and not (rtcd_allow_upgrade | bool) }}
+    # Every app server may open mattermost_db_max_open_conns connections, and
+    # PostgreSQL keeps a few for superusers, so leave room on top.
+    mmd_postgresql_max_connections: >-
+      {{ (postgresql_max_connections if postgresql_max_connections != 'auto'
+          else mmd_postgresql_app_servers | int * mattermost_db_max_open_conns | int
+               + postgresql_spare_connections | int) | int }}
+    # The most WAL a replica's slot may hold on a primary: a share of the filesystem
+    # the data directory sits on, or 10 GB when the mounts aren't known.
+    mmd_postgresql_slot_wal_cap_mb: >-
+      {%- if postgresql_max_slot_wal_keep_size != 'auto' -%}
+      {{ postgresql_max_slot_wal_keep_size | int }}
+      {%- else -%}
+      {%- set ns = namespace(size=0, mount='') -%}
+      {%- for m in ansible_facts['mounts'] | default([]) -%}
+      {%-   set prefix = m.mount.rstrip('/') ~ '/' -%}
+      {%-   if (postgresql_data_dir ~ '/').startswith(prefix) and prefix | length > ns.mount | length -%}
+      {%-     set ns.mount = prefix -%}{%- set ns.size = m.size_total | default(0) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ [(ns.size * (postgresql_slot_wal_keep_pct | int) / 100 / 1048576) | int, 1024] | max if ns.size > 0 else 10240 }}
+      {%- endif -%}
     mmd_db_sslmode: >-
       {{ mattermost_db_sslmode if mattermost_db_sslmode != 'auto'
          else ('disable' if mmd_db_host in ['127.0.0.1', 'localhost', '::1'] else 'require') }}

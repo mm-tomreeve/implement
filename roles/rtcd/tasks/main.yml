@@ -19,6 +19,12 @@
     - {path: "{{ rtcd_conf_dir }}", owner: root}
     - {path: "{{ rtcd_data_dir }}", owner: "{{ rtcd_user }}"}
 
+- name: Look for this version's binary
+  ansible.builtin.stat:
+    path: "{{ rtcd_version_bin }}"
+  register: _rtcd_version_bin
+
+# A kept version is already in place, and its download may have left the cache.
 - name: Install rtcd {{ mmd_artifacts.rtcd.version }}
   ansible.builtin.copy:
     src: "{{ mmd_artifacts.rtcd.path }}"
@@ -27,6 +33,7 @@
     owner: root
     group: root
     mode: "0755"
+  when: not _rtcd_version_bin.stat.exists or mmd_rtcd_installed != mmd_artifacts.rtcd.version
 
 - name: Trust the binary for fapolicyd
   ansible.builtin.include_role:

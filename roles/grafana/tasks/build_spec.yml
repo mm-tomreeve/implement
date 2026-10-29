@@ -12,7 +12,7 @@
       disabled: "{{ monitoring_alerts_disabled }}"
       params:
         db_name: "{{ mattermost_db_name }}"
-        mm_max_conns: 300
+        mm_max_conns: "{{ mattermost_db_max_open_conns | int }}"
 
 - name: Run the builder
   ansible.builtin.command:

@@ -27,10 +27,29 @@
 - name: Read server settings
   ansible.builtin.command:
     argv: [runuser, -u, postgres, --, psql, -X, -p, "{{ postgresql_port }}", -tAc,
-           "SELECT current_setting('server_version') || '|' || current_setting('password_encryption') || '|' || current_setting('ssl')"]
+           "SELECT current_setting('server_version') || '|' || current_setting('password_encryption') || '|' || current_setting('ssl')
+            || '|' || current_setting('max_connections')"]
   register: _v_pg_settings
   changed_when: false
   failed_when: false
+
+- name: Read the replication state
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -p, "{{ postgresql_port }}", -tAc, "{{ _query[postgresql_replication] }}"]
+  vars:
+    _query:
+      replica: >-
+        SELECT pg_is_in_recovery()::text || '|' || coalesce((SELECT status || ' from ' || sender_host FROM pg_stat_wal_receiver), 'not receiving')
+      primary: >-
+        SELECT count(*) || '|' || count(*) FILTER (WHERE NOT active) || '|' || current_setting('max_slot_wal_keep_size') || '|'
+        || coalesce(string_agg(slot_name || ' ' || CASE WHEN active THEN 'connected' ELSE 'NOT CONNECTED' END
+                               || ', holding ' || coalesce(pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)), 'no')
+                               || ' of WAL (' || coalesce(wal_status, 'unknown') || ')', '; '), 'no replica has connected yet')
+        FROM pg_replication_slots WHERE slot_type = 'physical'
+  register: _v_pg_repl
+  changed_when: false
+  failed_when: false
+  when: postgresql_replication in ['primary', 'replica']
 
 - name: Keep the PostgreSQL version for the report
   ansible.builtin.set_fact:
@@ -43,7 +62,8 @@
     name: common
     tasks_from: record_results
   vars:
-    _pg_parts: "{{ _v_pg_settings.stdout.split('|') if _v_pg_settings.rc == 0 else ['', '', ''] }}"
+    _pg_parts: "{{ _v_pg_settings.stdout.split('|') if _v_pg_settings.rc == 0 else ['', '', '', ''] }}"
+    _repl: "{{ _v_pg_repl.stdout.split('|', 3) if (_v_pg_repl.rc | default(1)) == 0 else ['', '', '', ''] }}"
     checks:
       - component: postgresql
         name: Service is active
@@ -65,5 +85,36 @@
       - component: postgresql
         name: TLS on for remote clients
         severity: warning
-        status: "{{ ('pass' if _pg_parts[2] | default('') == 'on' else 'warn') if postgresql_allowed_clients | length > 0 else 'skip' }}"
-        detail: "{{ 'ssl = ' ~ (_pg_parts[2] | default('unknown')) if postgresql_allowed_clients | length > 0 else 'no remote clients configured' }}"
+        status: "{{ ('pass' if _pg_parts[2] | default('') == 'on' else 'warn') if mmd_postgresql_remote | length > 0 else 'skip' }}"
+        detail: "{{ 'ssl = ' ~ (_pg_parts[2] | default('unknown')) if mmd_postgresql_remote | length > 0 else 'no remote clients configured' }}"
+      - component: postgresql
+        name: Room for every app server's connection pool
+        severity: warning
+        ok: "{{ _pg_parts[3] | default(0) | int >= mmd_postgresql_app_servers | int * mattermost_db_max_open_conns | int + 10 }}"
+        detail: >-
+          max_connections = {{ _pg_parts[3] | default('unknown') }}; {{ mmd_postgresql_app_servers }} app server(s)
+          x {{ mattermost_db_max_open_conns }} MaxOpenConns need {{ mmd_postgresql_app_servers | int * mattermost_db_max_open_conns | int }} plus spare
+      - component: postgresql
+        name: Read-only replica of the primary
+        status: "{{ ('pass' if _repl[0] == 'true' else 'fail') if postgresql_replication == 'replica' else 'skip' }}"
+        detail: >-
+          {{ ('in recovery, WAL receiver ' ~ _repl[1] | default('unknown')) if _repl[0] == 'true'
+             else ('not in recovery: this server is not following ' ~ postgresql_primary_host)
+             if postgresql_replication == 'replica' else 'not a replica' }}
+      - component: postgresql
+        name: Streaming from the primary
+        severity: warning
+        status: "{{ ('pass' if _repl[1] | default('') is match('streaming') else 'warn') if postgresql_replication == 'replica' else 'skip' }}"
+        detail: "{{ 'WAL receiver ' ~ _repl[1] | default('unknown') if postgresql_replication == 'replica' else 'not a replica' }}"
+      - component: postgresql
+        name: Every replica is connected
+        severity: warning
+        status: >-
+          {{ ('pass' if _repl[0] | default('0') | int >= postgresql_replica_hosts | length and _repl[1] | default('1') == '0' else 'warn')
+             if postgresql_replication == 'primary' else 'skip' }}
+        detail: "{{ _repl[3] | default('could not read pg_replication_slots') if postgresql_replication == 'primary' else 'no replicas' }}"
+      - component: postgresql
+        name: WAL held for replicas is capped
+        severity: warning
+        status: "{{ ('pass' if _repl[2] | default('-1') not in ['-1', ''] else 'warn') if postgresql_replication == 'primary' else 'skip' }}"
+        detail: "{{ 'max_slot_wal_keep_size = ' ~ _repl[2] | default('unknown') if postgresql_replication == 'primary' else 'no replicas' }}"

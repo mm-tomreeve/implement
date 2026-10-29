@@ -310,6 +310,47 @@ CATALOGUE = [
         "summary": "{{ printf \"%.0f\" $values.A.Value }} sessions are idle in a transaction on {{ $labels.instance }}",
         "action": "These hold locks and connections. idle_in_transaction_session_timeout should clear them; find the client if it doesn't.",
     },
+    # Replication. These series only exist where a primary feeds a read replica.
+    {
+        "id": "pg-replication-lag", "module": "postgresql", "title": "PostgreSQL replica lag",
+        # 0 on a primary, and on a replica that has replayed everything it received.
+        "expr": "pg_replication_lag_seconds",
+        "direction": "above", "tiers": {"info": 60, "warning": 300, "critical": 1800}, "for": "5m", "unit": " s",
+        "summary": "The replica {{ $labels.instance }} is {{ printf \"%.0f\" $values.A.Value }} s behind its primary",
+        "action": "Reads Mattermost sends to the replica are this far out of date. Check disk I/O on the replica and the "
+                  "network to the primary, and run `SELECT * FROM pg_stat_wal_receiver` on the replica.",
+        "quiet": True,
+    },
+    {
+        "id": "pg-replica-disconnected", "module": "postgresql", "title": "PostgreSQL replica disconnected",
+        "expr": 'pg_replication_slots_slot_is_active{slot_type="physical"}',
+        "direction": "below", "tiers": {"warning": 1}, "for": "5m", "unit": "",
+        "summary": "The replica using slot {{ $labels.slot_name }} is not connected to {{ $labels.instance }}",
+        "action": "The replica is down or can't reach the primary. Until it reconnects the primary keeps WAL for it, "
+                  "up to max_slot_wal_keep_size. Check `systemctl status postgresql` and the log on the replica.",
+        "quiet": True,
+    },
+    {
+        "id": "pg-slot-wal-held", "module": "postgresql", "title": "WAL held for a PostgreSQL replica",
+        # Share of max_slot_wal_keep_size the slot has used. Over 100 means the slot is past saving.
+        "expr": "100 * (1 - pg_replication_slots_safe_wal_size_bytes"
+                " / on (instance) group_left pg_settings_max_slot_wal_keep_size_bytes)",
+        "direction": "above", "tiers": {"info": 25, "warning": 50, "critical": 80}, "for": "5m", "unit": "%",
+        "summary": "Slot {{ $labels.slot_name }} on {{ $labels.instance }} holds {{ printf \"%.0f\" $values.A.Value }}% of the WAL it may keep",
+        "action": "The replica is down or far behind. At 100% PostgreSQL gives the slot up to save the primary's disk, "
+                  "and the replica has to be rebuilt. Bring the replica back, or if it's gone for good run "
+                  "`SELECT pg_drop_replication_slot('<slot>')` on the primary to free the WAL now.",
+        "quiet": True,
+    },
+    {
+        "id": "pg-slot-lost", "module": "postgresql", "title": "PostgreSQL replica can't catch up",
+        "expr": 'pg_replication_slots_wal_status{wal_status="lost"}',
+        "direction": "above", "tiers": {"critical": 0}, "for": "1m", "unit": "",
+        "summary": "Slot {{ $labels.slot_name }} on {{ $labels.instance }} has lost WAL its replica still needs",
+        "action": "The replica can't catch up any more, so rebuild it. On the replica, stop postgresql, move the data "
+                  "directory aside and run install.sh again. It drops the old slot and takes a fresh copy.",
+        "quiet": True,
+    },
 
     # ------------------------------------------------------------------ nginx
     {

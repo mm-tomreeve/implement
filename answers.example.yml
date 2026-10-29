@@ -53,6 +53,14 @@ mattermost_edition: enterprise          # enterprise | team
 mattermost_version_channel: latest-esr
 mattermost_version: ""                  # e.g. 11.7.14 when pinned
 mattermost_sha256: ""                   # optional extra check for a pinned build
+# Re-runs keep an installed Mattermost on its version even when the channel moves on.
+# Set this (or pass install.sh --upgrade) to take the newer release. Changing a pinned
+# version is an upgrade by itself. Older versions are always refused.
+mattermost_allow_upgrade: false
+# Before an upgrade Mattermost is stopped and its database dumped here (pg_dump -Fc),
+# with a copy of config.json. Uploaded files are not copied: back them up yourself.
+mattermost_upgrade_backup: true
+mattermost_backup_dir: /var/lib/mattermost-implement/backups
 mattermost_license_file: ""             # path on this server, e.g. /root/mattermost.mattermost-license
 
 # File storage. We consume storage, we don't build it: local disk, an NFS mount
@@ -73,6 +81,11 @@ mattermost_db_name: mattermost
 mattermost_db_user: mmuser
 mattermost_db_password: ""
 mattermost_db_sslmode: auto             # auto = disable locally, require for remote
+# SqlSettings.MaxOpenConns. Keep it the same on the database server's answer file,
+# which sizes max_connections from it.
+mattermost_db_max_open_conns: 300
+# PostgreSQL read replicas to send reads to (Enterprise). Same login as the primary.
+mattermost_db_replica_hosts: []         # e.g. ["10.10.1.21"]
 
 # Only needed when these run on other servers.
 mattermost_rtcd_url: ""                 # e.g. http://calls01.internal:8045
@@ -96,7 +109,25 @@ postgresql_version: "16"
 # Mattermost app servers allowed to connect when the database has its own server.
 # Setting this also turns on TLS with a self-signed certificate.
 postgresql_allowed_clients: []          # e.g. ["10.10.1.11", "10.10.1.12"]
-postgresql_max_connections: 300
+# max_connections. auto = mattermost_db_max_open_conns for each app server, plus
+# postgresql_spare_connections. App servers are counted from postgresql_allowed_clients
+# (one per entry); set postgresql_app_servers if an entry is a subnet.
+postgresql_max_connections: auto
+postgresql_app_servers: auto
+postgresql_spare_connections: 50
+# Streaming replication. none = standalone. primary = feeds the read replicas
+# listed below. replica = a read-only copy of postgresql_primary_host.
+# Install the primary first. A replica also needs mattermost_db_password and
+# postgresql_replication_password, both copied from the primary's secrets.yml.
+# It's for spreading reads, not automatic failover.
+postgresql_replication: none
+postgresql_replica_hosts: []            # on the primary, e.g. ["10.10.1.21"]
+postgresql_primary_host: ""             # on a replica, e.g. 10.10.1.11
+postgresql_replication_password: ""     # blank on the primary = generated
+# Most WAL the primary keeps for a replica that is down, so it can't fill the
+# disk. auto = 20% of the data filesystem, or a size in MB. Past it the replica
+# has to be rebuilt.
+postgresql_max_slot_wal_keep_size: auto
 
 # ---------------------------------------------------------------- nginx and tls
 # provided: use the certificate and key below.

@@ -19,6 +19,11 @@ n/a in the report.
 | postgresql | The Mattermost user can log in over TCP and run a query | critical |
 | postgresql | Passwords stored as SCRAM-SHA-256 | warning |
 | postgresql | TLS on when remote clients are allowed | warning |
+| postgresql | max_connections covers every app server's pool (`mattermost_db_max_open_conns` each) | warning |
+| postgresql | On a replica: in recovery, so read-only and following the primary | critical |
+| postgresql | On a replica: the WAL receiver is streaming from the primary | warning |
+| postgresql | On a primary: every replica has a slot and is connected (lists the WAL each slot holds) | warning |
+| postgresql | On a primary: `max_slot_wal_keep_size` caps the WAL a replica can hold | warning |
 | mattermost | Service is active | critical |
 | mattermost | `/api/v4/system/ping` returns OK | critical |
 | mattermost | Database and file store report OK in the ping | critical |
@@ -56,9 +61,10 @@ you a document that says what went wrong.
 make venv     # once: a local virtualenv with ansible-core, ansible-lint, yamllint, shellcheck
 make lint     # yamllint, ansible-lint (production profile), shellcheck, playbook syntax check
 make test     # unit tests for the resolver, and consistency checks across the repo
-make render   # render the plan logic and the report for six server layouts
+make render   # render the plan logic and the report for eight server layouts
 make smoke    # the core profile in an AlmaLinux 9 systemd container
 make e2e      # five containers, one per role, wired together, plus a functional test
+make e2e-replica  # a PostgreSQL primary and a read replica in two containers
 ```
 
 The unit tests run against a saved copy of Mattermost's version archive page
@@ -118,3 +124,19 @@ GitHub's API, which allows 60 anonymous calls an hour.
 Two things the containers can't show. SELinux is off inside them, so the SELinux check always
 warns there. And on Apple silicon the containers are arm64. Mattermost's arm64 tarballs ship no
 prepackaged plugins, so the Calls plugin check shows n/a; on amd64 it must pass.
+
+## Replication test
+
+`make e2e-replica` (or `tests/e2e/replica.sh`) installs a PostgreSQL primary (pg01) and a read
+replica (pg02) in two containers, each with `install.sh` and the database profile. It then checks:
+
+- pg02 is in recovery and refuses writes, and pg01 sees it streaming,
+- a row written on pg01 shows up on pg02, and mmuser can log in on pg02,
+- pg02 made its own TLS key rather than keeping the primary's,
+- `max_slot_wal_keep_size` is set on pg01,
+- the exporters publish the series the replication alerts read (`pg_replication_slots_*` and
+  `pg_settings_max_slot_wal_keep_size_bytes` on pg01, `pg_replication_is_replica` on pg02).
+
+Then it runs both installs again, and finally rebuilds pg02 from scratch (stop it, move the data
+directory aside, run `install.sh`) and checks it streams again. Logs land in `tests/e2e/out/replica/`.
+It takes the same `IMAGE` and `KEEP` settings as the main end-to-end test.

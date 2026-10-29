@@ -1,0 +1,102 @@
+---
+# A replica starts as a copy of the primary, taken with pg_basebackup, and then
+# follows it. Nothing here deletes a database: a data directory that already
+# holds one that isn't a replica stops the run.
+- name: Look for an existing database
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_dir }}/PG_VERSION"
+  register: _pg_has_data
+
+- name: Look for the standby marker
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_dir }}/standby.signal"
+  register: _pg_is_standby
+
+- name: Refuse to turn a standalone database into a replica
+  ansible.builtin.assert:
+    that: not _pg_has_data.stat.exists or _pg_is_standby.stat.exists
+    fail_msg: >-
+      {{ postgresql_data_dir }} already holds a database that isn't a replica. To make this server a
+      replica of {{ postgresql_primary_host }}, stop postgresql, move the data directory aside and run
+      again. We never delete a database for you.
+    quiet: true
+
+# The database field 'replication' matches replication connections only.
+- name: Store the replication password for the postgres user
+  ansible.builtin.copy:
+    dest: "{{ postgresql_passfile }}"
+    content: "{{ _pgpass_line }}\n"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  vars:
+    _pgpass_line: >-
+      {{ postgresql_primary_host }}:{{ postgresql_port }}:replication:{{ postgresql_replication_user }}:{{
+      mmd_secrets.replication_password | replace('\\', '\\\\') | replace(':', '\\:') }}
+  no_log: true
+
+- name: Copy the primary
+  when: not _pg_has_data.stat.exists
+  vars:
+    _conninfo: >-
+      host={{ postgresql_primary_host }} port={{ postgresql_port }} user={{ postgresql_replication_user }}
+      passfile={{ postgresql_passfile }} sslmode={{ postgresql_replication_sslmode }}
+  block:
+    - name: Wait for the primary
+      ansible.builtin.wait_for:
+        host: "{{ postgresql_primary_host }}"
+        port: "{{ postgresql_port }}"
+        timeout: 30
+        msg: >-
+          Can't reach PostgreSQL on {{ postgresql_primary_host }}:{{ postgresql_port }}. Install the primary
+          first, with this server in its postgresql_replica_hosts.
+
+    # pg_basebackup creates the slot, so a slot left by an earlier copy of this
+    # replica has to go first. An active slot means another server is using the
+    # name, and that stops the run.
+    - name: Drop a slot left behind by an earlier copy
+      ansible.builtin.command:
+        argv: [runuser, -u, postgres, --, pg_receivewal, --drop-slot, --slot, "{{ postgresql_replication_slot }}",
+               --dbname, "{{ _conninfo }}", --no-password]
+      register: _pg_dropslot
+      changed_when: _pg_dropslot.rc == 0
+      failed_when: _pg_dropslot.rc != 0 and 'does not exist' not in _pg_dropslot.stderr
+
+    - name: Copy the primary with pg_basebackup (takes a while on a big database)
+      ansible.builtin.command:
+        argv: [runuser, -u, postgres, --, pg_basebackup, --dbname, "{{ _conninfo }}", --pgdata, "{{ postgresql_data_dir }}",
+               --wal-method, stream, --create-slot, --slot, "{{ postgresql_replication_slot }}", --checkpoint, fast,
+               --no-password]
+      changed_when: true
+
+    # The copy brings the primary's certificate and key. This server makes its own.
+    - name: Drop the primary's certificate from the copy
+      ansible.builtin.file:
+        path: "{{ postgresql_data_dir }}/{{ item }}"
+        state: absent
+      loop: [server.key, server.crt]
+
+- name: Mark this server as a standby
+  ansible.builtin.copy:
+    dest: "{{ postgresql_data_dir }}/standby.signal"
+    content: ""
+    force: false
+    owner: postgres
+    group: postgres
+    mode: "0600"
+
+# A standby won't start with a lower max_connections than its primary. The
+# control file carries the primary's value and follows it when it changes.
+- name: Read the primary's limits from the control file
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, pg_controldata, --pgdata, "{{ postgresql_data_dir }}"]
+  register: _pg_control
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Keep max_connections at least as high as the primary's
+  ansible.builtin.set_fact:
+    mmd_postgresql_max_connections: "{{ [mmd_postgresql_max_connections | int, _primary_max | int] | max }}"
+  vars:
+    _primary_max: "{{ (_pg_control.stdout | default('') | regex_search('max_connections setting:\\s+(\\d+)', '\\1') or ['0']) | first }}"

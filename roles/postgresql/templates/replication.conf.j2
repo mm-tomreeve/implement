@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+{% if postgresql_replication == 'primary' %}
+# This server feeds read replicas: {{ postgresql_replica_hosts | join(', ') }}.
+# wal_level, max_wal_senders and max_replication_slots stay on PostgreSQL's
+# defaults (replica, 10, 10). A replica must match them, and it does.
+#
+# Each replica holds a slot here, and the slot keeps WAL until the replica has it.
+# A replica that is down would otherwise fill this disk. Past this much the slot
+# is given up instead, and that replica has to be rebuilt.
+max_slot_wal_keep_size = {{ mmd_postgresql_slot_wal_cap_mb }}MB
+{% else %}
+# Read-only copy of {{ postgresql_primary_host }}:{{ postgresql_port }}. To rebuild it: stop postgresql,
+# move {{ postgresql_data_dir }} aside and run install.sh again.
+primary_conninfo = 'host={{ postgresql_primary_host }} port={{ postgresql_port }} user={{ postgresql_replication_user }} passfile={{ postgresql_passfile }} sslmode={{ postgresql_replication_sslmode }} application_name={{ postgresql_replication_slot }}'
+primary_slot_name = '{{ postgresql_replication_slot }}'
+hot_standby = on
+# Queries here are cancelled when they block replay for too long, rather than
+# holding back vacuum on the primary.
+hot_standby_feedback = off
+{% endif %}

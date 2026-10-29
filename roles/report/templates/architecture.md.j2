@@ -102,6 +102,9 @@ Before production, deal with these:
 {% if remote.prom %}{% set _ = ext.append(['Prometheus', mmd_prometheus_url, 'Metrics source for Grafana']) %}{% endif %}
 {% if has.mm and mattermost_proxy_sources %}{% set _ = ext.append(['Reverse proxies', mattermost_proxy_sources | join(', '), 'Allowed to reach port ' ~ mattermost_port]) %}{% endif %}
 {% if has.pg and postgresql_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', postgresql_allowed_clients | join(', '), 'Allowed to connect to PostgreSQL']) %}{% endif %}
+{% if has.pg and postgresql_replication == 'primary' %}{% set _ = ext.append(['PostgreSQL read replicas', postgresql_replica_hosts | join(', '), 'Copy and follow this database']) %}{% endif %}
+{% if has.pg and postgresql_replication == 'replica' %}{% set _ = ext.append(['PostgreSQL primary', postgresql_primary_host ~ ':' ~ postgresql_port, 'This replica follows it (slot ' ~ postgresql_replication_slot ~ ')']) %}{% endif %}
+{% if has.mm and mattermost_db_replica_hosts %}{% set _ = ext.append(['PostgreSQL read replicas', mattermost_db_replica_hosts | join(', '), 'Mattermost sends reads here (Enterprise)']) %}{% endif %}
 {% if has.os and opensearch_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', opensearch_allowed_clients | join(', '), 'Allowed to query OpenSearch']) %}{% endif %}
 {% if has.rtcd and rtcd_api_sources %}{% set _ = ext.append(['Mattermost app servers', rtcd_api_sources | join(', '), 'Allowed to use the rtcd API']) %}{% endif %}
 {% if monitoring_scrape_sources %}{% set _ = ext.append(['Prometheus servers', monitoring_scrape_sources | join(', '), 'Allowed to scrape metrics here']) %}{% endif %}
@@ -345,7 +348,7 @@ Disk use where data lives:
 
 | | |
 |---|---|
-| Version | {{ version_of(c) }}{% if c == 'mattermost' and mmd_mattermost_previous | default('') and mmd_mattermost_previous != version_of(c) %} (upgraded from {{ mmd_mattermost_previous }}){% endif %} |
+| Version | {{ version_of(c) }}{% if c == 'mattermost' and mmd_mattermost_previous | default('') and mmd_mattermost_previous != version_of(c) %} (upgraded from {{ mmd_mattermost_previous }}{{ '; database dumped first to `' ~ mmd_mattermost_backup ~ '`' if mmd_mattermost_backup | default('') else '' }}){% endif %} |
 {% if c == 'mattermost' %}
 | Edition | {{ mattermost_edition | capitalize }}{{ ', ESR' if art.esr | default(false) else '' }} (channel {{ mattermost_version_channel }}) |
 {% endif %}
@@ -366,7 +369,7 @@ Mattermost reads `{{ mattermost_config_dir }}/config.json` (via `MM_CONFIG`), no
 install directory. We only set the keys we own: SiteURL, listen address, database, file storage,
 log and plugin paths, metrics, search and the Calls rtcd URL. Everything else stays editable in the
 System Console. Database: `{{ mmd_db_host }}:{{ mattermost_db_port }}/{{ mattermost_db_name }}` as
-`{{ mattermost_db_user }}`, sslmode `{{ mmd_db_sslmode }}`. Files: {{ 'local disk at `' ~ mattermost_data_dir ~ '`' if mattermost_file_driver == 'local' else 'S3 bucket `' ~ mattermost_s3_bucket ~ '` at `' ~ mattermost_s3_endpoint ~ '`' }}.
+`{{ mattermost_db_user }}`, sslmode `{{ mmd_db_sslmode }}`{{ ', with reads sent to the replicas on ' ~ mattermost_db_replica_hosts | join(', ') if mattermost_db_replica_hosts else '' }}. Files: {{ 'local disk at `' ~ mattermost_data_dir ~ '`' if mattermost_file_driver == 'local' else 'S3 bucket `' ~ mattermost_s3_bucket ~ '` at `' ~ mattermost_s3_endpoint ~ '`' }}.
 Calls: {{ 'rtcd at ' ~ mmd_rtcd_url if mmd_rtcd_url else ('built-in media server on port ' ~ mattermost_calls_port if mmd_calls_integrated else 'not configured') }}.
 Search: {{ 'OpenSearch at ' ~ mmd_opensearch_url ~ (', indexing on' if mattermost_search_enable | bool else ', indexing off until a licence is installed') if mmd_opensearch_url else 'database search (no OpenSearch configured)' }}.
 {% if mmd_opensearch_ca_src %}
@@ -375,9 +378,27 @@ The search CA is trusted system-wide (`/etc/pki/ca-trust/source/anchors/mattermo
 
 {% elif c == 'postgresql' %}
 Tuned for {{ ansible_facts['memtotal_mb'] }} MB of RAM{{ ', sharing the box with Mattermost' if has.mm else '' }}:
-shared_buffers is {{ postgresql_shared_buffers_pct }}% of RAM and max_connections is {{ postgresql_max_connections }}.
+shared_buffers is {{ postgresql_shared_buffers_pct }}% of RAM. max_connections is {{ mmd_postgresql_max_connections }}: {{ mmd_postgresql_app_servers }} app server(s) at {{ mattermost_db_max_open_conns }} connections each{{ ' plus ' ~ postgresql_spare_connections ~ ' spare' if postgresql_max_connections == 'auto' else ' (set by hand)' }}.
 Listens on `{{ mmd_postgresql_listen }}`. Passwords use SCRAM-SHA-256.
 {{ 'TLS is on with a self-signed certificate in the data directory.' if mmd_postgresql_ssl else 'TLS is off because only local clients connect.' }}
+{% if postgresql_replication == 'primary' %}
+
+Streams WAL to the read replicas on {{ postgresql_replica_hosts | join(', ') }}, which log in as
+`{{ postgresql_replication_user }}`. Each replica holds a replication slot here, so this server keeps WAL
+until the replica has it. `max_slot_wal_keep_size` caps that at {{ mmd_postgresql_slot_wal_cap_mb }} MB
+per slot, so a replica that is down can't fill this disk. Past the cap the slot is given up and that
+replica has to be rebuilt. Check the slots with
+`runuser -u postgres -- psql -c 'SELECT slot_name, active, wal_status FROM pg_replication_slots'`.
+{% elif postgresql_replication == 'replica' %}
+
+A read-only copy of `{{ postgresql_primary_host }}:{{ postgresql_port }}`, streaming WAL as
+`{{ postgresql_replication_user }}` through the slot `{{ postgresql_replication_slot }}` (settings in
+`conf.d/replication.conf`, password in `{{ postgresql_passfile }}`). Logins and the Mattermost database
+come from the primary. To rebuild it: `systemctl stop postgresql`, move `{{ postgresql_data_dir }}`
+aside and run install.sh. To promote it after
+losing the primary: `runuser -u postgres -- pg_ctl promote -D {{ postgresql_data_dir }}`, then point
+`mattermost_db_host` at this server.
+{% endif %}
 
 {% elif c == 'nginx' %}
 {% if mmd_tls_enabled %}
@@ -469,7 +490,11 @@ We checked every tarball before installing it:
 | Mattermost database | {{ mmd_db_host }} | Backed up on the database server. Take the dump and the file backup at the same time. |
 {% endif %}
 {% if has.pg %}
+{% if postgresql_replication == 'replica' %}
+| Mattermost database | `{{ postgresql_data_dir }}` | A copy of {{ postgresql_primary_host }}. It isn't a backup: deletes and mistakes replicate too. Back up the primary (a dump taken here works too and spares the primary the load). |
+{% else %}
 | Mattermost database | `{{ postgresql_data_dir }}` | `runuser -u postgres -- pg_dump -Fc {{ mattermost_db_name }} > mattermost-$(date +%F).dump` nightly, kept off this server. Test a restore every quarter. |
+{% endif %}
 {% endif %}
 {% if has.mm %}
 | Mattermost config | `{{ mattermost_config_dir }}` | Copy with every change. It holds the database password, so keep the copy encrypted. |
@@ -634,13 +659,15 @@ Start order after a reboot is handled by systemd{% if has.mm and has.pg %}; Matt
 {% if has.mm %}
 ### Upgrade Mattermost
 
-1. Take a database backup and copy `{{ mattermost_config_dir }}`.
-2. Set `mattermost_version_channel` (or pin `mattermost_version`) in the answer file and run `./install.sh --answers ...`.
-3. The new version unpacks to `{{ mattermost_install_root }}/mattermost-<version>`, the symlink moves and Mattermost restarts. The old directory stays put.
+Re-runs keep the installed version{{ ' even though the channel is ' ~ mattermost_version_channel if mattermost_version_channel != 'pinned' else '' }}. To upgrade:
 
-Rolling back means pointing `{{ mattermost_dir }}` back at the old directory and restarting. Database
-migrations only go forwards, so after anything more than a patch release you also need to restore
-the backup from step 1.
+1. Take a file backup of the uploaded files{{ ' in `' ~ mattermost_data_dir ~ '`' if mattermost_file_driver == 'local' else '' }}.
+2. Run `./install.sh --answers ... --upgrade` to move to the newest release on the channel, or pin a newer `mattermost_version` and re-run.
+3. Mattermost stops, the database is dumped to `{{ mattermost_backup_dir }}` with a copy of `config.json`{{ '' if mattermost_upgrade_backup | bool else ' (switched off here: `mattermost_upgrade_backup` is false, so take your own first)' }}, the new version unpacks to `{{ mattermost_install_root }}/mattermost-<version>`, the symlink moves and Mattermost starts. The old directory stays put.
+
+The installer refuses to install an older version than the one running. Database migrations only
+go forwards, so rolling back means restoring the dump from step 3 (`pg_restore --clean`), then
+pointing `{{ mattermost_dir }}` back at the old directory and restarting.
 
 {% endif %}
 {% if has.ngx %}

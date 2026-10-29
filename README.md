@@ -44,7 +44,8 @@ The script then:
 6. deploys, runs the post-deploy tests and writes the architecture document.
 
 Run it again whenever you like. The roles are idempotent, so a second run changes nothing unless
-something has drifted, and you get a fresh report.
+something has drifted, and you get a fresh report. An installed Mattermost stays on its version
+until you ask for an upgrade with `--upgrade`; see [Layout and upgrades](#layout-and-upgrades).
 
 ## What it can install
 
@@ -76,7 +77,7 @@ Roles are grouped into profiles. Give a server one profile, several, or a custom
 |---|---|---|
 | `core` | postgresql, mattermost, nginx | Small teams, one server |
 | `app` | mattermost, nginx | Application server in a split estate |
-| `database` | postgresql | Dedicated database server |
+| `database` | postgresql | Dedicated database server, or a read replica of one |
 | `calls` | rtcd | Dedicated Calls server |
 | `search` | opensearch | Dedicated search server |
 | `monitoring` | prometheus, grafana | Watches the rest of the estate |
@@ -118,6 +119,7 @@ The other flags:
 | Flag | Does |
 |---|---|
 | `--plan-only` | Shows what would happen, then stops |
+| `--upgrade` | Lets an installed Mattermost (and rtcd) move to the newest release on its channel |
 | `--check` | Dry run |
 | `--verify-only` | Re-runs the post-deploy tests and refreshes the report |
 | `--report-only` | Rebuilds the report from the last results |
@@ -201,6 +203,59 @@ monitoring. The app server needs the database password from db01's secrets file,
 Anything only local components use stays on 127.0.0.1 with no firewall opening. Anything another
 server needs is opened to the addresses you list, and nothing else.
 
+The database server sizes `max_connections` for every app server in `postgresql_allowed_clients`:
+`mattermost_db_max_open_conns` (300, Mattermost's own default) for each, plus 50 spare. If you
+list a subnet rather than single addresses, set `postgresql_app_servers` to the number of
+Mattermost servers behind it. If you change `mattermost_db_max_open_conns`, set it on the
+database server too.
+
+### Example: a database with a read replica
+
+A read replica is a read-only copy of the database that follows the primary as it changes.
+Mattermost Enterprise sends some of its reads there, which takes load off the primary. It won't
+fail over by itself: if the primary is lost, you promote the replica by hand. The report on the
+replica has the command.
+
+```yaml
+# db01 (10.10.1.11), the primary
+deploy_profiles: [database]
+postgresql_replication: primary
+postgresql_replica_hosts: [10.10.1.21]
+postgresql_allowed_clients: [10.10.1.12]
+```
+
+```yaml
+# db02 (10.10.1.21), the replica
+deploy_profiles: [database]
+postgresql_replication: replica
+postgresql_primary_host: 10.10.1.11
+postgresql_allowed_clients: [10.10.1.12]
+mattermost_db_password: "<db_password from db01's secrets.yml>"
+postgresql_replication_password: "<replication_password from db01's secrets.yml>"
+```
+
+```yaml
+# and on app01
+mattermost_db_replica_hosts: [10.10.1.21]
+```
+
+Install db01 first. On its first run db02 copies db01 with `pg_basebackup`, then keeps following
+it. It stops rather than overwrite a data directory that already holds a database of its own.
+Give both servers the same `postgresql_allowed_clients` and `mattermost_db_max_open_conns`. A
+replica won't start with a lower `max_connections` than its primary, so the installer raises it
+to match if it has to.
+
+Each replica holds a replication slot on the primary, and the primary keeps WAL until the replica
+has received it. A replica that stays down would make the primary keep WAL until its disk filled,
+so `max_slot_wal_keep_size` caps how much one slot can hold. The default cap is 20% of the
+filesystem under the primary's data directory (`postgresql_slot_wal_keep_pct`), or you can give a
+size in MB with `postgresql_max_slot_wal_keep_size`. A replica that falls past the cap can't catch
+up and has to be rebuilt: stop PostgreSQL on it, move `/var/lib/pgsql/data` aside and run
+`install.sh` again. The monitoring server warns long before that point.
+
+A server without replicas needs none of this. With no slots, PostgreSQL recycles WAL at every
+checkpoint and keeps around `max_wal_size` of it (1 GB by default).
+
 ### Example: no internet access
 
 On a machine that does have internet access:
@@ -269,7 +324,8 @@ The keys are held in this repo. We never trust a key that came from the download
 
 ## Versions we deploy
 
-Mattermost and rtcd follow the latest release by default. Everything else is pinned in
+Mattermost and rtcd follow the latest release by default when they're first installed. After that,
+re-runs keep the installed version until you pass `--upgrade`. Everything else is pinned in
 [inventory/group_vars/all/defaults.yml](inventory/group_vars/all/defaults.yml), so an install
 today and an install next month get the same thing. Change any of them in the answer file; most
 accept `latest`.
@@ -305,8 +361,21 @@ Tarball components unpack into `/opt/<name>-<version>`, with a symlink at `/opt/
 at the live one. Config lives in `/etc` and data in `/var`, outside the install directory.
 Upgrading means changing the version and re-running: the new version unpacks next to the old one,
 the symlink moves and the service restarts. Rolling back means pointing the symlink back.
-Mattermost's database migrations only go forwards, so a rollback past a patch release also needs
-the database backup you took first.
+
+Mattermost is handled more carefully, because its database migrations only go forwards:
+
+- Once it's installed, re-runs stay on the installed version even when `latest-stable` or
+  `latest-esr` has moved on. The plan says so. Pass `--upgrade` (or set
+  `mattermost_allow_upgrade: true`) to move to the newest release. Changing a pinned
+  `mattermost_version` is an upgrade by itself. rtcd on `latest` is held the same way.
+- Before an upgrade, Mattermost is stopped and its database dumped with `pg_dump -Fc` to
+  `/var/lib/mattermost-implement/backups`, next to a copy of `config.json`. On an app server with a
+  remote database this installs the PostgreSQL client from the `postgresql_version` stream, which
+  must be the database server's major version or newer. If the dump fails, Mattermost restarts on
+  the old version and the run stops. Uploaded files aren't copied, so back those up yourself.
+  `mattermost_upgrade_backup: false` skips the dump if you've just taken your own backup.
+- An older version than the one installed is refused. Going back means restoring the dump, then
+  pointing the symlink back by hand.
 
 Mattermost reads `/etc/mattermost/config.json`. We only set the keys we own (site URL, database,
 file storage, paths, metrics, search and Calls), so everything else stays editable in the System
@@ -317,7 +386,9 @@ Console.
 SELinux stays enforcing and firewalld stays on. Where fapolicyd runs, our install directories get
 trust entries so it can stay on too. OpenSearch uses certificates from its own
 CA, never the public demo ones. PostgreSQL uses SCRAM-SHA-256, with TLS on a self-signed
-certificate once remote clients are allowed. Generated passwords live in
+certificate once remote clients or replicas are allowed. Replicas log in as a separate
+`replicator` user, which pg_hba.conf only lets in for replication. Each replica makes its own
+certificate rather than keeping the copy of the primary's key. Generated passwords live in
 `/etc/mattermost-implement/secrets.yml`, root only.
 
 ### Post-deploy tests
@@ -326,7 +397,8 @@ Every role carries its own checks. They run at the end of every install, and aga
 run `./install.sh --verify-only`. They cover:
 
 - services and ports, and Mattermost's health API,
-- database logins,
+- database logins, and on replicated databases that the replica is streaming and every slot
+  is in use,
 - the certificate and websocket upgrades through Nginx,
 - Calls and search reachability,
 - scrape targets, and the alert rules and dashboards in Grafana.
@@ -395,7 +467,8 @@ push notifications, the database pool and the Go heap.
 #### PostgreSQL
 
 Connections by state, transactions, the longest open transaction, rows read and written, locks,
-deadlocks, cache hit ratio and database size.
+deadlocks, cache hit ratio and database size. With a read replica it also shows replication lag
+and how much WAL the primary is holding for each replica, against the cap.
 
 ![PostgreSQL dashboard](docs/images/grafana-postgresql.png)
 
@@ -422,8 +495,8 @@ Connections by state, requests per second and dropped connections.
 
 ### Alerts
 
-There are 52 checks, which become 109 Grafana alert rules for a full estate: 42 critical,
-38 warning and 29 info. Each check has up to three tiers and they never overlap. A disk at 85%
+There are 56 checks, which become 117 Grafana alert rules for a full estate: 45 critical,
+41 warning and 31 info. Each check has up to three tiers and they never overlap. A disk at 85%
 fires the warning only, and at 96% the critical only, so one problem raises one alert.
 
 Every rule carries these labels, which is what you route on:
@@ -516,6 +589,10 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 | PostgreSQL cache hit ratio `pg-cache-hit` | < 99% | < 95% | < 90% | 30m | The working set no longer fits in shared_buffers. Add memory or move PostgreSQL to its own server. |
 | PostgreSQL rollback rate `pg-rollbacks` | > 5% | > 15% |  | 15m | Some rollbacks are normal. A rise usually matches errors in the Mattermost log. |
 | Sessions idle in transaction `pg-idle-in-transaction` |  | > 10 | > 50 | 5m | These hold locks and connections. idle_in_transaction_session_timeout should clear them; find the client if it doesn't. |
+| PostgreSQL replica lag `pg-replication-lag` | > 60 s | > 300 s | > 1800 s | 5m | Reads Mattermost sends to the replica are this far out of date. Check disk I/O on the replica and the network to the primary, and run `SELECT * FROM pg_stat_wal_receiver` on the replica. |
+| PostgreSQL replica disconnected `pg-replica-disconnected` |  | < 1 |  | 5m | The replica is down or can't reach the primary. Until it reconnects the primary keeps WAL for it, up to max_slot_wal_keep_size. Check `systemctl status postgresql` and the log on the replica. |
+| WAL held for a PostgreSQL replica `pg-slot-wal-held` | > 25% | > 50% | > 80% | 5m | The replica is down or far behind. At 100% PostgreSQL gives the slot up to save the primary's disk, and the replica has to be rebuilt. Bring the replica back, or if it's gone for good run `SELECT pg_drop_replication_slot('<slot>')` on the primary to free the WAL now. |
+| PostgreSQL replica can't catch up `pg-slot-lost` |  |  | > 0 | 1m | The replica can't catch up any more, so rebuild it. On the replica, stop postgresql, move the data directory aside and run install.sh again. It drops the old slot and takes a fresh copy. |
 
 #### Nginx alerts
 
@@ -597,6 +674,7 @@ contact point. Grafana 13 starts with an empty one:
 | Upload the Enterprise licence, or set `mattermost_license_file` | Until then Mattermost runs as a free instance, with Enterprise search and HA switched off. |
 | Run a bulk index once licensed | System Console > Environment > Elasticsearch. Search uses the database until you do. |
 | Set up SMTP and push notifications in the System Console | Invitations, password resets and mobile notifications depend on them. |
+| With a read replica, plan how you'd fail over | Replication doesn't fail over by itself. Promote the replica with `pg_ctl promote` (the replica's report has the full command), then point `mattermost_db_host` at it and re-run the app servers. |
 | Schedule backups and test a restore | `pg_dump` plus a file backup of the data directory, taken together and kept off the server. The report has the commands. |
 | Set `rtcd_ice_host_override` behind NAT or a load balancer, and open UDP 8443 from clients | Otherwise calls connect but carry no audio. |
 | Copy each server's `/etc/mattermost-implement/secrets.yml` somewhere safe | It holds the generated passwords. |
@@ -609,9 +687,10 @@ contact point. Grafana 13 starts with an empty one:
 make venv     # once: a local virtualenv with ansible-core, ansible-lint, yamllint, shellcheck
 make lint     # yamllint, ansible-lint (production profile), shellcheck, playbook syntax
 make test     # unit tests and consistency checks (resolver, alert catalogue, docs, wrapper)
-make render   # sample reports for six layouts from made-up facts, in tests/render/out
+make render   # sample reports for eight layouts from made-up facts, in tests/render/out
 make smoke    # the core profile in an AlmaLinux 9 container
 make e2e      # five containers wired together, a functional test and a check of every alert query
+make e2e-replica  # a PostgreSQL primary and read replica in two containers
 ```
 
 The end-to-end test builds a database, app, Calls, search and monitoring server in containers and
@@ -621,6 +700,10 @@ Prometheus. It fails if any query returns no data, which usually means a wrong m
 anything critical is firing or pending. With `KEEP=true` the containers stay up and Grafana is on
 http://localhost:13000. The screenshots in this README came from that estate, via
 `tests/e2e/screenshots.py`.
+
+`make e2e-replica` installs a primary and a replica, writes on one and reads it back from the
+other, checks the exporters publish what the replication alerts query, then rebuilds the replica
+from scratch and checks it streams again.
 
 Containers can't show two things: SELinux is off inside them, and on Apple silicon they're arm64.
 A release still needs a run on real RHEL 9 and 10 servers, online and offline.

@@ -51,6 +51,7 @@ INTERNET_OVERRIDE=""
 NON_INTERACTIVE=false
 ASSUME_YES=false
 CHECK_MODE=false
+ALLOW_UPGRADE=false
 MODE=install
 ONLINE=false
 
@@ -138,6 +139,8 @@ Where to get it
 How to run
   --non-interactive       Never prompt. Needs --answers or --profile.
   -y, --yes               Do not ask for confirmation
+  --upgrade               Let an installed Mattermost (and rtcd) move to a newer release
+                          (it is stopped and its database dumped first)
   --check                 Dry run (Ansible check mode, best effort)
   --plan-only             Show what would be installed, then stop
   --verify-only           Re-run the post-deploy tests and refresh the report
@@ -162,6 +165,7 @@ parse_args() {
       --offline) INTERNET_OVERRIDE=no; shift ;;
       --non-interactive) NON_INTERACTIVE=true; shift ;;
       -y|--yes) ASSUME_YES=true; shift ;;
+      --upgrade) ALLOW_UPGRADE=true; shift ;;
       --check) CHECK_MODE=true; shift ;;
       --plan-only) MODE=plan; shift ;;
       --verify-only) MODE=verify; shift ;;
@@ -668,6 +672,9 @@ interview() {
       emit mattermost_db_host "$(yaml_quote "${dbh}")"
       emit mattermost_db_port "${dbp}"
       emit mattermost_db_password "$(yaml_quote "${dbpass}")"
+      local dbreplicas
+      ask dbreplicas "PostgreSQL read replica addresses for reads (comma-separated, blank = none)" ""
+      emit mattermost_db_replica_hosts "$(yaml_list "${dbreplicas}")"
     fi
     if ! has_component nginx; then
       local proxies
@@ -695,9 +702,27 @@ interview() {
 
   if has_component postgresql; then
     section "PostgreSQL"
-    local dbpass clients
-    ask_secret dbpass "Password for the mmuser database role"
+    local dbpass clients repl="none"
+    if ! has_component mattermost; then
+      ask_choice repl "Replication (a replica is a read-only copy of a primary; install the primary first)" none none primary replica
+      emit postgresql_replication "${repl}"
+    fi
+    if [[ "${repl}" == replica ]]; then
+      local primary rpass
+      ask primary "Primary server address" ""
+      read -r -s -p "    Password for mmuser (db_password in the primary's secrets.yml): " dbpass || no_input; echo
+      read -r -s -p "    Replication password (replication_password in the primary's secrets.yml): " rpass || no_input; echo
+      emit postgresql_primary_host "$(yaml_quote "${primary}")"
+      emit postgresql_replication_password "$(yaml_quote "${rpass}")"
+    else
+      ask_secret dbpass "Password for the mmuser database role"
+    fi
     emit mattermost_db_password "$(yaml_quote "${dbpass}")"
+    if [[ "${repl}" == primary ]]; then
+      local replicas
+      ask replicas "Replica server addresses (comma-separated IPs)" ""
+      emit postgresql_replica_hosts "$(yaml_list "${replicas}")"
+    fi
     if ! has_component mattermost; then
       ask clients "Mattermost app server addresses allowed to connect (comma-separated IPs or CIDRs)" ""
       emit postgresql_allowed_clients "$(yaml_list "${clients}")"
@@ -903,6 +928,9 @@ if args.get("components"):
     out["deploy_components"] = [c.strip() for c in args["components"].split(",") if c.strip()]
 if args.get("plan_file"):
     out["plan_output_file"] = args["plan_file"]
+if args.get("upgrade") == "true":
+    out["mattermost_allow_upgrade"] = True
+    out["rtcd_allow_upgrade"] = True
 print(json.dumps(out))
 PY
 }
@@ -911,7 +939,8 @@ run_playbook() {
   local playbook="$1"; shift
   local extra
   extra="$(extra_vars_json "online=${ONLINE}" "version=${TOOL_VERSION}" "run_id=${RUN_ID}" \
-    "answers=${ANSWERS}" "source=${OFFLINE_SOURCE}" "profiles=${PROFILES}" "components=${COMPONENTS}" "$@")"
+    "answers=${ANSWERS}" "source=${OFFLINE_SOURCE}" "profiles=${PROFILES}" "components=${COMPONENTS}" \
+    "upgrade=${ALLOW_UPGRADE}" "$@")"
   local args=(-e "@${ANSWERS}" -e "${extra}")
   [[ "${CHECK_MODE}" == true && "${playbook}" == site.yml ]] && args+=(--check --diff)
   (
@@ -950,6 +979,13 @@ if "nginx" in plan["components"]:
     row("TLS", "certificate from the answer file" if plan["tls_mode"] == "provided"
         else f"{yel}not yet{off} (HTTP only until you add a certificate)")
 row("Artifacts", plan["artifact_source"] or ("vendor downloads" if plan["online"] else f"{red}none configured{off}"))
+if plan.get("mattermost_installed"):
+    if plan["mattermost_hold"]:
+        row("Mattermost", f"{plan['mattermost_installed']} installed; staying on it "
+                          f"{dim}(--upgrade moves to the newest {plan['mattermost_channel']}){off}")
+    else:
+        row("Mattermost", f"{yel}{plan['mattermost_installed']} installed; may be upgraded{off} "
+                          f"{dim}(stopped and database dumped first){off}")
 if plan["findings"]:
     print()
     for f in plan["findings"]:

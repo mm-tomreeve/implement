@@ -34,8 +34,8 @@
 {% if 'mattermost' in mmd_selected %}
 {%   set _ = r.append({'severity': 'info', 'title': 'Single application server.', 'advice': 'There is no failover for Mattermost on this design. High availability needs an Enterprise licence, two or more app servers, shared file storage and a load balancer.'}) %}
 {% endif %}
-{% if 'postgresql' in mmd_selected %}
-{%   set _ = r.append({'severity': 'info', 'title': 'Single PostgreSQL instance.', 'advice': 'No replica or automatic failover. Backups are the recovery plan, so schedule them and test a restore.'}) %}
+{% if 'postgresql' in mmd_selected and postgresql_replication == 'none' %}
+{%   set _ = r.append({'severity': 'info', 'title': 'Single PostgreSQL instance.', 'advice': 'No replica or automatic failover (see postgresql_replication). Backups are the recovery plan, so schedule them and test a restore.'}) %}
 {% endif %}
 {% if mmd_artifact_mode | default('') == 'directory' %}
 {%   set _ = r.append({'severity': 'low', 'title': 'Artifacts came from a hand-filled directory.', 'advice': 'Checksums came from files in the same directory. Mattermost and OpenSearch were also checked against signatures with keys shipped in this repo, but other components were not. Prefer bundles built with tools/build-offline-bundle.sh.'}) %}

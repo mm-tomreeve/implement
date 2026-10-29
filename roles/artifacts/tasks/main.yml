@@ -4,6 +4,44 @@
     _artifacts_needed: "{{ mmd_selected | intersect(artifacts_tarball_components) }}"
     mmd_artifacts: {}
 
+# An installed Mattermost (or rtcd tracking latest) stays where it is unless an
+# upgrade was asked for, so a re-run never migrates the database just because a
+# new release came out. Reuse the record of what we verified last time, so nothing
+# is downloaded; without one, resolve the installed version as a pin.
+- name: Work out which installed components stay on their version
+  ansible.builtin.set_fact:
+    _art_held: >-
+      {{ ({'mattermost': mmd_mattermost_installed} if mmd_mattermost_hold | bool and 'mattermost' in _artifacts_needed else {})
+         | combine({'rtcd': mmd_rtcd_installed} if mmd_rtcd_hold | bool and 'rtcd' in _artifacts_needed else {}) }}
+
+- name: Read the last install's artifact records
+  ansible.builtin.slurp:
+    path: "{{ deploy_state_dir }}/deployment.json"
+  register: _art_last_state
+  failed_when: false
+  when: _art_held | length > 0
+
+- name: Reuse the verified records of the installed versions
+  ansible.builtin.set_fact:
+    mmd_artifacts: "{{ mmd_artifacts | combine({item.key: _saved_all[item.key]}) }}"
+    mmd_artifact_mode: "{{ (_art_last_state.content | b64decode | from_json).artifact_mode | default('none') }}"
+  vars:
+    _saved_all: "{{ (_art_last_state.content | b64decode | from_json).artifacts | default({}) }}"
+    _saved: "{{ _saved_all[item.key] | default({}) }}"
+  loop: "{{ _art_held | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} {{ item.value }}"
+  when:
+    - _art_last_state.content is defined
+    - _saved.version | default('') == item.value
+    - item.key != 'mattermost' or _saved.edition | default('enterprise') == mattermost_edition
+    - _saved.signature | default('') != 'FAILED'
+    - _saved.checksum_verified | default(false) | bool or _saved.signature | default('') == 'verified'
+
+- name: Work out what still has to be resolved
+  ansible.builtin.set_fact:
+    _artifacts_to_resolve: "{{ _artifacts_needed | difference(mmd_artifacts.keys() | list) }}"
+
 - name: Stop when offline and no artifact source is set
   ansible.builtin.assert:
     that:
@@ -12,10 +50,10 @@
       This server has no internet access and artifact_source is empty.
       Build a bundle with tools/build-offline-bundle.sh and pass --offline-dir,
       or set artifact_source in the answer file.
-  when: _artifacts_needed | length > 0
+  when: _artifacts_to_resolve | length > 0
 
 - name: Resolve artifacts
-  when: _artifacts_needed | length > 0
+  when: _artifacts_to_resolve | length > 0
   block:
     - name: Ensure the artifact cache exists
       ansible.builtin.file:
@@ -30,7 +68,7 @@
         argv: "{{ _resolver_argv }}"
       vars:
         _pins:
-          rtcd: "{{ rtcd_version }}"
+          rtcd: "{{ mmd_rtcd_installed if mmd_rtcd_hold | bool else rtcd_version }}"
           opensearch: "{{ opensearch_version }}"
           prometheus: "{{ prometheus_version }}"
           node_exporter: "{{ node_exporter_version }}"
@@ -43,11 +81,11 @@
           {%- set out = [] -%}{%- for k, v in _pins.items() -%}{%- set _ = out.append('--version=' ~ k ~ '=' ~ v) -%}{%- endfor -%}{{ out }}
         _resolver_argv: >-
           {{ ['/usr/bin/python3', '-I', mmd_repo_dir ~ '/tools/resolve_versions.py', 'resolve',
-              '--components', _artifacts_needed | join(','),
+              '--components', _artifacts_to_resolve | join(','),
               '--arch', mmd_arch,
               '--mattermost-edition', mattermost_edition,
-              '--mattermost-channel', mattermost_version_channel,
-              '--mattermost-version', mattermost_version]
+              '--mattermost-channel', 'pinned' if mmd_mattermost_hold | bool else mattermost_version_channel,
+              '--mattermost-version', mmd_mattermost_installed if mmd_mattermost_hold | bool else mattermost_version]
              + _pin_args
              + (['--source', artifact_source] if artifact_source | length > 0 else []) }}
       register: _resolved
@@ -60,6 +98,20 @@
         mmd_artifact_mode: "{{ (_resolved.stdout | from_json).mode }}"
         mmd_artifact_warnings: "{{ (_resolved.stdout | from_json).warnings }}"
 
+    - name: Refuse to downgrade Mattermost
+      ansible.builtin.assert:
+        that: _resolved_artifacts.mattermost.version is version(mmd_mattermost_installed, '>=')
+        fail_msg: >-
+          Mattermost {{ mmd_mattermost_installed }} is installed, but this run would install the older
+          {{ _resolved_artifacts.mattermost.version }} ({{ mattermost_version_channel }}). Its database has
+          already been migrated forwards, so an older server can't use it. Pin
+          {{ mmd_mattermost_installed }} or newer. To really go back, restore the database backup taken
+          before the upgrade, then point {{ mattermost_dir }} at the old version by hand.
+        quiet: true
+      when:
+        - "'mattermost' in _resolved_artifacts"
+        - mmd_mattermost_installed | length > 0
+
     - name: Show resolver warnings
       ansible.builtin.debug:
         msg: "{{ item }}"
@@ -71,3 +123,20 @@
       loop_control:
         loop_var: _art_item
         label: "{{ _art_item.key }} {{ _art_item.value.version }}"
+
+- name: Note which installed versions were kept
+  ansible.builtin.set_fact:
+    mmd_artifact_warnings: "{{ mmd_artifact_warnings | default([]) + [_held_msg] }}"
+  vars:
+    _held_msg: >-
+      {{ item.key | replace('mattermost', 'Mattermost') }} {{ item.value }} is installed, so this run kept it
+      instead of following {{ mattermost_version_channel if item.key == 'mattermost' else 'latest' }}.
+      Re-run with --upgrade to move to the newest release.
+  loop: "{{ _art_held | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} {{ item.value }}"
+
+- name: Say so
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop: "{{ mmd_artifact_warnings | default([]) | select('search', 'is installed, so this run kept it') | list }}"

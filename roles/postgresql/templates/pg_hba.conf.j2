@@ -7,3 +7,9 @@ host    {{ mattermost_db_name }}  {{ mattermost_db_user }}  ::1/128       scram-
 {% for client in postgresql_allowed_clients %}
 {{ 'hostssl' if mmd_postgresql_ssl | bool else 'host   ' }} {{ mattermost_db_name }}  {{ mattermost_db_user }}  {{ client if '/' in client else client ~ ('/128' if ':' in client else '/32') }}  scram-sha-256
 {% endfor %}
+{% if postgresql_replication == 'primary' %}
+# Read replicas copying and following this server.
+{% for replica in postgresql_replica_hosts %}
+{{ 'hostssl' if mmd_postgresql_ssl | bool else 'host   ' }} replication  {{ postgresql_replication_user }}  {{ replica if '/' in replica else replica ~ ('/128' if ':' in replica else '/32') }}  scram-sha-256
+{% endfor %}
+{% endif %}

@@ -16,6 +16,11 @@
     creates: "{{ postgresql_data_dir }}/PG_VERSION"
   environment:
     PGSETUP_INITDB_OPTIONS: "{{ postgresql_initdb_options }}"
+  when: postgresql_replication != 'replica'
+
+- name: Copy and follow the primary
+  ansible.builtin.include_tasks: replica.yml
+  when: postgresql_replication == 'replica'
 
 - name: Label a non-standard port for SELinux
   ansible.builtin.command: semanage port -a -t postgresql_port_t -p tcp {{ postgresql_port }}
@@ -80,6 +85,23 @@
     mode: "0600"
   notify: Restart postgresql
 
+- name: Write the replication settings
+  ansible.builtin.template:
+    src: replication.conf.j2
+    dest: "{{ postgresql_data_dir }}/conf.d/replication.conf"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  when: postgresql_replication in ['primary', 'replica']
+  notify: Reload postgresql
+
+- name: Remove replication settings this server no longer needs
+  ansible.builtin.file:
+    path: "{{ postgresql_data_dir }}/conf.d/replication.conf"
+    state: absent
+  when: postgresql_replication == 'none'
+  notify: Restart postgresql
+
 - name: Write pg_hba.conf
   ansible.builtin.template:
     src: pg_hba.conf.j2
@@ -119,13 +141,28 @@
   register: _pg_sql
   changed_when: "'CREATE' in _pg_sql.stdout"
   no_log: true
+  # A replica is read-only. Its role and database arrive from the primary.
+  when: postgresql_replication != 'replica'
 
-- name: Open the PostgreSQL port to the Mattermost servers
+- name: Create the replication role
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -v, ON_ERROR_STOP=1, -p, "{{ postgresql_port }}", -d, postgres]
+    stdin: |
+      \set r_user '{{ postgresql_replication_user | replace("\\", "\\\\") | replace("'", "''") }}'
+      \set r_pass '{{ mmd_secrets.replication_password | replace("\\", "\\\\") | replace("'", "''") }}'
+      SELECT format('CREATE ROLE %I WITH REPLICATION LOGIN', :'r_user') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'r_user')\gexec
+      SELECT format('ALTER ROLE %I WITH REPLICATION LOGIN PASSWORD %L', :'r_user', :'r_pass')\gexec
+  register: _pg_repl_sql
+  changed_when: "'CREATE' in _pg_repl_sql.stdout"
+  no_log: true
+  when: postgresql_replication == 'primary'
+
+- name: Open the PostgreSQL port to the Mattermost servers and replicas
   ansible.builtin.include_role:
     name: common
     tasks_from: firewall
   vars:
     fw_ports: [{port: "{{ postgresql_port }}", proto: tcp}]
-    fw_sources: "{{ postgresql_allowed_clients }}"
+    fw_sources: "{{ mmd_postgresql_remote }}"
     fw_public: false
-  when: postgresql_allowed_clients | length > 0
+  when: mmd_postgresql_remote | length > 0

@@ -17,5 +17,7 @@
         content: >-
           {{ {'components': mmd_selected, 'profiles': mmd_profiles_used, 'findings': mmd_findings,
               'sizing': mmd_sizing, 'tls_mode': tls_mode, 'site_url': mattermost_site_url,
-              'online': deploy_online | bool, 'artifact_source': artifact_source} | to_nice_json }}
+              'online': deploy_online | bool, 'artifact_source': artifact_source,
+              'mattermost_installed': mmd_mattermost_installed, 'mattermost_hold': mmd_mattermost_hold | bool,
+              'mattermost_channel': mattermost_version_channel} | to_nice_json }}
       when: plan_output_file is defined

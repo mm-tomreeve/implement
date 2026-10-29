@@ -10,6 +10,7 @@
     mmd_artifact_mode: "{{ _state.artifact_mode | default('unknown') }}"
     mmd_artifact_warnings: "{{ _state.artifact_warnings | default([]) }}"
     mmd_mattermost_previous: "{{ _state.mattermost_previous | default('') }}"
+    mmd_mattermost_backup: "{{ _state.mattermost_backup | default('') }}"
     mmd_deploy_failed: "{{ _state.deploy_failed | default(false) }}"
     mmd_deploy_error: "{{ _state.deploy_error | default('') }}"
     mmd_install_run_id: "{{ _state.run_id | default('') }}"
