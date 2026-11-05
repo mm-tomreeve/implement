@@ -266,6 +266,12 @@ mmd_dependency_checks:
     ok: "{{ tls_mode != 'provided' or tls_source_dir | length > 0 or (tls_cert_file | length > 0 and tls_key_file | length > 0) }}"
     message: tls_mode is 'provided' but no tls_cert_file/tls_key_file or tls_source_dir is set.
   - component: postgresql
+    ok: "{{ 'mattermost' in mmd_selected or postgresql_allowed_clients | length > 0 }}"
+    message: >-
+      Mattermost isn't on this server, so list the app servers that connect to the database in
+      postgresql_allowed_clients. Single addresses or CIDRs both work, e.g. [10.10.1.12] or [10.10.1.0/24].
+      Use [0.0.0.0/0] to allow any address.
+  - component: postgresql
     ok: "{{ postgresql_replication in ['none', 'primary', 'replica'] }}"
     message: postgresql_replication must be none, primary or replica.
   - component: postgresql
