@@ -107,7 +107,9 @@ mattermost_config_overrides: {}
 # ---------------------------------------------------------------- postgresql
 postgresql_version: "16"
 # Mattermost app servers allowed to connect when the database has its own server.
-# Setting this also turns on TLS with a self-signed certificate.
+# Required then; empty means localhost only. Addresses or CIDRs, e.g.
+# "10.10.1.0/24"; "0.0.0.0/0" allows any address. Setting this also turns on TLS
+# with a self-signed certificate.
 postgresql_allowed_clients: []          # e.g. ["10.10.1.11", "10.10.1.12"]
 # max_connections. auto = mattermost_db_max_open_conns for each app server, plus
 # postgresql_spare_connections. App servers are counted from postgresql_allowed_clients

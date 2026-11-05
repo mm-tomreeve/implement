@@ -724,7 +724,11 @@ interview() {
       emit postgresql_replica_hosts "$(yaml_list "${replicas}")"
     fi
     if ! has_component mattermost; then
-      ask clients "Mattermost app server addresses allowed to connect (comma-separated IPs or CIDRs)" ""
+      while true; do
+        ask clients "Mattermost app server addresses allowed to connect (comma-separated IPs or CIDRs, 0.0.0.0/0 = any)" ""
+        [[ "$(yaml_list "${clients}")" != "[]" ]] && break
+        echo "    The app servers can't reach the database without at least one address."
+      done
       emit postgresql_allowed_clients "$(yaml_list "${clients}")"
     fi
   fi

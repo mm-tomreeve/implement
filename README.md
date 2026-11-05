@@ -201,7 +201,9 @@ monitoring. The app server needs the database password from db01's secrets file,
 (`/etc/opensearch/certs/root-ca.pem`) copied over from search01.
 
 Anything only local components use stays on 127.0.0.1 with no firewall opening. Anything another
-server needs is opened to the addresses you list, and nothing else.
+server needs is opened to the addresses you list, and nothing else. A database server without
+Mattermost stops at validation if `postgresql_allowed_clients` is empty, since nothing could reach
+it. Entries may be CIDRs, and `0.0.0.0/0` allows any address.
 
 The database server sizes `max_connections` for every app server in `postgresql_allowed_clients`:
 `mattermost_db_max_open_conns` (300, Mattermost's own default) for each, plus 50 spare. If you
