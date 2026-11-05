@@ -519,6 +519,17 @@ ask() {
   printf -v "${__var}" '%s' "${reply:-${default}}"
 }
 
+ask_addresses() {
+  # ask_addresses VAR "Who connects" "What breaks when blank"
+  local __var="$1" who="$2" why="$3" __addrs
+  while true; do
+    ask __addrs "${who} (comma-separated IPs or CIDRs, 0.0.0.0/0 = any)" ""
+    [[ "$(yaml_list "${__addrs}")" != "[]" ]] && break
+    echo "    ${why}"
+  done
+  printf -v "${__var}" '%s' "${__addrs}"
+}
+
 ask_secret() {
   local __var="$1" prompt="$2" reply
   read -r -s -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt} ${C_DIM}(blank = generate)${C_OFF}: " reply || no_input
@@ -724,11 +735,8 @@ interview() {
       emit postgresql_replica_hosts "$(yaml_list "${replicas}")"
     fi
     if ! has_component mattermost; then
-      while true; do
-        ask clients "Mattermost app server addresses allowed to connect (comma-separated IPs or CIDRs, 0.0.0.0/0 = any)" ""
-        [[ "$(yaml_list "${clients}")" != "[]" ]] && break
-        echo "    The app servers can't reach the database without at least one address."
-      done
+      ask_addresses clients "Mattermost app server addresses allowed to connect" \
+        "The app servers can't reach the database without at least one address."
       emit postgresql_allowed_clients "$(yaml_list "${clients}")"
     fi
   fi
@@ -768,7 +776,8 @@ interview() {
     ask ice "Public IP or hostname clients use to reach this server (blank if not behind NAT)" ""
     emit rtcd_ice_host_override "$(yaml_quote "${ice}")"
     if ! has_component mattermost; then
-      ask srcs "Mattermost app server addresses allowed to use the rtcd API (comma-separated)" ""
+      ask_addresses srcs "Mattermost app server addresses allowed to use the rtcd API" \
+        "The app servers can't reach rtcd without at least one address, so calls would fail."
       emit rtcd_api_sources "$(yaml_list "${srcs}")"
     fi
   fi
@@ -776,7 +785,8 @@ interview() {
   if has_component opensearch && ! has_component mattermost; then
     section "OpenSearch"
     local clients ospass
-    ask clients "Mattermost app server addresses allowed to connect (comma-separated)" ""
+    ask_addresses clients "Mattermost app server addresses allowed to connect" \
+      "The app servers can't reach OpenSearch without at least one address."
     emit opensearch_allowed_clients "$(yaml_list "${clients}")"
     ask_secret ospass "Password for the OpenSearch 'mattermost' user"
     emit mattermost_opensearch_password "$(yaml_quote "${ospass}")"
@@ -851,7 +861,8 @@ interview() {
     if ask_yn "Install exporters for a monitoring server elsewhere?" y; then
       local scr
       emit deploy_monitoring_exporters true
-      ask scr "Prometheus server addresses allowed to scrape this server (comma-separated)" ""
+      ask_addresses scr "Prometheus server addresses allowed to scrape this server" \
+        "Prometheus can't scrape the exporters without at least one address."
       emit monitoring_scrape_sources "$(yaml_list "${scr}")"
     fi
   fi
