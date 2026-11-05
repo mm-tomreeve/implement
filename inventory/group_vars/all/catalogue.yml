@@ -271,6 +271,21 @@ mmd_dependency_checks:
       Mattermost isn't on this server, so list the app servers that connect to the database in
       postgresql_allowed_clients. Single addresses or CIDRs both work, e.g. [10.10.1.12] or [10.10.1.0/24].
       Use [0.0.0.0/0] to allow any address.
+  - component: opensearch
+    ok: "{{ 'mattermost' in mmd_selected or opensearch_allowed_clients | length > 0 }}"
+    message: >-
+      Mattermost isn't on this server, so list the app servers that connect to OpenSearch in
+      opensearch_allowed_clients. Single addresses or CIDRs both work, e.g. [10.10.1.12] or [10.10.1.0/24].
+  - component: rtcd
+    ok: "{{ 'mattermost' in mmd_selected or rtcd_api_sources | length > 0 }}"
+    message: >-
+      Mattermost isn't on this server, so list the app servers that use the rtcd API in
+      rtcd_api_sources. Single addresses or CIDRs both work, e.g. [10.10.1.12] or [10.10.1.0/24].
+  - component: node_exporter
+    ok: "{{ 'prometheus' in mmd_selected or monitoring_scrape_sources | length > 0 }}"
+    message: >-
+      deploy_monitoring_exporters is on but monitoring_scrape_sources is empty, so the exporters would
+      only listen on localhost. List the Prometheus servers that scrape this one, e.g. [10.10.1.15].
   - component: postgresql
     ok: "{{ postgresql_replication in ['none', 'primary', 'replica'] }}"
     message: postgresql_replication must be none, primary or replica.

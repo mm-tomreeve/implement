@@ -149,20 +149,22 @@ rtcd_version: latest
 # The address clients use to reach this server. Needed behind NAT or a load
 # balancer, otherwise calls connect with no audio.
 rtcd_ice_host_override: ""
-# Mattermost servers allowed to use the rtcd API (8045).
+# Mattermost servers allowed to use the rtcd API (8045). Required when Mattermost
+# runs elsewhere. Addresses or CIDRs.
 rtcd_api_sources: []
 
 # ---------------------------------------------------------------- opensearch
 opensearch_version: "2.19.7"
 opensearch_heap_mb: auto
-# Mattermost servers allowed to connect. Setting this turns on TLS and
-# authentication with a CA generated on this server.
+# Mattermost servers allowed to connect. Required when Mattermost runs elsewhere.
+# Addresses or CIDRs. Setting this turns on TLS and authentication with a CA
+# generated on this server.
 opensearch_allowed_clients: []
 opensearch_admin_password: ""
 
 # ---------------------------------------------------------------- monitoring
 # Add node_exporter (and postgres_exporter where PostgreSQL runs) so a Prometheus
-# on another server can scrape this one.
+# on another server can scrape this one. Needs monitoring_scrape_sources.
 deploy_monitoring_exporters: false
 monitoring_scrape_sources: []           # Prometheus servers allowed to scrape here
 
