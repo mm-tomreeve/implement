@@ -65,6 +65,6 @@
     tasks_from: firewall
   vars:
     fw_ports: [{port: "{{ postgres_exporter_port }}", proto: tcp}]
-    fw_sources: "{{ monitoring_scrape_sources }}"
+    fw_sources: "{{ mmd_scrape_sources }}"
     fw_public: false
-  when: monitoring_scrape_sources | length > 0
+  when: mmd_scrape_sources | length > 0

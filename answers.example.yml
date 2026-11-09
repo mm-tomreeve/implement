@@ -170,6 +170,13 @@ monitoring_scrape_sources: []           # Prometheus servers allowed to scrape h
 
 prometheus_retention: 15d
 prometheus_allowed_sources: []          # who can reach the Prometheus UI (default: localhost only)
+# monitoring_estate (on the monitoring server) lists every other server and what it runs:
+# mattermost, nginx, postgresql, rtcd, opensearch, prometheus, loki, grafana. Servers
+# listed with grafana or prometheus are let in to this Prometheus, and ones with
+# prometheus may also scrape the exporters here, without adding them above.
+monitoring_estate: []
+#  - {name: app01, address: 10.10.1.12, components: [mattermost, nginx]}
+#  - {name: gfx01, address: 10.10.1.16, components: [grafana]}
 # Other servers to scrape from this Prometheus.
 prometheus_scrape_targets: []
 #  - {job: node, targets: ["db01.internal:9100", "app01.internal:9100"]}

@@ -40,6 +40,14 @@ class Consistency(unittest.TestCase):
         names = re.search(r"COMPONENT_NAMES=\(([^)]*)\)", INSTALL_SH).group(1).split()
         self.assertEqual(sorted(names), sorted(CATALOGUE))
 
+    def test_estate_choices_have_scrape_jobs(self):
+        # Whatever the interview lets you say another server runs, Prometheus must scrape.
+        mods = re.search(r"local i short mods=\(([^)]*)\)", INSTALL_SH).group(1).split()
+        with open(os.path.join(ROOT, "roles/prometheus/templates/prometheus.yml.j2"), encoding="utf-8") as handle:
+            jobs = set(re.findall(r"'component': '(\w+)'", handle.read()))
+        self.assertEqual(sorted(set(mods) - jobs), [])
+        self.assertTrue({"prometheus", "loki", "grafana"} <= set(mods))
+
     def test_install_order_covers_every_component(self):
         self.assertEqual(sorted(PROFILES["mmd_component_order"]), sorted(CATALOGUE))
 

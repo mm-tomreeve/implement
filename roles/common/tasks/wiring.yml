@@ -39,7 +39,8 @@
     mmd_opensearch_security: "{{ opensearch_allowed_clients | length > 0 }}"
     mmd_prometheus_url: >-
       {{ grafana_prometheus_url if grafana_prometheus_url | length > 0 else 'http://127.0.0.1:' ~ prometheus_port }}
-    mmd_exporter_bind: "{{ '0.0.0.0' if monitoring_scrape_sources | length > 0 else '127.0.0.1' }}"
+    # Addresses as opposed to DNS names, for deciding what firewalld can take.
+    mmd_ip_re: '^([0-9.]+(/[0-9]+)?|[0-9a-fA-F]*:[0-9a-fA-F:./]*)$'
     mmd_loki_url: >-
       {{ ('http://127.0.0.1:' ~ loki_port) if 'loki' in mmd_selected else logging_loki_url | regex_replace('/+$', '') }}
     mmd_tls_enabled: "{{ 'nginx' in mmd_selected and tls_mode == 'provided' }}"
@@ -67,6 +68,69 @@
          + [{'name': ansible_facts['hostname'], 'address': '127.0.0.1',
              'components': mmd_selected | intersect(['mattermost', 'nginx', 'postgresql', 'rtcd', 'opensearch', 'prometheus', 'loki', 'grafana'])}] }}
   when: "'prometheus' in mmd_selected or 'grafana' in mmd_selected"
+
+# firewalld wants addresses, and the estate may list servers by name. getent only
+# reads, so this is safe in the plan.
+- name: Look up estate servers given by name
+  ansible.builtin.command: getent ahosts {{ item }}
+  loop: >-
+    {{ mmd_estate | default([]) | map(attribute='address')
+       | reject('in', ['127.0.0.1', 'localhost', '::1'])
+       | reject('match', mmd_ip_re) | unique | list }}
+  register: _estate_lookups
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# The other servers in the estate with an address the firewall can use ('' when a
+# name didn't resolve), and who among them needs to reach this server:
+#   another Prometheus scrapes our exporters and metrics, like monitoring_scrape_sources;
+#   Grafana (and another Prometheus) query our Prometheus.
+- name: Work out which estate servers reach this one
+  ansible.builtin.set_fact:
+    mmd_estate_remote: >-
+      {%- set looked = {} -%}
+      {%- for r in _estate_lookups.results | default([]) if r.rc | default(1) == 0 and r.stdout_lines | length > 0 -%}
+      {%-   set _ = looked.update({r.item: r.stdout_lines[0].split()[0]}) -%}
+      {%- endfor -%}
+      {%- set out = [] -%}
+      {%- for s in mmd_estate | default([]) if s.address not in ['127.0.0.1', 'localhost', '::1'] -%}
+      {%-   set _ = out.append(s | combine({'ip': s.address if s.address is match(mmd_ip_re) else looked.get(s.address, '')})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Say which estate names could not be resolved
+  ansible.builtin.debug:
+    msg: >-
+      These estate servers could not be resolved, so the firewall doesn't open anything to them:
+      {{ mmd_estate_remote | selectattr('ip', 'equalto', '') | map(attribute='name') | join(', ') }}.
+      Use addresses in monitoring_estate, or add them to loki_allowed_sources and prometheus_allowed_sources.
+  when: mmd_estate_remote | selectattr('ip', 'equalto', '') | list | length > 0
+
+- name: Derive who may scrape and query this server
+  ansible.builtin.set_fact:
+    mmd_scrape_sources: >-
+      {{ (monitoring_scrape_sources
+          + (mmd_estate_remote | selectattr('components', 'contains', 'prometheus')
+             | map(attribute='ip') | reject('equalto', '') | list)) | unique }}
+    mmd_prometheus_queriers: >-
+      {%- set out = [] -%}
+      {%- for s in mmd_estate_remote if s.ip and ('grafana' in s.components or 'prometheus' in s.components) -%}
+      {%-   set _ = out.append(s.ip) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Derive the firewall openings that depend on the estate
+  ansible.builtin.set_fact:
+    mmd_exporter_bind: "{{ '0.0.0.0' if mmd_scrape_sources | length > 0 else '127.0.0.1' }}"
+    # Prometheus: who you listed, every Prometheus that scrapes this server, and
+    # the estate's Grafana and Prometheus servers that query it.
+    mmd_prometheus_sources: "{{ (prometheus_allowed_sources + mmd_scrape_sources + mmd_prometheus_queriers) | unique }}"
+    # Loki: every server in the estate ships logs here (and Grafana elsewhere
+    # queries it), plus extra senders and the Prometheus servers that scrape it.
+    mmd_loki_sources: >-
+      {{ ((mmd_estate_remote | map(attribute='ip') | reject('equalto', '') | list)
+          + loki_allowed_sources + mmd_scrape_sources) | unique }}
 
 - name: Derive the settings that depend on the facts above
   ansible.builtin.set_fact:

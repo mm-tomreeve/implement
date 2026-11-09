@@ -27,43 +27,7 @@
     - {path: "{{ loki_conf_dir }}", owner: root}
     - {path: "{{ loki_data_dir }}", owner: "{{ loki_user }}"}
 
-# firewalld wants addresses, and the estate may list servers by name.
-- name: Look up estate servers given by name
-  ansible.builtin.command: getent ahosts {{ item }}
-  loop: "{{ _loki_named }}"
-  register: _loki_lookups
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  vars:
-    _loki_ip_re: '^([0-9.]+(/[0-9]+)?|[0-9a-fA-F]*:[0-9a-fA-F:./]*)$'
-    _loki_named: >-
-      {{ mmd_estate | default([]) | map(attribute='address')
-         | reject('in', ['127.0.0.1', 'localhost', '::1'])
-         | reject('match', _loki_ip_re) | list }}
-
-- name: Work out who may push logs
-  vars:
-    _loki_ip_re: '^([0-9.]+(/[0-9]+)?|[0-9a-fA-F]*:[0-9a-fA-F:./]*)$'
-  ansible.builtin.set_fact:
-    mmd_loki_sources: >-
-      {{ ((mmd_estate | default([]) | map(attribute='address')
-           | reject('in', ['127.0.0.1', 'localhost', '::1'])
-           | select('match', _loki_ip_re) | list)
-          + (_loki_lookups.results | default([]) | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
-             | map(attribute='stdout_lines') | map('first') | map('split') | map('first') | list)
-          + loki_allowed_sources) | unique }}
-    mmd_loki_unresolved: >-
-      {{ _loki_lookups.results | default([]) | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0)
-         | map(attribute='item') | list }}
-
-- name: Say which estate names could not be resolved
-  ansible.builtin.debug:
-    msg: >-
-      These estate servers could not be resolved, so the firewall doesn't let them push logs:
-      {{ mmd_loki_unresolved | join(', ') }}. Use addresses in monitoring_estate, or add them to loki_allowed_sources.
-  when: mmd_loki_unresolved | length > 0
-
+# Who may push logs (mmd_loki_sources) is worked out in common/tasks/wiring.yml.
 - name: Write the Loki config
   ansible.builtin.template:
     src: config.yml.j2

@@ -82,8 +82,10 @@ history. The disk alerts on the monitoring server cover the volume.
 ## Security
 
 - Loki listens on 3100 and is opened only to the servers in `monitoring_estate` (names are looked
-  up, addresses are used as they are) and `loki_allowed_sources`. It's never open to everyone.
-  With no estate it stays on 127.0.0.1.
+  up, addresses are used as they are), `loki_allowed_sources` and `monitoring_scrape_sources` (so
+  a Prometheus elsewhere can scrape its metrics). It's never open to everyone. With none of those
+  it stays on 127.0.0.1. A Grafana on another server reaches it the same way: list that server in
+  `monitoring_estate` with `grafana` in its components.
 - Traffic to Loki is plain HTTP and Loki has no login, the same as the exporters. Keep it on an
   internal network. The report lists this as a risk.
 - The collector runs as `otelcol`, in the `systemd-journal` group, with one capability:

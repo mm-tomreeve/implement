@@ -51,12 +51,14 @@
     enabled: true
     daemon_reload: true
 
-- name: Open Prometheus to listed hosts
+# prometheus_allowed_sources, the Prometheus servers that scrape this one, and the
+# estate's Grafana and Prometheus servers that query it (common/tasks/wiring.yml).
+- name: Open Prometheus to listed hosts and the estate servers that query it
   ansible.builtin.include_role:
     name: common
     tasks_from: firewall
   vars:
     fw_ports: [{port: "{{ prometheus_port }}", proto: tcp}]
-    fw_sources: "{{ prometheus_allowed_sources }}"
+    fw_sources: "{{ mmd_prometheus_sources }}"
     fw_public: false
-  when: prometheus_allowed_sources | length > 0
+  when: mmd_prometheus_sources | length > 0

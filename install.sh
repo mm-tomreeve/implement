@@ -866,7 +866,9 @@ interview() {
       echo
       info "${C_DIM}Now the other servers. For each one, give its name, address and what it runs.${C_OFF}"
       local estate_lines=() snames=() saddrs=() scomps_list=() sname saddr scomps n bad picked names
-      local i short mods=(mattermost nginx postgresql rtcd opensearch)
+      # Prometheus, Loki and Grafana elsewhere get scraped too, and this server's
+      # firewall opens Prometheus to the ones that query it (see wiring.yml).
+      local i short mods=(mattermost nginx postgresql rtcd opensearch prometheus loki grafana)
       short="$(hostname -s 2>/dev/null || uname -n)"
       while true; do
         estate_lines=() snames=() saddrs=() scomps_list=()
@@ -919,11 +921,20 @@ interview() {
         echo "    Let's go through the servers again."
       done
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
-        local self_ip
+        local self_ip scrapers grafanas="" queriers=""
         self_ip="$(primary_ip)"
         [[ -z "${self_ip}" ]] && self_ip="<this server's address>"
         echo "monitoring_estate:" >> "${answers_out}"
         printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
+        # Every Prometheus in the estate scrapes every server, so they all go in
+        # monitoring_scrape_sources. Grafana and other Prometheus servers query this one.
+        scrapers="${self_ip}"
+        for i in "${!snames[@]}"; do
+          [[ ", ${scomps_list[$i]}, " == *", prometheus, "* ]] && scrapers+=", ${saddrs[$i]}"
+          [[ ", ${scomps_list[$i]}, " == *", grafana, "* ]] && grafanas+="${grafanas:+, }${snames[$i]}"
+          [[ ", ${scomps_list[$i]}, " == *", grafana, "* || ", ${scomps_list[$i]}, " == *", prometheus, "* ]] \
+            && queriers+="${queriers:+, }${snames[$i]}"
+        done
         echo
         if has_component loki; then
           info "Install each of those servers with these answers so this server can scrape them"
@@ -932,8 +943,18 @@ interview() {
           info "Install each of those servers with these two answers so this server can scrape them:"
         fi
         info "${C_YEL}deploy_monitoring_exporters: true${C_OFF}"
-        info "${C_YEL}monitoring_scrape_sources: [${self_ip}]${C_OFF}"
+        info "${C_YEL}monitoring_scrape_sources: [${scrapers}]${C_OFF}"
         has_component loki && info "${C_YEL}logging_loki_url: http://${self_ip}:3100${C_OFF}"
+        if [[ -n "${grafanas}" ]]; then
+          info "On ${grafanas}, also:"
+          info "${C_YEL}grafana_prometheus_url: http://${self_ip}:9090${C_OFF}"
+        fi
+        echo
+        info "${C_DIM}This server's firewall will be opened for them:${C_OFF}"
+        [[ -n "${queriers}" ]] && info "${C_DIM}  Prometheus (9090) to ${queriers}${C_OFF}"
+        has_component loki && info "${C_DIM}  Loki (3100) to every server listed, for log shipping and queries${C_OFF}"
+        [[ "${scrapers}" != "${self_ip}" ]] && info "${C_DIM}  exporters and metrics ports to the other Prometheus servers${C_OFF}"
+        [[ -z "${queriers}" ]] && ! has_component loki && info "${C_DIM}  nothing extra: this server only reaches out to them${C_OFF}"
       fi
     else
       emit monitoring_alerts_enabled false

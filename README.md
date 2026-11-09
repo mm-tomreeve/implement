@@ -217,6 +217,15 @@ is empty but another server has to get in: `postgresql_allowed_clients`, `opense
 and `rtcd_api_sources` without Mattermost on the server, and `monitoring_scrape_sources` for
 exporters without Prometheus. Entries may be CIDRs, and `0.0.0.0/0` allows any address.
 
+On the monitoring server, `monitoring_estate` drives the firewall too. Each server's `components`
+can include `prometheus`, `loki` and `grafana` as well as the Mattermost pieces, and the
+interactive installer asks for them. A server listed with `grafana` or `prometheus` is let in to
+this Prometheus (9090), every server listed may reach Loki (3100), and a server listed with
+`prometheus` is treated as another scraper, so the exporters and metrics ports here open to it as
+if it were in `monitoring_scrape_sources`. On the other servers, Prometheus, Loki and Grafana open
+to `monitoring_scrape_sources` so the monitoring server can scrape them. Servers given by name are
+looked up when the plan runs; a name that doesn't resolve gets nothing opened, and the plan says so.
+
 The database server sizes `max_connections` for every app server in `postgresql_allowed_clients`:
 `mattermost_db_max_open_conns` (300, Mattermost's own default) for each, plus 50 spare. If you
 list a subnet rather than single addresses, set `postgresql_app_servers` to the number of
@@ -434,8 +443,10 @@ and an operations runbook. Test results are also kept as JSON in
 ## Monitoring, alerts and dashboards
 
 When a server takes the `monitoring` profile, the installer offers to build monitoring for the
-whole estate. It asks for each server's name, address and what it runs, and builds everything
-below from that list. Only modules that actually exist get alerts and dashboards.
+whole estate. It asks for each server's name, address and what it runs (including Prometheus, Loki
+or Grafana on other servers), and builds everything below from that list. Only modules that
+actually exist get alerts and dashboards. The same list decides which of this server's ports open
+to the others; see the firewall notes under the split-estate example.
 
 ### What gets collected
 
@@ -447,7 +458,7 @@ below from that list. Only modules that actually exist get alerts and dashboards
 | Nginx | nginx-prometheus-exporter reading stub_status on 127.0.0.1:81 | 9113 |
 | OpenSearch | elasticsearch_exporter, over TLS with the search CA | 9114 |
 | rtcd | its built-in metrics | 8045 |
-| Prometheus and Grafana | their own metrics | 9090, 3000 |
+| Prometheus, Loki and Grafana | their own metrics, on whichever server they run | 9090, 3100, 3000 |
 | The site, as users see it | blackbox_exporter fetching `/api/v4/system/ping` and checking the certificate | local |
 | Calls media port | blackbox_exporter opening a TCP connection to each rtcd server | local |
 
