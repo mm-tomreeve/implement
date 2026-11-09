@@ -576,6 +576,8 @@ primary_ip() {
   local ip
   ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}' || true)"
   [[ -z "${ip}" ]] && ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  # No default route and no usable hostname -I: read the kernel's local addresses directly.
+  [[ -z "${ip}" ]] && ip="$(awk '/\/32 host LOCAL/ && prev !~ /^127\./ {print prev; exit} {prev = $2}' /proc/net/fib_trie 2>/dev/null || true)"
   printf '%s' "${ip}"
 }
 
@@ -922,7 +924,9 @@ interview() {
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
         local self_ip
         self_ip="$(primary_ip)"
-        [[ -z "${self_ip}" ]] && self_ip="<this server's address>"
+        while [[ -z "${self_ip}" ]]; do
+          ask self_ip "This server's address, as the other servers see it" ""
+        done
         echo "monitoring_estate:" >> "${answers_out}"
         printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
         echo
