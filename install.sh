@@ -534,6 +534,27 @@ ask_addresses() {
   printf -v "${__var}" '%s' "${__addrs}"
 }
 
+ask_url() {
+  # ask_url VAR "Question" "default" [optional]
+  # Re-asks until the answer starts with http:// or https://. Optional allows blank.
+  local __var="$1" prompt="$2" default="$3" optional="${4:-}" __url
+  while true; do
+    ask __url "${prompt}" "${default}"
+    [[ -z "${__url}" && -n "${optional}" ]] && break
+    [[ "${__url}" == http://* || "${__url}" == https://* ]] && break
+    echo "    Start it with https:// (or http://), e.g. https://${__url:-chat.example.com}"
+  done
+  printf -v "${__var}" '%s' "${__url}"
+}
+
+# This server's main IPv4 address, or empty when it can't be worked out.
+primary_ip() {
+  local ip
+  ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}' || true)"
+  [[ -z "${ip}" ]] && ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  printf '%s' "${ip}"
+}
+
 ask_secret() {
   local __var="$1" prompt="$2" reply
   read -r -s -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt} ${C_DIM}(blank = generate)${C_OFF}: " reply || no_input
@@ -636,7 +657,7 @@ interview() {
   if has_component mattermost; then
     section "Mattermost"
     local site edition channel version lic
-    ask site "Site URL users will use" "https://${fqdn}"
+    ask_url site "Site URL users will use" "https://${fqdn}"
     emit mattermost_site_url "$(yaml_quote "${site}")"
     MM_SITE_URL="${site}"
     ask_choice edition "Edition" enterprise enterprise team
@@ -805,7 +826,8 @@ interview() {
       emit monitoring_dashboards_enabled true
       local site_default="" site ca joined
       has_component mattermost && site_default="${MM_SITE_URL:-}"
-      ask site "Site URL users reach (checked from here; blank = skip)" "${site_default}"
+      info "${C_DIM}This is Mattermost's Site URL, including https://, e.g. https://chat.example.com${C_OFF}"
+      ask_url site "Site URL users reach (checked from here; blank = skip)" "${site_default}" optional
       emit monitoring_site_url "$(yaml_quote "${site}")"
       if [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" y; then
         ask ca "Path to that CA certificate on this server (blank = don't verify)" ""
@@ -818,30 +840,69 @@ interview() {
 
       echo
       info "${C_DIM}Now the other servers. For each one, give its name, address and what it runs.${C_OFF}"
-      local estate_lines=() sname saddr scomps n picked mods=(mattermost nginx postgresql rtcd opensearch)
+      local estate_lines=() snames=() saddrs=() scomps_list=() sname saddr scomps n bad picked names
+      local i short mods=(mattermost nginx postgresql rtcd opensearch)
+      short="$(hostname -s 2>/dev/null || uname -n)"
       while true; do
-        ask sname "Server name (blank when done)" ""
-        [[ -z "${sname}" ]] && break
-        ask saddr "Address of ${sname} (IP or DNS name)" ""
-        local i
-        for i in "${!mods[@]}"; do
-          printf '      %s %s\n' "${C_YEL}$((i + 1)))${C_OFF}" "${mods[$i]}"
+        estate_lines=() snames=() saddrs=() scomps_list=()
+        while true; do
+          ask sname "Server name (blank when done)" ""
+          [[ -z "${sname}" ]] && break
+          if [[ "${sname}" == "${short}" || "${sname}" == "${fqdn}" ]]; then
+            echo "    ${sname} is this server, which is included already."
+            continue
+          fi
+          if printf '%s\n' "${snames[@]}" | grep -Fxq -- "${sname}"; then
+            echo "    You've already added ${sname}."
+            continue
+          fi
+          while true; do
+            ask saddr "Address of ${sname} (IP or DNS name)" ""
+            [[ -n "${saddr}" ]] && break
+            echo "    Prometheus needs an address to reach ${sname}."
+          done
+          for i in "${!mods[@]}"; do
+            printf '      %s %s\n' "${C_YEL}$((i + 1)))${C_OFF}" "${mods[$i]}"
+          done
+          while true; do
+            read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} What runs on ${sname} ${C_DIM}(comma-separated numbers, blank = host metrics only)${C_OFF} ${C_YEL}${G_ARROW}${C_OFF} " scomps || no_input
+            picked=() names=() bad=""
+            for n in ${scomps//,/ }; do
+              if [[ "${n}" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= ${#mods[@]} )); then
+                picked+=("$(yaml_quote "${mods[$((n - 1))]}")")
+                names+=("${mods[$((n - 1))]}")
+              else
+                bad+=" ${n}"
+              fi
+            done
+            [[ -z "${bad}" ]] && break
+            echo "    Not on the list:${bad}. Use numbers from 1 to ${#mods[@]}."
+          done
+          joined="$(IFS=,; echo "${picked[*]-}")"
+          estate_lines+=("  - {name: $(yaml_quote "${sname}"), address: $(yaml_quote "${saddr}"), components: [${joined//,/, }]}")
+          snames+=("${sname}")
+          saddrs+=("${saddr}")
+          joined="$(IFS=,; echo "${names[*]-}")"
+          scomps_list+=("${joined//,/, }")
         done
-        read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} What runs on ${sname} ${C_DIM}(comma-separated numbers)${C_OFF} ${C_YEL}${G_ARROW}${C_OFF} " scomps || no_input
-        picked=()
-        for n in ${scomps//,/ }; do
-          [[ "${n}" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= ${#mods[@]} )) && picked+=("$(yaml_quote "${mods[$((n - 1))]}")")
+        [[ ${#estate_lines[@]} -eq 0 ]] && break
+        echo
+        for i in "${!snames[@]}"; do
+          printf '    %-20s %-24s %s\n' "${snames[$i]}" "${saddrs[$i]}" "${scomps_list[$i]:-host metrics only}"
         done
-        joined="$(IFS=,; echo "${picked[*]-}")"
-        estate_lines+=("  - {name: $(yaml_quote "${sname}"), address: $(yaml_quote "${saddr}"), components: [${joined//,/, }]}")
+        ask_yn "Look right?" y && break
+        echo "    Let's go through the servers again."
       done
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
+        local self_ip
+        self_ip="$(primary_ip)"
+        [[ -z "${self_ip}" ]] && self_ip="<this server's address>"
         echo "monitoring_estate:" >> "${answers_out}"
         printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
         echo
         info "Install each of those servers with these two answers so this server can scrape them:"
         info "${C_YEL}deploy_monitoring_exporters: true${C_OFF}"
-        info "${C_YEL}monitoring_scrape_sources: [<this server's address>]${C_OFF}"
+        info "${C_YEL}monitoring_scrape_sources: [${self_ip}]${C_OFF}"
       fi
     else
       emit monitoring_alerts_enabled false
