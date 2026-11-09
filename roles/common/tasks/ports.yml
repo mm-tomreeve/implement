@@ -1,0 +1,55 @@
+---
+# Every port a selected component listens on has to be free, or held by that
+# component's own service from an earlier run. Otherwise the service would only
+# crash-loop on "address already in use" after the install, e.g. Prometheus on
+# 9090 when Cockpit is enabled. Runs from the plan and at the start of a deploy,
+# not from verify or report.
+- name: List the ports the selected components listen on
+  ansible.builtin.set_fact:
+    _ports_wanted: >-
+      {%- set out = [] -%}
+      {%- for c in mmd_selected -%}
+      {%-   for p in mmd_catalogue[c].ports if p.allowed != 'not used' -%}
+      {%-     set _ = out.append({'component': c, 'service': mmd_catalogue[c].service ~ '.service',
+                                  'port': p.port | int, 'protos': p.proto.split('/')}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+# Prints one line per holder: its systemd unit, then the process. A port held by
+# pid 1 belongs to a socket unit (cockpit.socket), so print just that.
+- name: Find what already listens on those ports
+  ansible.builtin.shell: |
+    set -o pipefail
+    for proto in {{ item.protos | join(' ') }}; do
+      ss -Hlnp --"$proto" "sport = :{{ item.port }}"
+    done | { grep -o 'pid=[0-9]*' || true; } | cut -d= -f2 | sort -u | while read -r pid; do
+      if [ "$pid" = 1 ]; then
+        unit=$(systemctl list-sockets --all --no-legend | awk '$1 ~ /:{{ item.port }}$/ {print $2; exit}')
+        echo "${unit:-systemd (pid 1)}"
+      else
+        echo "$(ps -o unit= -p "$pid" | tr -d ' ') ($(ps -o comm= -p "$pid"), pid $pid)"
+      fi
+    done
+  loop: "{{ _ports_wanted }}"
+  loop_control:
+    label: "{{ item.component }}: {{ item.port }}/{{ item.protos | join('/') }}"
+  register: _ports_held
+  changed_when: false
+  check_mode: false
+
+- name: Stop if another program holds a port a component needs
+  ansible.builtin.assert:
+    that: _others | length == 0
+    fail_msg: >-
+      {{ item.item.component }} needs port {{ item.item.port }}, but {{ _others | join(', ') }} already
+      listens on it. {{ ('Disable it with: systemctl disable --now ' ~ _unit) if _unit is search('^(?!user@).*\.(socket|service)$')
+      else 'Stop that program' }}{{ ', or give ' ~ item.item.component ~ ' another port in the answer file'
+      if item.item.component != 'nginx' }}.
+    quiet: true
+  vars:
+    _others: "{{ item.stdout_lines | reject('match', (item.item.service | regex_escape) ~ ' ') | list }}"
+    _unit: "{{ (_others | first | default('')).split(' ') | first }}"
+  loop: "{{ _ports_held.results }}"
+  loop_control:
+    label: "{{ item.item.component }}: {{ item.item.port }}"
