@@ -36,8 +36,8 @@ cd /opt/mattermost-implement
 The script then:
 
 1. checks this is RHEL 9 or 10,
-2. asks before checking it can reach the vendors' download sites, and falls back to a local
-   folder if it can't,
+2. asks before checking it can reach the vendors' download sites (later runs that went online
+   check again without asking), and falls back to a local folder if it can't,
 3. installs `ansible-core` and the `ansible.posix` collection,
 4. asks what this server should run and saves the answers to `/etc/mattermost-implement/answers.yml`,
 5. shows the plan, with any warnings about putting too much on one box, and waits for a yes,

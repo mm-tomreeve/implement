@@ -371,7 +371,11 @@ choose_installer_source() {
       return 0 ;;
   esac
 
-  if [[ -z "${setting}" && "${NON_INTERACTIVE}" != true ]]; then
+  # A run that went online saved deploy_internet: auto, so that answer stands as
+  # agreement to check again rather than asking every time.
+  if [[ -z "${setting}" && -z "${ANSWERS}" && "$(yaml_get deploy_internet "${SAVED_ANSWERS}")" == auto ]]; then
+    info "Per the configuration in ${SAVED_ANSWERS}, I'll check the installer sources without asking."
+  elif [[ -z "${setting}" && "${NON_INTERACTIVE}" != true ]]; then
     info "An online install downloads from these sites:"
     list_sources
     [[ -n "${https_proxy:-${HTTPS_PROXY:-}}" ]] && info "${C_DIM}Using the proxy in https_proxy: ${https_proxy:-${HTTPS_PROXY:-}}${C_OFF}"
