@@ -456,7 +456,7 @@ setup_local_repo() {
 
 # curl is left out on purpose: minimal RHEL 9 ships curl-minimal, which conflicts
 # with the curl package, and either gives us the command we need.
-PREREQ_PACKAGES=(ansible-core python3 python3-libselinux gnupg2 tar openssl policycoreutils-python-utils firewalld)
+PREREQ_PACKAGES=(ansible-core python3 python3-libselinux gnupg2 tar openssl policycoreutils-python-utils firewalld iproute)
 
 install_prereqs() {
   say "Checking prerequisites"
