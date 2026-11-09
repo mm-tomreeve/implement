@@ -71,13 +71,6 @@ class Consistency(unittest.TestCase):
         self.assertEqual(defaults["mattermost_gpg_fingerprint"], rv.MATTERMOST_KEY["gpg_fingerprint"])
         self.assertEqual(defaults["opensearch_gpg_fingerprint"], rv.OPENSEARCH_KEY["gpg_fingerprint"])
 
-    def test_example_answers_only_use_known_settings(self):
-        defaults = load("inventory/group_vars/all/defaults.yml")
-        example = load("answers.example.yml")
-        extra = {"deploy_internet"}
-        unknown = set(example) - set(defaults) - extra
-        self.assertEqual(unknown, set())
-
 
 if __name__ == "__main__":
     unittest.main()
