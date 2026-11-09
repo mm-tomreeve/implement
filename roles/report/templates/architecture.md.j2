@@ -1,6 +1,7 @@
 #jinja2: lstrip_blocks: True, trim_blocks: True
 {% macro cell(value) %}{{ (value if value is not none else '') | string | replace('|', '\\|') | replace('\n', ' ') | trim }}{% endmacro %}
 {% set fqdn = ansible_facts['fqdn'] %}
+{% set self_ip = ansible_facts['default_ipv4']['address'] | default((ansible_facts['all_ipv4_addresses'] | default([]) | reject('match', '127\\.') | first) | default("<this server's address>", true)) %}
 {% set results = mmd_results | default([]) %}
 {% set n_pass = results | selectattr('status', 'equalto', 'pass') | list | length %}
 {% set n_warn = results | selectattr('status', 'equalto', 'warn') | list | length %}
@@ -362,7 +363,7 @@ Disk use where data lives:
 {% endif %}
 | Service | `{{ cat.service }}.service`, runs as `{{ cat.user }}` |
 {% for k, v in cat.paths.items() %}
-| {{ path_labels[k] | default(k | capitalize) }} | `{{ v }}` |
+| {{ path_labels[k] | default(k | capitalize) }} | `{{ v | replace('<version>', art.version) if art.version is defined else v }}` |
 {% endfor %}
 | Listens on | {{ cat.ports | rejectattr('allowed', 'equalto', 'not used') | map(attribute='port') | zip(cat.ports | rejectattr('allowed', 'equalto', 'not used') | map(attribute='proto')) | map('join', '/') | join(', ') | default('nothing', true) }} |
 
@@ -538,7 +539,7 @@ user's browser would, and watches the certificate's expiry date.
 {% if mmd_estate | default([]) | length > 1 %}
 
 Every other server needs `deploy_monitoring_exporters: true` and
-`monitoring_scrape_sources: [<this server's address>]` in its answer file, or its targets show as down.
+`monitoring_scrape_sources: [{{ self_ip }}]` in its answer file, or its targets show as down.
 {% endif %}
 {% elif monitoring_scrape_sources %}
 Metrics on this server are open to the Prometheus servers at {{ monitoring_scrape_sources | join(', ') }}. Add these targets to their scrape config:

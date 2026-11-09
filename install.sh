@@ -576,6 +576,8 @@ primary_ip() {
   local ip
   ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}' || true)"
   [[ -z "${ip}" ]] && ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  # No default route and no usable hostname -I: read the kernel's local addresses directly.
+  [[ -z "${ip}" ]] && ip="$(awk '/\/32 host LOCAL/ && prev !~ /^127\./ {print prev; exit} {prev = $2}' /proc/net/fib_trie 2>/dev/null || true)"
   printf '%s' "${ip}"
 }
 
@@ -758,7 +760,9 @@ monitoring_and_logs() {
   # Loki, and Prometheus only scrapes the servers it's told about.
   local self_ip comps=() c short
   self_ip="$(primary_ip)"
-  [[ -z "${self_ip}" ]] && self_ip="<this server's address>"
+  while [[ -z "${self_ip}" ]]; do
+    ask self_ip "This server's address, as the monitoring server sees it" ""
+  done
   short="$(hostname -s 2>/dev/null || uname -n)"
   for c in mattermost nginx postgresql rtcd opensearch prometheus loki grafana; do
     has_component "${c}" && comps+=("${c}")
@@ -929,8 +933,9 @@ interview() {
         emit tls_key_file "$(yaml_quote "${key}")"
         emit tls_chain_file "$(yaml_quote "${chain}")"
       else
-        local dir
-        ask_path dir "Directory holding <server name>.crt/.key or tls.crt/tls.key" "/etc/pki/tls/mattermost-src" dir
+        local dir sname="${MM_SITE_URL#*://}"
+        sname="${sname%%[/:]*}"
+        ask_path dir "Directory holding ${sname:-<server name>}.crt/.key or tls.crt/tls.key" "/etc/pki/tls/mattermost-src" dir
         emit tls_source_dir "$(yaml_quote "${dir}")"
       fi
     fi
@@ -1044,7 +1049,9 @@ interview() {
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
         local self_ip scrapers grafanas="" queriers=""
         self_ip="$(primary_ip)"
-        [[ -z "${self_ip}" ]] && self_ip="<this server's address>"
+        while [[ -z "${self_ip}" ]]; do
+          ask self_ip "This server's address, as the other servers see it" ""
+        done
         echo "monitoring_estate:" >> "${answers_out}"
         printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
         # Every Prometheus in the estate scrapes every server, so they all go in

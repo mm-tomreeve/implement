@@ -15,6 +15,11 @@
         name: common
         tasks_from: input_files
 
+    - name: Check the ports are free
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: ports
+
     - name: Write the plan for the wrapper
       ansible.builtin.copy:
         dest: "{{ plan_output_file }}"

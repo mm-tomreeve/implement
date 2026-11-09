@@ -5,6 +5,9 @@
 - name: Check the files the answer file points at
   ansible.builtin.include_tasks: input_files.yml
 
+- name: Check the ports are free
+  ansible.builtin.include_tasks: ports.yml
+
 - name: Load or generate secrets
   ansible.builtin.include_tasks: secrets.yml
 

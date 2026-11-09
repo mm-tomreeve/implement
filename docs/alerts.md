@@ -4,7 +4,8 @@ When a server runs the `monitoring` profile, Mattermost Implement asks which oth
 the estate and what each one runs. From that it builds:
 
 - Prometheus jobs for every exporter, labelled with the server's name,
-- outside-in checks of the site (`/api/v4/system/ping`), its certificate and the Calls media port,
+- outside-in checks of the site (`/api/v4/system/ping`), its certificate and the Calls media port
+  (a TCP connect from the monitoring server; UDP and reachability from users' networks aren't tested),
 - the alert rules below, in Grafana, in the *Mattermost Implement* folder,
 - log checks against Loki, when the estate ships its logs there ([logging.md](logging.md)),
 - dashboards per module: an estate overview, servers, Mattermost, PostgreSQL, Nginx, OpenSearch and Calls.
@@ -193,7 +194,7 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 
 | Check | Info | Warning | Critical | For | What to do |
 |---|---|---|---|---|---|
-| Calls media port unreachable `calls-port-unreachable` |  |  | < 1 | 3m | Calls will connect but carry no audio. Check rtcd is running and the firewall allows the media port. |
+| Calls media port closed `calls-port-unreachable` |  |  | < 1 | 3m | Calls may connect but carry no audio. Check rtcd is running and listening on the media port, and the firewall allows it. |
 | rtcd CPU usage `rtcd-cpu` | > 60% | > 80% | > 95% | 10m | Calls will start to stutter. Add CPU or another rtcd server. |
 | rtcd open file descriptors `rtcd-fds` | > 70% | > 80% | > 90% | 10m | rtcd opens a socket per connection. Raise LimitNOFILE in the rtcd unit, or add another rtcd server. |
 | UDP receive buffer overflows `udp-buffer-errors` |  | > 0/s | > 50/s | 5m | Media packets are being lost before rtcd reads them. Check net.core.rmem_max and CPU on the host. |

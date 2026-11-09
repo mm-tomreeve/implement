@@ -9,3 +9,4 @@ monitoring_estate:
   - {name: db01, address: 10.10.1.11, components: [postgresql]}
   - {name: calls01, address: 10.10.1.13, components: [rtcd]}
   - {name: search01, address: 10.10.1.14, components: [opensearch]}
+render_expect_selected: [blackbox_exporter]

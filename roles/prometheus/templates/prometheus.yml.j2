@@ -68,7 +68,7 @@ scrape_configs:
 {% endif %}
 {% set calls = estate | selectattr('components', 'contains', 'rtcd') | list %}
 {% if 'blackbox_exporter' in mmd_selected and calls %}
-  # Can clients reach the Calls media port?
+  # Is rtcd accepting TCP on the Calls media port, as seen from this server?
   - job_name: blackbox_tcp_calls
     metrics_path: /probe
     params:

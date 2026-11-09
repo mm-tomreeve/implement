@@ -203,7 +203,7 @@
 
 - name: Rebuild the system CA bundle
   ansible.builtin.command: update-ca-trust extract
-  when: _mm_os_ca is changed
+  when: _mm_os_ca is changed  # noqa: no-handler - must run before later tasks, not at play end
   changed_when: true
 
 - name: Install the licence file

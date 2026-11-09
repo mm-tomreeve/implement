@@ -44,7 +44,6 @@
            + (['postgres_exporter'] if _with_exporters and 'postgresql' in _base_selection else [])
            + (['nginx_exporter'] if _with_exporters and 'nginx' in _base_selection else [])
            + (['opensearch_exporter'] if _with_exporters and 'opensearch' in _base_selection else [])
-           + (['blackbox_exporter'] if 'prometheus' in _base_selection else [])
            + (['otel_collector'] if _with_log_shipping | bool else [])) | list }}
     mmd_profiles_used: "{{ _req_profiles }}"
     # Why this server's logs stay put, for the plan and the report. Blank when they're shipped.
@@ -52,3 +51,14 @@
       {{ '' if _with_log_shipping | bool
          else ('deploy_log_shipping is off' if not (deploy_log_shipping | bool)
                else 'there is no Loki on this server and logging_loki_url is empty') }}
+
+# A task of its own because monitoring_site_url's default looks at mmd_selected.
+- name: Add blackbox_exporter when there's a site or Calls port to check
+  ansible.builtin.set_fact:
+    mmd_selected: "{{ mmd_component_order | select('in', mmd_selected + ['blackbox_exporter']) | list }}"
+  when:
+    - "'prometheus' in mmd_selected"
+    - >-
+      monitoring_site_url | length > 0
+      or 'rtcd' in mmd_selected
+      or monitoring_estate | selectattr('components', 'contains', 'rtcd') | list | length > 0

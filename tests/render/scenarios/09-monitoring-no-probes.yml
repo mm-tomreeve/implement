@@ -1,0 +1,11 @@
+---
+# Render scenario: a monitoring server with no site URL and no Calls servers,
+# so blackbox_exporter has nothing to probe and is left out.
+render_host: mon01
+deploy_name: chat-prod
+deploy_profiles: [monitoring]
+monitoring_estate:
+  - {name: app01, address: 10.10.1.12, components: [mattermost, nginx]}
+  - {name: db01, address: 10.10.1.11, components: [postgresql]}
+render_expect_selected: [prometheus, grafana, node_exporter]
+render_expect_not_selected: [blackbox_exporter]
