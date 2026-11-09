@@ -28,7 +28,7 @@ storage.
 On the target server, as root:
 
 ```bash
-git clone <this repo> /opt/mattermost-implement
+git clone https://github.com/mm-tomreeve/implement.git /opt/mattermost-implement
 cd /opt/mattermost-implement
 ./install.sh
 ```
