@@ -43,8 +43,9 @@ The script then:
 5. shows the plan, with any warnings about putting too much on one box, and waits for a yes,
 6. deploys, runs the post-deploy tests and writes the architecture document.
 
-Run it again whenever you like. The roles are idempotent, so a second run changes nothing unless
-something has drifted, and you get a fresh report. An installed Mattermost stays on its version
+Run it again whenever you like. It offers your last answers to use as they are, to go through
+and change, or to start again from blank. The roles are idempotent, so a second run changes nothing
+unless something has drifted, and you get a fresh report. An installed Mattermost stays on its version
 until you ask for an upgrade with `--upgrade`; see [Layout and upgrades](#layout-and-upgrades).
 
 ## What it can install
@@ -104,6 +105,27 @@ Prometheus needs, to that address only. Logs go out to Loki, so nothing opens fo
 end it prints the line to add on the monitoring server, whose firewall then lets this server in.
 A server running Loki without Prometheus also asks which servers send it logs.
 
+### Running it again
+
+On a server that has been installed before, the installer asks what to do with the saved answers
+in `/etc/mattermost-implement/answers.yml`:
+
+| Choice | Does |
+|---|---|
+| Use them as they are | Goes straight to the plan with the same answers |
+| Go through them and change what you need | Asks every question again with your last answer as the default |
+| Start again with blank answers | Asks every question with no answers filled in |
+
+When you go through them, press Enter to keep an answer, type a new one to change it, or type `-`
+to clear it. Passwords left blank stay as they were. The servers on a monitoring server come up
+one at a time with their address and components filled in, so you can change one, drop it with
+`-`, or add more at the end. Settings no question covers, such as alert thresholds you added by
+hand, are copied into the new file. The old file is kept next to it as a `.bak`.
+
+`./install.sh --edit` goes straight to changing the saved answers, and
+`./install.sh --edit --answers FILE` starts from that file instead. Either way the result is saved
+to `/etc/mattermost-implement/answers.yml`.
+
 ### From an answer file
 
 Copy [answers.example.yml](answers.example.yml), which documents every setting, and run:
@@ -131,6 +153,7 @@ The other flags:
 
 | Flag | Does |
 |---|---|
+| `--edit` | Asks the questions again with the saved answers (or `--answers FILE`) as the defaults |
 | `--plan-only` | Shows what would happen, then stops |
 | `--upgrade` | Lets an installed Mattermost (and rtcd) move to the newest release on its channel |
 | `--check` | Dry run |
