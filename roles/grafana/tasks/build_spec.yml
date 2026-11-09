@@ -4,7 +4,8 @@
   ansible.builtin.set_fact:
     _obs_spec:
       deployment: "{{ deploy_name }}"
-      site_url: "{{ monitoring_site_url if 'blackbox_exporter' in mmd_selected else '' }}"
+      # Prometheus always probes a site URL it's given, here or on its own server.
+      site_url: "{{ monitoring_site_url }}"
       servers: "{{ mmd_estate | default([]) }}"
       datasource_uid: "{{ grafana_datasource_uid }}"
       # Log checks need a Loki for Grafana to query.

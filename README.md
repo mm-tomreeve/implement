@@ -137,6 +137,10 @@ Copy [answers.example.yml](answers.example.yml), which documents every setting, 
 Nothing is asked that the answer file already settles. Add `--non-interactive --yes` for fully
 unattended runs.
 
+The plan stops if the answer file has a setting it doesn't know (usually a typo) or a value of the
+wrong kind, such as `10.0.0.5` where a list like `[10.0.0.5]` is needed. `--verify-only` and
+`--report-only` only warn, so an older answer file doesn't block them.
+
 ### From flags
 
 ```bash
@@ -235,6 +239,11 @@ monitoring_estate:
 Install the database, Calls and search servers first, in any order, then the app server, then
 monitoring. The app server needs the database password from db01's secrets file, and the search CA
 (`/etc/opensearch/certs/root-ca.pem`) copied over from search01.
+
+To run Grafana on a server of its own, give it the same `monitoring_site_url` and
+`monitoring_estate` as the Prometheus server, with the Prometheus server added as
+`components: [prometheus]`, and point `grafana_prometheus_url` at it. Grafana builds its alerts and
+dashboards from that list, and the instance labels come from the names, so they have to match.
 
 Files the answer file points at have to be on the server before you start: the licence, the search
 CA, the TLS certificate and key (or `tls_source_dir`) and `monitoring_site_ca_file`. The plan checks

@@ -91,10 +91,17 @@ else
 fi
 WIDTH=64
 
-say()  { printf '%s\n' "${C_BLUE}${C_BOLD}${G_ARROW}${C_OFF} ${C_BOLD}$*${C_OFF}"; }
+# Steps, warnings and errors also go to the run log, so a run that stops before
+# Ansible starts still says how far it got and why. Nothing is logged until
+# setup_logging has created the file.
+log_line() {
+  [[ -n "${LOG_FILE:-}" ]] || return 0
+  printf '%s install.sh | %s\n' "$(date '+%F %T')" "$*" | sed $'s/\e\\[[0-9;]*m//g' >> "${LOG_FILE}" 2>/dev/null || true
+}
+say()  { log_line "$*"; printf '%s\n' "${C_BLUE}${C_BOLD}${G_ARROW}${C_OFF} ${C_BOLD}$*${C_OFF}"; }
 info() { printf '    %s\n' "$*"; }
-warn() { printf '%s\n' "${C_YEL}${C_BOLD}WARNING:${C_OFF} $*" >&2; }
-die()  { printf '%s\n' "${C_RED}${C_BOLD}ERROR:${C_OFF} $*" >&2; exit 1; }
+warn() { log_line "WARNING: $*"; printf '%s\n' "${C_YEL}${C_BOLD}WARNING:${C_OFF} $*" >&2; }
+die()  { log_line "ERROR: $*"; printf '%s\n' "${C_RED}${C_BOLD}ERROR:${C_OFF} $*" >&2; exit 1; }
 
 no_input() {
   echo
@@ -125,6 +132,7 @@ banner() {
   echo
 }
 trap 'die "install.sh stopped at line ${LINENO}. Logs are in ${LOG_DIR}."' ERR
+trap 'echo; log_line "Stopped with Ctrl-C."; exit 130' INT
 
 usage() {
   cat <<EOF
@@ -1139,11 +1147,23 @@ interview() {
     emit mattermost_opensearch_password "$(yaml_quote "${ospass}")"
   fi
 
-  if has_component prometheus; then
+  # Grafana builds its alerts and dashboards from the same server list Prometheus
+  # scrapes, so a Grafana server without Prometheus needs the list too.
+  if has_component prometheus || has_component grafana; then
     section "Monitoring the estate"
-    info "We can build Prometheus jobs, tiered alerts (info, warning, critical) and dashboards"
-    info "in Grafana for every server in this Mattermost estate. This server is included already."
-    if ask_yn "Build monitors, alerts and dashboards for the estate?" "$(prev_yn monitoring_alerts_enabled y)"; then
+    local build_q="Build monitors, alerts and dashboards for the estate?" site_q
+    site_q="Site URL users reach (checked from here; $(blank) = skip)"
+    if has_component prometheus; then
+      info "We can build Prometheus jobs, tiered alerts (info, warning, critical) and dashboards"
+      info "in Grafana for every server in this Mattermost estate. This server is included already."
+    else
+      info "We can build tiered alerts (info, warning, critical) and dashboards in Grafana for every"
+      info "server in this Mattermost estate. This server is included already."
+      info "Give the same site URL and server names as on the Prometheus server."
+      build_q="Build alerts and dashboards for the estate?"
+      site_q="Site URL the Prometheus server checks ($(blank) = none)"
+    fi
+    if ask_yn "${build_q}" "$(prev_yn monitoring_alerts_enabled y)"; then
       emit monitoring_alerts_enabled true
       emit monitoring_dashboards_enabled true
       local site_default="" site ca joined trusted=y
@@ -1151,9 +1171,9 @@ interview() {
       site_default="$(prev monitoring_site_url "${site_default}")"
       [[ -n "$(prev monitoring_site_ca_file)" || "$(prev monitoring_site_tls_verify)" == false ]] && trusted=n
       info "${C_DIM}This is Mattermost's Site URL, including https://, e.g. https://chat.example.com${C_OFF}"
-      ask_url site "Site URL users reach (checked from here; $(blank) = skip)" "${site_default}" optional
+      ask_url site "${site_q}" "${site_default}" optional
       emit monitoring_site_url "$(yaml_quote "${site}")"
-      if [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" "${trusted}"; then
+      if has_component prometheus && [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" "${trusted}"; then
         ask_path ca "Path to that CA certificate on this server ($(blank) = don't verify)" "$(prev monitoring_site_ca_file)" file optional
         if [[ -n "${ca}" ]]; then
           emit monitoring_site_ca_file "$(yaml_quote "${ca}")"
@@ -1242,13 +1262,15 @@ interview() {
         defaults=("${entered[@]}")
       done
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
+        echo "monitoring_estate:" >> "${answers_out}"
+        printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
+      fi
+      if [[ ${#estate_lines[@]} -gt 0 ]] && has_component prometheus; then
         local self_ip scrapers grafanas="" queriers=""
         self_ip="$(primary_ip)"
         while [[ -z "${self_ip}" ]]; do
           ask self_ip "This server's address, as the other servers see it" ""
         done
-        echo "monitoring_estate:" >> "${answers_out}"
-        printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
         # Every Prometheus in the estate scrapes every server, so they all go in
         # monitoring_scrape_sources. Grafana and other Prometheus servers query this one.
         scrapers="${self_ip}"
@@ -1502,6 +1524,7 @@ main() {
   check_os
   setup_logging
   TOOL_VERSION="$(tool_version)"
+  log_line "Started: install.sh $* (${TOOL_VERSION}, $(host_name), ${OS_PRETTY})"
   banner "${TOOL_VERSION} ${G_DOT} $(host_name) ${G_DOT} ${OS_PRETTY}"
   [[ -z "${LOCAL_REPO}" ]] || setup_local_repo
   # Only installs need installers; re-testing and reporting work from what is on disk.
