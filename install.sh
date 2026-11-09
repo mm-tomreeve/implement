@@ -54,6 +54,14 @@ CHECK_MODE=false
 ALLOW_UPGRADE=false
 MODE=install
 ONLINE=false
+EDIT_ANSWERS=false
+
+# While going through earlier answers: what each key was, and the estate servers as
+# "name|address|component,component".
+EDITING=false
+declare -A PREV=()
+PREV_ESTATE=()
+PREV_FILE=""
 
 # ------------------------------------------------------------------ output
 
@@ -126,6 +134,8 @@ Usage: sudo ./install.sh [options]
 
 What to install
   --answers FILE          Use an answer file (see answers.example.yml)
+  --edit                  Ask the questions again with the saved answers (or --answers FILE)
+                          as the defaults, so you only change what you need
   --profile LIST          Profiles for this server, comma-separated:
                           ${PROFILE_NAMES[*]}
   --components LIST       Extra or individual components, comma-separated:
@@ -157,6 +167,7 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --answers) ANSWERS="$2"; shift 2 ;;
+      --edit) EDIT_ANSWERS=true; shift ;;
       --profile|--profiles) PROFILES="$2"; shift 2 ;;
       --components) COMPONENTS="$2"; shift 2 ;;
       --offline-dir) OFFLINE_SOURCE="$2"; shift 2 ;;
@@ -175,6 +186,10 @@ parse_args() {
     esac
   done
   [[ -t 0 ]] || NON_INTERACTIVE=true
+  if [[ "${EDIT_ANSWERS}" == true ]]; then
+    [[ "${MODE}" == install || "${MODE}" == plan ]] || die "--edit goes with an install or --plan-only."
+    [[ "${NON_INTERACTIVE}" != true ]] || die "--edit asks the questions again, so it needs a terminal."
+  fi
   if [[ -n "${ANSWERS}" ]]; then
     [[ -r "${ANSWERS}" ]] || die "Cannot read answer file ${ANSWERS}"
     ANSWERS="$(cd "$(dirname "${ANSWERS}")" && pwd)/$(basename "${ANSWERS}")"
@@ -520,14 +535,17 @@ ask() {
   else
     read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt}: " reply || no_input
   fi
-  printf -v "${__var}" '%s' "${reply:-${default}}"
+  reply="${reply:-${default}}"
+  # Going through earlier answers, Enter keeps the old one, so '-' is how to clear it.
+  [[ "${EDITING}" == true && "${reply}" == - ]] && reply=""
+  printf -v "${__var}" '%s' "${reply}"
 }
 
 ask_addresses() {
-  # ask_addresses VAR "Who connects" "What breaks when blank"
-  local __var="$1" who="$2" why="$3" __addrs
+  # ask_addresses VAR "Who connects" "What breaks when blank" [default]
+  local __var="$1" who="$2" why="$3" default="${4-}" __addrs
   while true; do
-    ask __addrs "${who} (comma-separated IPs or CIDRs, 0.0.0.0/0 = any)" ""
+    ask __addrs "${who} (comma-separated IPs or CIDRs, 0.0.0.0/0 = any)" "${default}"
     [[ "$(yaml_list "${__addrs}")" != "[]" ]] && break
     echo "    ${why}"
   done
@@ -546,7 +564,7 @@ ask_path() {
       [[ "${kind}" == dir && -d "${__path}" ]] && break
       [[ "${kind}" == file && -f "${__path}" ]] && break
       if [[ -n "${optional}" ]]; then
-        echo "    There's no ${what} at ${__path} on this server. Copy it there and give the path again, or leave it blank."
+        echo "    There's no ${what} at ${__path} on this server. Copy it there and give the path again, or $( [[ "${EDITING}" == true ]] && echo "type - to leave it out" || echo "leave it blank")."
       else
         echo "    There's no ${what} at ${__path} on this server. Copy it there and press Enter, or give another path."
         default="${__path}"
@@ -582,10 +600,24 @@ primary_ip() {
 }
 
 ask_secret() {
-  local __var="$1" prompt="$2" reply
-  read -r -s -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt} ${C_DIM}(blank = generate)${C_OFF}: " reply || no_input
+  # ask_secret VAR "Question" [KEY]
+  # Blank generates one, or keeps KEY's earlier answer when going through them again.
+  local __var="$1" prompt="$2" key="${3-}" reply old="" hint="blank = generate"
+  [[ -n "${key}" ]] && old="$(prev "${key}")"
+  [[ -n "${old}" ]] && hint="blank = keep the current one"
+  read -r -s -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt} ${C_DIM}(${hint})${C_OFF}: " reply || no_input
   echo
-  printf -v "${__var}" '%s' "${reply}"
+  printf -v "${__var}" '%s' "${reply:-${old}}"
+}
+
+ask_password() {
+  # ask_password VAR "Question" [KEY]
+  # A password typed blind. Blank keeps KEY's earlier answer when going through them again.
+  local __var="$1" prompt="$2" key="${3-}" reply old=""
+  [[ -n "${key}" ]] && old="$(prev "${key}")"
+  read -r -s -p "    ${prompt}${old:+ ${C_DIM}(blank = keep the current one)${C_OFF}}: " reply || no_input
+  echo
+  printf -v "${__var}" '%s' "${reply:-${old}}"
 }
 
 ask_yn() {
@@ -599,6 +631,8 @@ ask_choice() {
   # ask_choice VAR "Question" default option1 option2 ...
   local __var="$1" prompt="$2" default="$3"; shift 3
   local options=("$@") i reply
+  # An earlier answer that isn't one of the options (a hand-edited file) can't be the default.
+  printf '%s\n' "${options[@]}" | grep -Fxq -- "${default}" || default="${options[0]}"
   printf '  %s %s\n' "${C_YEL}${C_BOLD}?${C_OFF}" "${prompt}"
   for i in "${!options[@]}"; do
     printf '      %s %s%s\n' "${C_YEL}$((i + 1)))${C_OFF}" "${options[$i]}" \
@@ -614,10 +648,132 @@ ask_choice() {
   done
 }
 
+# ------------------------------------------------------------------ going through earlier answers
+
+# A Python that can read YAML. ansible-core brings PyYAML, though sometimes for the
+# Python it runs on rather than the system python3.
+yaml_python() {
+  local bin line cand
+  bin="$(command -v ansible-playbook 2>/dev/null || true)"
+  [[ -n "${bin}" ]] && IFS= read -r line < "${bin}" || line=""
+  line="${line#\#!}"; line="${line# }"
+  [[ "${line}" == */env\ * ]] && line="${line#*/env }"
+  for cand in python3 "${line%% *}"; do
+    [[ -n "${cand}" ]] && "${cand}" -I -c 'import yaml' 2>/dev/null && { printf '%s' "${cand}"; return 0; }
+  done
+  return 1
+}
+
+# Read an earlier answer file so every question can offer its old answer as the default.
+load_previous() {
+  local file="$1" py out key value
+  py="$(yaml_python)" || die "Can't read ${file}: there's no Python with PyYAML here. Edit it by hand and use --answers."
+  out="$("${py}" -I - "${file}" <<'PY'
+import sys, yaml
+
+def flat(v):
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, list):
+        return ", ".join(flat(x) for x in v if not isinstance(x, (dict, list)))
+    return str(v).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
+if not isinstance(data, dict):
+    sys.exit("not a set of settings")
+for key, value in data.items():
+    if key == "monitoring_estate":
+        for s in value or []:
+            if isinstance(s, dict):
+                comps = ",".join(str(c) for c in s.get("components") or [])
+                print("@estate\t%s|%s|%s" % (flat(s.get("name")), flat(s.get("address")), comps))
+    elif not isinstance(value, dict):
+        print("%s\t%s" % (key, flat(value)))
+PY
+)" || die "Can't read ${file}. Fix the YAML in it, or start again with blank answers."
+  PREV=(); PREV_ESTATE=()
+  while IFS=$'\t' read -r key value; do
+    [[ -n "${key}" ]] || continue
+    if [[ "${key}" == @estate ]]; then PREV_ESTATE+=("${value}"); else PREV[${key}]="${value}"; fi
+  done <<< "${out}"
+  PREV_FILE="${file}"
+  EDITING=true
+  info "Each question shows your last answer in brackets. Press Enter to keep it, type a new"
+  info "one to change it, or type - to clear it. Passwords left blank stay as they were."
+}
+
+# prev KEY [FALLBACK]: going through earlier answers, what KEY was; otherwise FALLBACK.
+prev() {
+  if [[ "${EDITING}" == true && -n "${PREV[$1]+set}" ]]; then
+    printf '%s' "${PREV[$1]}"
+  else
+    printf '%s' "${2-}"
+  fi
+}
+
+# prev_yn KEY y|n: an earlier true or false as the default for ask_yn.
+prev_yn() {
+  case "$(prev "$1")" in
+    true|yes) echo y ;;
+    false|no) echo n ;;
+    *) echo "$2" ;;
+  esac
+}
+
+# How to leave an answer out, for prompts: Enter keeps an earlier answer, so it's '-'.
+blank() { if [[ "${EDITING}" == true ]]; then printf '%s' -; else printf '%s' blank; fi; }
+
+# " [default]" for a prompt, or nothing when there's no default.
+default_hint() {
+  [[ -n "$1" ]] && printf ' %s' "${C_DIM}[${C_OFF}${C_YEL}$1${C_OFF}${C_DIM}]${C_OFF}"
+  return 0
+}
+
+# numbers_of "a, c" a b c: where the names sit in the list, as "1,3".
+numbers_of() {
+  local want=",${1// /}," out="" i=0 o
+  shift
+  for o in "$@"; do
+    i=$((i + 1))
+    [[ "${want}" == *",${o},"* ]] && out+="${out:+,}${i}"
+  done
+  printf '%s' "${out}"
+}
+
+# Settings in the earlier file that no question covers (thresholds, tuning, anything
+# added by hand) go on the end of the new file, so editing doesn't lose them.
+carry_over_answers() {
+  local from="$1" to="$2" py kept
+  py="$(yaml_python)" || return 0
+  kept="$("${py}" -I - "${from}" "${to}" "${BASH_SOURCE[0]}" <<'PY'
+import re, sys, yaml
+src, dest, script = sys.argv[1:4]
+old = yaml.safe_load(open(src, encoding="utf-8")) or {}
+new = yaml.safe_load(open(dest, encoding="utf-8")) or {}
+asked = set(re.findall(r"\bemit ([a-z_]+) ", open(script, encoding="utf-8").read())) | {"monitoring_estate"}
+keep = {k: v for k, v in old.items() if k not in new and k not in asked}
+if keep:
+    with open(dest, "a", encoding="utf-8") as out:
+        out.write("# Kept from the earlier answers; the questions don't cover these.\n")
+        yaml.safe_dump(keep, out, default_flow_style=False, sort_keys=False, allow_unicode=True)
+print(", ".join(keep))
+PY
+)" || { warn "Couldn't copy the other settings across from ${from}. Check the new answers before deploying."; return 0; }
+  [[ -n "${kept}" ]] && info "Kept the settings the questions don't cover: ${kept}"
+  return 0
+}
+
 has_component() { [[ " ${SELECTED} " == *" $1 "* ]]; }
 
 choose_components() {
-  local i reply name chosen_profiles=() extra=()
+  local i reply name chosen_profiles=() extra=() pdefault="" cdefault=""
+  if [[ "${EDITING}" == true ]]; then
+    pdefault="$(numbers_of "$(prev deploy_profiles)" "${PROFILE_NAMES[@]}")"
+    cdefault="$(numbers_of "$(prev deploy_components)" "${COMPONENT_NAMES[@]}")"
+    [[ -z "${pdefault}" && -n "${cdefault}" ]] && pdefault=c
+  fi
   section "What should this server run?"
   for i in "${!PROFILE_NAMES[@]}"; do
     name="${PROFILE_NAMES[$i]}"
@@ -627,14 +783,16 @@ choose_components() {
   echo
   info "${C_DIM}Several profiles can share a server, e.g. 1,3. We recommend one role per server for production.${C_OFF}"
   while true; do
-    read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} Profiles ${C_YEL}${G_ARROW}${C_OFF} " reply || no_input
+    read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} Profiles$(default_hint "${pdefault}") ${C_YEL}${G_ARROW}${C_OFF} " reply || no_input
+    reply="${reply:-${pdefault}}"
     [[ -n "${reply}" ]] || continue
     chosen_profiles=(); extra=()
     if [[ "${reply}" == c ]]; then
       for i in "${!COMPONENT_NAMES[@]}"; do
         printf '      %s %s\n' "${C_YEL}$((i + 1)))${C_OFF}" "${COMPONENT_NAMES[$i]}"
       done
-      read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} Components ${C_DIM}(comma-separated numbers)${C_OFF} ${C_YEL}${G_ARROW}${C_OFF} " reply || no_input
+      read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} Components ${C_DIM}(comma-separated numbers)${C_OFF}$(default_hint "${cdefault}") ${C_YEL}${G_ARROW}${C_OFF} " reply || no_input
+      reply="${reply:-${cdefault}}"
       local n
       for n in ${reply//,/ }; do
         [[ "${n}" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= ${#COMPONENT_NAMES[@]} )) && extra+=("${COMPONENT_NAMES[$((n - 1))]}")
@@ -698,10 +856,10 @@ monitoring_and_logs() {
     info "A monitoring server (Prometheus, Loki and Grafana) can watch this server and keep its logs."
     info "${C_DIM}For each yes we install what's needed here and open only the ports it needs.${C_OFF}"
     echo
-    if ask_yn "Should Prometheus on your monitoring server watch this server?" y; then
+    if ask_yn "Should Prometheus on your monitoring server watch this server?" "$(prev_yn deploy_monitoring_exporters y)"; then
       watched=true
       ask_addresses scr "Address of the Prometheus server (several: comma-separated)" \
-        "Prometheus can't reach this server's metrics without at least one address."
+        "Prometheus can't reach this server's metrics without at least one address." "$(prev monitoring_scrape_sources)"
       emit deploy_monitoring_exporters true
       emit monitoring_scrape_sources "$(yaml_list "${scr}")"
       prom_addr="${scr%%,*}"
@@ -717,15 +875,18 @@ monitoring_and_logs() {
       # Nobody else tells this Loki who sends to it, so ask here.
       echo
       info "Loki runs here. Its port (3100) opens only to the servers you list."
-      ask lsrc "Servers that send logs here, and the Grafana server (comma-separated IPs; blank = this server only)" ""
+      ask lsrc "Servers that send logs here, and the Grafana server (comma-separated IPs; $(blank) = this server only)" \
+        "$(prev loki_allowed_sources)"
       emit loki_allowed_sources "$(yaml_list "${lsrc}")"
     fi
   else
     echo
-    if ask_yn "Send this server's logs to Loki on your monitoring server?" y; then
+    if ask_yn "Send this server's logs to Loki on your monitoring server?" "$(prev_yn deploy_log_shipping y)"; then
       shipped=true
+      local ldefault
+      ldefault="$(prev logging_loki_url)"
       while true; do
-        ask lurl "Address of the Loki server (or its URL)" "${prom_addr}"
+        ask lurl "Address of the Loki server (or its URL)" "${ldefault:-${prom_addr}}"
         [[ -n "${lurl}" ]] && break
         echo "    Give the Loki server's address, e.g. 10.10.1.15, or http://10.10.1.15:3100."
       done
@@ -735,7 +896,7 @@ monitoring_and_logs() {
     else
       emit deploy_log_shipping false
       if has_component grafana; then
-        ask lurl "Loki server for Grafana to search (address or URL; blank = none)" "${prom_addr}"
+        ask lurl "Loki server for Grafana to search (address or URL; $(blank) = none)" "$(prev logging_loki_url "${prom_addr}")"
         [[ -n "${lurl}" ]] && lurl="$(loki_url_from "${lurl}")"
       else
         lurl=""
@@ -792,12 +953,13 @@ interview() {
   {
     echo "# Mattermost Implement answer file, written by install.sh on $(date -u '+%Y-%m-%d %H:%M UTC') for ${fqdn}."
     echo "# Re-run with: sudo ./install.sh --answers ${SAVED_ANSWERS}"
+    echo "# Change some answers with: sudo ./install.sh --edit"
     echo "# answers.example.yml in the repo explains every setting."
   } > "${answers_out}"
   emit() { printf '%s: %s\n' "$1" "$2" >> "${answers_out}"; }
 
   local name
-  ask name "Deployment name (used in the report and labels)" "mattermost"
+  ask name "Deployment name (used in the report and labels)" "$(prev deploy_name mattermost)"
   emit deploy_name "$(yaml_quote "${name}")"
   emit deploy_profiles "$(yaml_list "${ANS_PROFILES}")"
   emit deploy_components "$(yaml_list "${ANS_COMPONENTS}")"
@@ -805,43 +967,43 @@ interview() {
   if has_component mattermost; then
     section "Mattermost"
     local site edition channel version lic
-    ask_url site "Site URL users will use" "https://${fqdn}"
+    ask_url site "Site URL users will use" "$(prev mattermost_site_url "https://${fqdn}")"
     emit mattermost_site_url "$(yaml_quote "${site}")"
     MM_SITE_URL="${site}"
-    ask_choice edition "Edition" enterprise enterprise team
+    ask_choice edition "Edition" "$(prev mattermost_edition enterprise)" enterprise team
     emit mattermost_edition "${edition}"
     MM_EDITION="${edition}"
-    ask_choice channel "Which build" latest-esr latest-esr latest-stable pinned
+    ask_choice channel "Which build" "$(prev mattermost_version_channel latest-esr)" latest-esr latest-stable pinned
     emit mattermost_version_channel "${channel}"
     if [[ "${channel}" == pinned ]]; then
-      ask version "Version to install (e.g. 11.7.14)" ""
+      ask version "Version to install (e.g. 11.7.14)" "$(prev mattermost_version)"
       emit mattermost_version "$(yaml_quote "${version}")"
     fi
     if [[ "${edition}" == enterprise ]]; then
-      ask_path lic "Path to the licence file on this server (blank to add later)" "" file optional
+      ask_path lic "Path to the licence file on this server ($(blank) to add later)" "$(prev mattermost_license_file)" file optional
       emit mattermost_license_file "$(yaml_quote "${lic}")"
     fi
 
     local store
-    ask_choice store "Where should uploaded files go" local local amazons3
+    ask_choice store "Where should uploaded files go" "$(prev mattermost_file_driver local)" local amazons3
     emit mattermost_file_driver "${store}"
     if [[ "${store}" == local ]]; then
       local data
-      ask data "Data directory (local disk or an NFS mount)" "/var/opt/mattermost/data"
+      ask data "Data directory (local disk or an NFS mount)" "$(prev mattermost_data_dir /var/opt/mattermost/data)"
       emit mattermost_data_dir "$(yaml_quote "${data}")"
     else
       local ep bucket region ak sk
-      ask ep "S3 endpoint (host[:port], no https://)" ""
-      ask bucket "Bucket" ""
-      ask region "Region (blank if not needed)" ""
-      ask ak "Access key ID" ""
-      read -r -s -p "    Secret access key: " sk || no_input; echo
+      ask ep "S3 endpoint (host[:port], no https://)" "$(prev mattermost_s3_endpoint)"
+      ask bucket "Bucket" "$(prev mattermost_s3_bucket)"
+      ask region "Region ($(blank) if not needed)" "$(prev mattermost_s3_region)"
+      ask ak "Access key ID" "$(prev mattermost_s3_access_key)"
+      ask_password sk "Secret access key" mattermost_s3_secret_key
       emit mattermost_s3_endpoint "$(yaml_quote "${ep}")"
       emit mattermost_s3_bucket "$(yaml_quote "${bucket}")"
       emit mattermost_s3_region "$(yaml_quote "${region}")"
       emit mattermost_s3_access_key "$(yaml_quote "${ak}")"
       emit mattermost_s3_secret_key "$(yaml_quote "${sk}")"
-      if ask_yn "Use HTTPS to reach S3?" y; then
+      if ask_yn "Use HTTPS to reach S3?" "$(prev_yn mattermost_s3_ssl y)"; then
         emit mattermost_s3_ssl true
       else
         emit mattermost_s3_ssl false
@@ -851,35 +1013,38 @@ interview() {
     if ! has_component postgresql; then
       local dbh dbp dbpass
       section "Database (on another server)"
-      ask dbh "PostgreSQL host" ""
-      ask dbp "Port" "5432"
-      read -r -s -p "    Password for mmuser (from secrets.yml on the database server): " dbpass || no_input; echo
+      ask dbh "PostgreSQL host" "$(prev mattermost_db_host)"
+      ask dbp "Port" "$(prev mattermost_db_port 5432)"
+      ask_password dbpass "Password for mmuser (from secrets.yml on the database server)" mattermost_db_password
       emit mattermost_db_host "$(yaml_quote "${dbh}")"
       emit mattermost_db_port "${dbp}"
       emit mattermost_db_password "$(yaml_quote "${dbpass}")"
       local dbreplicas
-      ask dbreplicas "PostgreSQL read replica addresses for reads (comma-separated, blank = none)" ""
+      ask dbreplicas "PostgreSQL read replica addresses for reads (comma-separated, $(blank) = none)" \
+        "$(prev mattermost_db_replica_hosts)"
       emit mattermost_db_replica_hosts "$(yaml_list "${dbreplicas}")"
     fi
     if ! has_component nginx; then
       local proxies
-      ask proxies "Reverse proxy addresses allowed to reach port 8065 (comma-separated, blank = any)" ""
+      ask proxies "Reverse proxy addresses allowed to reach port 8065 (comma-separated, $(blank) = any)" \
+        "$(prev mattermost_proxy_sources)"
       emit mattermost_proxy_sources "$(yaml_list "${proxies}")"
     fi
     if ! has_component rtcd; then
       local rurl
-      ask rurl "rtcd URL if Calls runs on another server, e.g. http://rtcd01:8045 (blank = built in)" ""
+      ask rurl "rtcd URL if Calls runs on another server, e.g. http://rtcd01:8045 ($(blank) = built in)" \
+        "$(prev mattermost_rtcd_url)"
       emit mattermost_rtcd_url "$(yaml_quote "${rurl}")"
     fi
     if ! has_component opensearch; then
       local osurl
-      ask osurl "OpenSearch URL if search runs on another server (blank = none)" ""
+      ask osurl "OpenSearch URL if search runs on another server ($(blank) = none)" "$(prev mattermost_opensearch_url)"
       emit mattermost_opensearch_url "$(yaml_quote "${osurl}")"
       if [[ "${osurl}" == https://* ]]; then
         local ospass osca
-        read -r -s -p "    Password for the OpenSearch 'mattermost' user: " ospass || no_input; echo
+        ask_password ospass "Password for the OpenSearch 'mattermost' user" mattermost_opensearch_password
         ask_path osca "Path to the search CA on this server (copy /etc/opensearch/certs/root-ca.pem from the search server)" \
-          "/etc/pki/tls/certs/opensearch-ca.pem" file
+          "$(prev mattermost_opensearch_ca_file /etc/pki/tls/certs/opensearch-ca.pem)" file
         emit mattermost_opensearch_password "$(yaml_quote "${ospass}")"
         emit mattermost_opensearch_ca_file "$(yaml_quote "${osca}")"
       fi
@@ -890,28 +1055,30 @@ interview() {
     section "PostgreSQL"
     local dbpass clients repl="none"
     if ! has_component mattermost; then
-      ask_choice repl "Replication (a replica is a read-only copy of a primary; install the primary first)" none none primary replica
+      ask_choice repl "Replication (a replica is a read-only copy of a primary; install the primary first)" \
+        "$(prev postgresql_replication none)" none primary replica
       emit postgresql_replication "${repl}"
     fi
     if [[ "${repl}" == replica ]]; then
       local primary rpass
-      ask primary "Primary server address" ""
-      read -r -s -p "    Password for mmuser (db_password in the primary's secrets.yml): " dbpass || no_input; echo
-      read -r -s -p "    Replication password (replication_password in the primary's secrets.yml): " rpass || no_input; echo
+      ask primary "Primary server address" "$(prev postgresql_primary_host)"
+      ask_password dbpass "Password for mmuser (db_password in the primary's secrets.yml)" mattermost_db_password
+      ask_password rpass "Replication password (replication_password in the primary's secrets.yml)" \
+        postgresql_replication_password
       emit postgresql_primary_host "$(yaml_quote "${primary}")"
       emit postgresql_replication_password "$(yaml_quote "${rpass}")"
     else
-      ask_secret dbpass "Password for the mmuser database role"
+      ask_secret dbpass "Password for the mmuser database role" mattermost_db_password
     fi
     emit mattermost_db_password "$(yaml_quote "${dbpass}")"
     if [[ "${repl}" == primary ]]; then
       local replicas
-      ask replicas "Replica server addresses (comma-separated IPs)" ""
+      ask replicas "Replica server addresses (comma-separated IPs)" "$(prev postgresql_replica_hosts)"
       emit postgresql_replica_hosts "$(yaml_list "${replicas}")"
     fi
     if ! has_component mattermost; then
       ask_addresses clients "Mattermost app server addresses allowed to connect" \
-        "The app servers can't reach the database without at least one address."
+        "The app servers can't reach the database without at least one address." "$(prev postgresql_allowed_clients)"
       emit postgresql_allowed_clients "$(yaml_list "${clients}")"
     fi
   fi
@@ -919,29 +1086,32 @@ interview() {
   if has_component nginx; then
     section "Nginx and TLS"
     local tls
-    ask_choice tls "TLS certificate" later later provided
+    ask_choice tls "TLS certificate" "$(prev tls_mode later)" later provided
     emit tls_mode "${tls}"
     if [[ "${tls}" == provided ]]; then
       local how
-      ask_choice how "Where is it" "two files" "two files" "a directory"
+      how="two files"
+      [[ -n "$(prev tls_source_dir)" ]] && how="a directory"
+      ask_choice how "Where is it" "${how}" "two files" "a directory"
       if [[ "${how}" == "two files" ]]; then
         local cert key chain
-        ask_path cert "Certificate file (PEM, full chain preferred)" "" file
-        ask_path key "Private key file" "" file
-        ask_path chain "Intermediate chain file (blank if already in the certificate)" "" file optional
+        ask_path cert "Certificate file (PEM, full chain preferred)" "$(prev tls_cert_file)" file
+        ask_path key "Private key file" "$(prev tls_key_file)" file
+        ask_path chain "Intermediate chain file ($(blank) if already in the certificate)" "$(prev tls_chain_file)" file optional
         emit tls_cert_file "$(yaml_quote "${cert}")"
         emit tls_key_file "$(yaml_quote "${key}")"
         emit tls_chain_file "$(yaml_quote "${chain}")"
       else
         local dir sname="${MM_SITE_URL#*://}"
         sname="${sname%%[/:]*}"
-        ask_path dir "Directory holding ${sname:-<server name>}.crt/.key or tls.crt/tls.key" "/etc/pki/tls/mattermost-src" dir
+        ask_path dir "Directory holding ${sname:-<server name>}.crt/.key or tls.crt/tls.key" \
+          "$(prev tls_source_dir /etc/pki/tls/mattermost-src)" dir
         emit tls_source_dir "$(yaml_quote "${dir}")"
       fi
     fi
     if ! has_component mattermost; then
       local ups
-      ask ups "Mattermost app servers to proxy to (host:8065, comma-separated)" ""
+      ask ups "Mattermost app servers to proxy to (host:8065, comma-separated)" "$(prev nginx_upstreams)"
       emit nginx_upstreams "$(yaml_list "${ups}")"
     fi
   fi
@@ -949,11 +1119,12 @@ interview() {
   if has_component rtcd; then
     section "Calls (rtcd)"
     local ice srcs
-    ask ice "Public IP or hostname clients use to reach this server (blank if not behind NAT)" ""
+    ask ice "Public IP or hostname clients use to reach this server ($(blank) if not behind NAT)" \
+      "$(prev rtcd_ice_host_override)"
     emit rtcd_ice_host_override "$(yaml_quote "${ice}")"
     if ! has_component mattermost; then
       ask_addresses srcs "Mattermost app server addresses allowed to use the rtcd API" \
-        "The app servers can't reach rtcd without at least one address, so calls would fail."
+        "The app servers can't reach rtcd without at least one address, so calls would fail." "$(prev rtcd_api_sources)"
       emit rtcd_api_sources "$(yaml_list "${srcs}")"
     fi
   fi
@@ -962,9 +1133,9 @@ interview() {
     section "OpenSearch"
     local clients ospass
     ask_addresses clients "Mattermost app server addresses allowed to connect" \
-      "The app servers can't reach OpenSearch without at least one address."
+      "The app servers can't reach OpenSearch without at least one address." "$(prev opensearch_allowed_clients)"
     emit opensearch_allowed_clients "$(yaml_list "${clients}")"
-    ask_secret ospass "Password for the OpenSearch 'mattermost' user"
+    ask_secret ospass "Password for the OpenSearch 'mattermost' user" mattermost_opensearch_password
     emit mattermost_opensearch_password "$(yaml_quote "${ospass}")"
   fi
 
@@ -972,16 +1143,18 @@ interview() {
     section "Monitoring the estate"
     info "We can build Prometheus jobs, tiered alerts (info, warning, critical) and dashboards"
     info "in Grafana for every server in this Mattermost estate. This server is included already."
-    if ask_yn "Build monitors, alerts and dashboards for the estate?" y; then
+    if ask_yn "Build monitors, alerts and dashboards for the estate?" "$(prev_yn monitoring_alerts_enabled y)"; then
       emit monitoring_alerts_enabled true
       emit monitoring_dashboards_enabled true
-      local site_default="" site ca joined
+      local site_default="" site ca joined trusted=y
       has_component mattermost && site_default="${MM_SITE_URL:-}"
+      site_default="$(prev monitoring_site_url "${site_default}")"
+      [[ -n "$(prev monitoring_site_ca_file)" || "$(prev monitoring_site_tls_verify)" == false ]] && trusted=n
       info "${C_DIM}This is Mattermost's Site URL, including https://, e.g. https://chat.example.com${C_OFF}"
-      ask_url site "Site URL users reach (checked from here; blank = skip)" "${site_default}" optional
+      ask_url site "Site URL users reach (checked from here; $(blank) = skip)" "${site_default}" optional
       emit monitoring_site_url "$(yaml_quote "${site}")"
-      if [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" y; then
-        ask_path ca "Path to that CA certificate on this server (blank = don't verify)" "" file optional
+      if [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" "${trusted}"; then
+        ask_path ca "Path to that CA certificate on this server ($(blank) = don't verify)" "$(prev monitoring_site_ca_file)" file optional
         if [[ -n "${ca}" ]]; then
           emit monitoring_site_ca_file "$(yaml_quote "${ca}")"
         else
@@ -992,15 +1165,29 @@ interview() {
       echo
       info "${C_DIM}Now the other servers. For each one, give its name, address and what it runs.${C_OFF}"
       local estate_lines=() snames=() saddrs=() scomps_list=() sname saddr scomps n bad picked names
+      # Going through earlier answers, each server already listed comes up first with
+      # its old answers as the defaults; then new ones can be added.
+      local defaults=() entered=() d dname daddr dcomps cdefault chint
+      [[ "${EDITING}" == true ]] && defaults=("${PREV_ESTATE[@]+"${PREV_ESTATE[@]}"}")
+      [[ ${#defaults[@]} -gt 0 ]] && info "${C_DIM}Press Enter to keep each server as it was, or type - as its name to drop it.${C_OFF}"
       # Prometheus, Loki and Grafana elsewhere get scraped too, and this server's
       # firewall opens Prometheus to the ones that query it (see wiring.yml).
       local i short mods=(mattermost nginx postgresql rtcd opensearch prometheus loki grafana)
       short="$(hostname -s 2>/dev/null || uname -n)"
       while true; do
-        estate_lines=() snames=() saddrs=() scomps_list=()
+        estate_lines=() snames=() saddrs=() scomps_list=() entered=()
+        d=0
         while true; do
-          ask sname "Server name (blank when done)" ""
-          [[ -z "${sname}" ]] && break
+          dname="" daddr="" dcomps=""
+          if (( d < ${#defaults[@]} )); then
+            IFS='|' read -r dname daddr dcomps <<< "${defaults[$d]}"
+            d=$((d + 1))
+            ask sname "Server name (- to drop it)" "${dname}"
+            [[ -z "${sname}" || "${sname}" == - ]] && continue
+          else
+            ask sname "Server name (blank when done)" ""
+            [[ -z "${sname}" ]] && break
+          fi
           if [[ "${sname}" == "${short}" || "${sname}" == "${fqdn}" ]]; then
             echo "    ${sname} is this server, which is included already."
             continue
@@ -1010,15 +1197,21 @@ interview() {
             continue
           fi
           while true; do
-            ask saddr "Address of ${sname} (IP or DNS name)" ""
+            ask saddr "Address of ${sname} (IP or DNS name)" "${daddr}"
             [[ -n "${saddr}" ]] && break
             echo "    Prometheus needs an address to reach ${sname}."
           done
           for i in "${!mods[@]}"; do
             printf '      %s %s\n' "${C_YEL}$((i + 1)))${C_OFF}" "${mods[$i]}"
           done
+          # With an earlier answer as the default, Enter keeps it, so '-' means host metrics only.
+          cdefault="$(numbers_of "${dcomps}" "${mods[@]}")"
+          chint="blank"
+          [[ -n "${cdefault}" ]] && chint="-"
           while true; do
-            read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} What runs on ${sname} ${C_DIM}(comma-separated numbers, blank = host metrics only)${C_OFF} ${C_YEL}${G_ARROW}${C_OFF} " scomps || no_input
+            read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} What runs on ${sname} ${C_DIM}(comma-separated numbers, ${chint} = host metrics only)${C_OFF}$(default_hint "${cdefault}") ${C_YEL}${G_ARROW}${C_OFF} " scomps || no_input
+            scomps="${scomps:-${cdefault}}"
+            [[ "${scomps}" == - ]] && scomps=""
             picked=() names=() bad=""
             for n in ${scomps//,/ }; do
               if [[ "${n}" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= ${#mods[@]} )); then
@@ -1037,6 +1230,7 @@ interview() {
           saddrs+=("${saddr}")
           joined="$(IFS=,; echo "${names[*]-}")"
           scomps_list+=("${joined//,/, }")
+          entered+=("${sname}|${saddr}|${joined}")
         done
         [[ ${#estate_lines[@]} -eq 0 ]] && break
         echo
@@ -1044,7 +1238,8 @@ interview() {
           printf '    %-20s %-24s %s\n' "${snames[$i]}" "${saddrs[$i]}" "${scomps_list[$i]:-host metrics only}"
         done
         ask_yn "Look right?" y && break
-        echo "    Let's go through the servers again."
+        echo "    Let's go through the servers again. Enter keeps each one as you just gave it."
+        defaults=("${entered[@]}")
       done
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
         local self_ip scrapers grafanas="" queriers=""
@@ -1092,11 +1287,11 @@ interview() {
   fi
   if has_component grafana; then
     local gpass
-    ask_secret gpass "Grafana admin password"
+    ask_secret gpass "Grafana admin password" grafana_admin_password
     emit grafana_admin_password "$(yaml_quote "${gpass}")"
     if ! has_component prometheus; then
       local purl
-      ask purl "Prometheus URL Grafana should use" "http://prometheus01:9090"
+      ask purl "Prometheus URL Grafana should use" "$(prev grafana_prometheus_url http://prometheus01:9090)"
       emit grafana_prometheus_url "$(yaml_quote "${purl}")"
     fi
   fi
@@ -1106,7 +1301,8 @@ interview() {
   if [[ "${ONLINE}" != true && -z "${OFFLINE_SOURCE}" ]]; then
     section "Offline artifacts"
     local src
-    ask src "Bundle directory or mirror URL (from tools/build-offline-bundle.sh)" "/srv/mm-bundle"
+    src="$(prev artifact_source)"
+    ask src "Bundle directory or mirror URL (from tools/build-offline-bundle.sh)" "${src:-/srv/mm-bundle}"
     OFFLINE_SOURCE="${src}"
   fi
   [[ -n "${OFFLINE_SOURCE}" ]] && emit artifact_source "$(yaml_quote "${OFFLINE_SOURCE}")"
@@ -1115,6 +1311,17 @@ interview() {
 }
 
 resolve_answers() {
+  if [[ "${EDIT_ANSWERS}" == true ]]; then
+    # --edit: the questions again, with the saved answers (or --answers FILE) as defaults.
+    local from="${ANSWERS:-${SAVED_ANSWERS}}"
+    [[ -r "${from}" ]] || die "There are no earlier answers to change (${from}). Run ./install.sh without --edit first."
+    section "Answers"
+    info "Going through the answers in ${from} again."
+    load_previous "${from}"
+    ANSWERS=""
+    ask_and_save
+    return 0
+  fi
   if [[ -n "${ANSWERS}" ]]; then
     return
   fi
@@ -1133,21 +1340,40 @@ resolve_answers() {
     fi
     return 0
   fi
-  if [[ -r "${SAVED_ANSWERS}" ]] && section "Answers" && ask_yn "Reuse the answers from the last run (${SAVED_ANSWERS})?" y; then
-    ANSWERS="${SAVED_ANSWERS}"
-    [[ -n "${OFFLINE_SOURCE}" ]] || OFFLINE_SOURCE="$(yaml_get artifact_source "${ANSWERS}")"
-    return 0
+  if [[ -r "${SAVED_ANSWERS}" ]]; then
+    local how
+    section "Answers"
+    info "This server has answers from an earlier run in ${SAVED_ANSWERS}."
+    ask_choice how "What would you like to do with them?" "Use them as they are" \
+      "Use them as they are" "Go through them and change what you need" "Start again with blank answers"
+    case "${how}" in
+      "Use them as they are")
+        ANSWERS="${SAVED_ANSWERS}"
+        [[ -n "${OFFLINE_SOURCE}" ]] || OFFLINE_SOURCE="$(yaml_get artifact_source "${ANSWERS}")"
+        return 0 ;;
+      "Go through them"*)
+        load_previous "${SAVED_ANSWERS}" ;;
+    esac
   fi
+  ask_and_save
+}
+
+# Run the interview and save what it gives, keeping the old answers as a .bak.
+ask_and_save() {
   local tmp
   tmp="$(mktemp "${CONFIG_DIR}/answers.XXXXXX")"
   interview "${tmp}"
+  [[ "${EDITING}" == true ]] && carry_over_answers "${PREV_FILE}" "${tmp}"
+  chmod 0600 "${tmp}"
+  local backup=""
   if [[ -f "${SAVED_ANSWERS}" ]]; then
-    cp -p "${SAVED_ANSWERS}" "${SAVED_ANSWERS}.${RUN_ID}.bak"
+    backup="${SAVED_ANSWERS}.${RUN_ID}.bak"
+    cp -p "${SAVED_ANSWERS}" "${backup}"
   fi
   mv "${tmp}" "${SAVED_ANSWERS}"
   chmod 0600 "${SAVED_ANSWERS}"
   ANSWERS="${SAVED_ANSWERS}"
-  info "Saved your answers to ${SAVED_ANSWERS}"
+  info "Saved your answers to ${SAVED_ANSWERS}${backup:+ (the earlier ones are in ${backup})}"
 }
 
 save_answers_copy() {
