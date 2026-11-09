@@ -808,8 +808,9 @@ interview() {
         emit tls_key_file "$(yaml_quote "${key}")"
         emit tls_chain_file "$(yaml_quote "${chain}")"
       else
-        local dir
-        ask_path dir "Directory holding <server name>.crt/.key or tls.crt/tls.key" "/etc/pki/tls/mattermost-src" dir
+        local dir sname="${MM_SITE_URL#*://}"
+        sname="${sname%%[/:]*}"
+        ask_path dir "Directory holding ${sname:-<server name>}.crt/.key or tls.crt/tls.key" "/etc/pki/tls/mattermost-src" dir
         emit tls_source_dir "$(yaml_quote "${dir}")"
       fi
     fi
