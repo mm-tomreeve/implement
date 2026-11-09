@@ -28,6 +28,16 @@
         name: common
         tasks_from: plan
 
+    - name: Check the scenario got the components it expects
+      ansible.builtin.assert:
+        that:
+          - render_expect_selected | default([]) | difference(mmd_selected) | length == 0
+          - render_expect_not_selected | default([]) | intersect(mmd_selected) | length == 0
+        fail_msg: >-
+          Selected {{ mmd_selected }}. Expected {{ render_expect_selected | default([]) }}
+          and not {{ render_expect_not_selected | default([]) }}.
+        quiet: true
+
     - name: Fake what an install would have produced
       ansible.builtin.set_fact:
         mmd_secrets: {db_password: x, opensearch_admin_password: x, opensearch_mattermost_password: x, grafana_admin_password: x, replication_password: x}

@@ -65,7 +65,7 @@ watch, so you don't pick them yourself.
 | postgres_exporter | `postgres_exporter` | Added next to PostgreSQL |
 | nginx-prometheus-exporter | `nginx_exporter` | Added next to Nginx |
 | elasticsearch_exporter | `opensearch_exporter` | Added next to OpenSearch |
-| blackbox_exporter | `blackbox_exporter` | On the monitoring server: checks the site, its certificate and the Calls port from outside |
+| blackbox_exporter | `blackbox_exporter` | On the monitoring server, when there's a site URL or a Calls server to check: checks the site, its certificate and the Calls port from outside |
 
 Three more roles do the plumbing. `common` handles OS checks, firewall rules, SELinux, fapolicyd
 and working out how the pieces connect. `artifacts` finds, downloads and verifies the tarballs,

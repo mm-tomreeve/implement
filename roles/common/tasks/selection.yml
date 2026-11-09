@@ -38,6 +38,16 @@
            + (['node_exporter'] if _with_exporters else [])
            + (['postgres_exporter'] if _with_exporters and 'postgresql' in _base_selection else [])
            + (['nginx_exporter'] if _with_exporters and 'nginx' in _base_selection else [])
-           + (['opensearch_exporter'] if _with_exporters and 'opensearch' in _base_selection else [])
-           + (['blackbox_exporter'] if 'prometheus' in _base_selection else [])) | list }}
+           + (['opensearch_exporter'] if _with_exporters and 'opensearch' in _base_selection else [])) | list }}
     mmd_profiles_used: "{{ _req_profiles }}"
+
+# A task of its own because monitoring_site_url's default looks at mmd_selected.
+- name: Add blackbox_exporter when there's a site or Calls port to check
+  ansible.builtin.set_fact:
+    mmd_selected: "{{ mmd_component_order | select('in', mmd_selected + ['blackbox_exporter']) | list }}"
+  when:
+    - "'prometheus' in mmd_selected"
+    - >-
+      monitoring_site_url | length > 0
+      or 'rtcd' in mmd_selected
+      or monitoring_estate | selectattr('components', 'contains', 'rtcd') | list | length > 0

@@ -1,0 +1,12 @@
+---
+# Render scenario: Mattermost and monitoring on one server with no rtcd and no
+# monitoring_site_url, so blackbox_exporter is kept only because the site URL
+# defaults to mattermost_site_url.
+render_host: chat01
+render_ram: 8000
+render_cpus: 4
+deploy_name: chat-small
+deploy_profiles: [core, monitoring]
+mattermost_site_url: https://chat01.example.internal
+tls_mode: later
+render_expect_selected: [blackbox_exporter]
