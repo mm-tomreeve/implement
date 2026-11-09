@@ -441,7 +441,7 @@ below from that list. Only modules that actually exist get alerts and dashboards
 | rtcd | its built-in metrics | 8045 |
 | Prometheus and Grafana | their own metrics | 9090, 3000 |
 | The site, as users see it | blackbox_exporter fetching `/api/v4/system/ping` and checking the certificate | local |
-| Calls media port | blackbox_exporter opening a TCP connection to each rtcd server | local |
+| Calls media port | blackbox_exporter opening a TCP connection to each rtcd server's media port (UDP and reachability from users' networks aren't tested) | local |
 
 Prometheus scrapes every 30 seconds and keeps 15 days. Every target is labelled with its server's
 name, so an alert says "disk 85% full on db01" rather than giving you an IP and a port.
@@ -624,7 +624,7 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 
 | Check | Info | Warning | Critical | For | What to do |
 |---|---|---|---|---|---|
-| Calls media port unreachable `calls-port-unreachable` |  |  | < 1 | 3m | Calls will connect but carry no audio. Check rtcd is running and the firewall allows the media port. |
+| Calls media port closed `calls-port-unreachable` |  |  | < 1 | 3m | Calls may connect but carry no audio. Check rtcd is running and listening on the media port, and the firewall allows it. |
 | rtcd CPU usage `rtcd-cpu` | > 60% | > 80% | > 95% | 10m | Calls will start to stutter. Add CPU or another rtcd server. |
 | rtcd open file descriptors `rtcd-fds` | > 70% | > 80% | > 90% | 10m | rtcd opens a socket per connection. Raise LimitNOFILE in the rtcd unit, or add another rtcd server. |
 | UDP receive buffer overflows `udp-buffer-errors` |  | > 0/s | > 50/s | 5m | Media packets are being lost before rtcd reads them. Check net.core.rmem_max and CPU on the host. |
