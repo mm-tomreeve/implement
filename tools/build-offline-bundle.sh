@@ -120,7 +120,7 @@ if [[ "${WITH_RPMS}" == true ]]; then
   log "Downloading prerequisite RPMs"
   mkdir -p "${OUT}/rpms"
   dnf download --resolve --alldeps --destdir "${OUT}/rpms" \
-    ansible-core python3 gnupg2 tar curl policycoreutils-python-utils firewalld openssl
+    ansible-core python3 gnupg2 tar curl policycoreutils-python-utils firewalld openssl iproute
 fi
 
 log "Packing ${OUT}.tar.gz"

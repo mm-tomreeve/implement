@@ -13,6 +13,9 @@ OUT="${REPO_DIR}/tests/smoke/out"
 
 KEEP="${KEEP:-false}"
 cleanup() {
+  # Keep the installer's logs, so a failed run (in CI especially) can be read afterwards.
+  mkdir -p "${OUT}"
+  "${ENGINE}" exec "${NAME}" tar -C /var/log -c mattermost-implement 2>/dev/null | tar -C "${OUT}" -x 2>/dev/null || true
   if [[ "${KEEP}" == true ]]; then echo "==> KEEP=true, container ${NAME} left running"; return; fi
   "${ENGINE}" rm -f "${NAME}" >/dev/null 2>&1 || true
 }
@@ -35,7 +38,11 @@ done
 
 echo "==> Installing"
 in_box 'rm -rf /opt/mmd && cp -r /src /opt/mmd && rm -rf /opt/mmd/collections'
-in_box 'cd /opt/mmd && ./install.sh --answers tests/smoke/answers-core.yml --non-interactive --yes'
+# GitHub rate-limits anonymous API calls to 60 an hour. Pass your token through if you have one set.
+token=()
+[[ -n "${GITHUB_TOKEN:-}" ]] && token=(-e "GITHUB_TOKEN=${GITHUB_TOKEN}")
+"${ENGINE}" exec "${token[@]+"${token[@]}"}" "${NAME}" \
+  bash -c 'cd /opt/mmd && ./install.sh --answers tests/smoke/answers-core.yml --non-interactive --yes'
 
 echo "==> Re-running the tests"
 in_box 'cd /opt/mmd && ./install.sh --verify-only --non-interactive'
