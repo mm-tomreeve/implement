@@ -976,19 +976,30 @@ interview() {
     emit mattermost_opensearch_password "$(yaml_quote "${ospass}")"
   fi
 
-  if has_component prometheus; then
+  # Grafana builds its alerts and dashboards from the same server list Prometheus
+  # scrapes, so a Grafana server without Prometheus needs the list too.
+  if has_component prometheus || has_component grafana; then
     section "Monitoring the estate"
-    info "We can build Prometheus jobs, tiered alerts (info, warning, critical) and dashboards"
-    info "in Grafana for every server in this Mattermost estate. This server is included already."
-    if ask_yn "Build monitors, alerts and dashboards for the estate?" y; then
+    local build_q="Build monitors, alerts and dashboards for the estate?" site_q="Site URL users reach (checked from here; blank = skip)"
+    if has_component prometheus; then
+      info "We can build Prometheus jobs, tiered alerts (info, warning, critical) and dashboards"
+      info "in Grafana for every server in this Mattermost estate. This server is included already."
+    else
+      info "We can build tiered alerts (info, warning, critical) and dashboards in Grafana for every"
+      info "server in this Mattermost estate. This server is included already."
+      info "Give the same site URL and server names as on the Prometheus server."
+      build_q="Build alerts and dashboards for the estate?"
+      site_q="Site URL the Prometheus server checks (blank = none)"
+    fi
+    if ask_yn "${build_q}" y; then
       emit monitoring_alerts_enabled true
       emit monitoring_dashboards_enabled true
       local site_default="" site ca joined
       has_component mattermost && site_default="${MM_SITE_URL:-}"
       info "${C_DIM}This is Mattermost's Site URL, including https://, e.g. https://chat.example.com${C_OFF}"
-      ask_url site "Site URL users reach (checked from here; blank = skip)" "${site_default}" optional
+      ask_url site "${site_q}" "${site_default}" optional
       emit monitoring_site_url "$(yaml_quote "${site}")"
-      if [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" y; then
+      if has_component prometheus && [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" y; then
         ask_path ca "Path to that CA certificate on this server (blank = don't verify)" "" file optional
         if [[ -n "${ca}" ]]; then
           emit monitoring_site_ca_file "$(yaml_quote "${ca}")"
@@ -1055,13 +1066,15 @@ interview() {
         echo "    Let's go through the servers again."
       done
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
+        echo "monitoring_estate:" >> "${answers_out}"
+        printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
+      fi
+      if [[ ${#estate_lines[@]} -gt 0 ]] && has_component prometheus; then
         local self_ip scrapers grafanas="" queriers=""
         self_ip="$(primary_ip)"
         while [[ -z "${self_ip}" ]]; do
           ask self_ip "This server's address, as the other servers see it" ""
         done
-        echo "monitoring_estate:" >> "${answers_out}"
-        printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
         # Every Prometheus in the estate scrapes every server, so they all go in
         # monitoring_scrape_sources. Grafana and other Prometheus servers query this one.
         scrapers="${self_ip}"
