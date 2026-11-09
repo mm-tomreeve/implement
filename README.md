@@ -200,6 +200,11 @@ Install the database, Calls and search servers first, in any order, then the app
 monitoring. The app server needs the database password from db01's secrets file, and the search CA
 (`/etc/opensearch/certs/root-ca.pem`) copied over from search01.
 
+To run Grafana on a server of its own, give it the same `monitoring_site_url` and
+`monitoring_estate` as the Prometheus server, with the Prometheus server added as
+`components: [prometheus]`, and point `grafana_prometheus_url` at it. Grafana builds its alerts and
+dashboards from that list, and the instance labels come from the names, so they have to match.
+
 Files the answer file points at have to be on the server before you start: the licence, the search
 CA, the TLS certificate and key (or `tls_source_dir`) and `monitoring_site_ca_file`. The plan checks
 each one is there and stops, naming the setting, if it isn't, so a wrong path never leaves a server
