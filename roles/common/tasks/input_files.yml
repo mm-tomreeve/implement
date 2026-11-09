@@ -1,0 +1,98 @@
+---
+# Files the answer file points at have to be on this server before we start, so
+# a wrong path stops the plan instead of the deploy half way through. Runs from
+# the plan and at the start of a deploy, not from verify or report, so tidying
+# the source files away after an install doesn't break those.
+# Files a role creates during the run (the local OpenSearch CA) aren't listed.
+- name: List the files the answer file points at
+  ansible.builtin.set_fact:
+    _input_files: "{{ _candidates | selectattr('needed') | selectattr('path') | list }}"
+  vars:
+    _tls: "{{ 'nginx' in mmd_selected and tls_mode == 'provided' }}"
+    _candidates:
+      - setting: mattermost_license_file
+        path: "{{ mattermost_license_file }}"
+        needed: "{{ 'mattermost' in mmd_selected }}"
+        dir: false
+        hint: Copy the Enterprise licence there, or leave the setting blank and upload it in the System Console later.
+      - setting: mattermost_opensearch_ca_file
+        path: "{{ mattermost_opensearch_ca_file }}"
+        needed: "{{ 'mattermost' in mmd_selected }}"
+        dir: false
+        hint: Copy /etc/opensearch/certs/root-ca.pem from the search server there.
+      - setting: tls_cert_file
+        path: "{{ tls_cert_file }}"
+        needed: "{{ _tls }}"
+        dir: false
+        hint: Put the certificate there, or set tls_mode to later to carry on without TLS for now.
+      - setting: tls_key_file
+        path: "{{ tls_key_file }}"
+        needed: "{{ _tls }}"
+        dir: false
+        hint: Put the private key there, or set tls_mode to later to carry on without TLS for now.
+      - setting: tls_chain_file
+        path: "{{ tls_chain_file }}"
+        needed: "{{ _tls }}"
+        dir: false
+        hint: Put the intermediate chain there, or leave the setting blank if the certificate file has it.
+      - setting: tls_source_dir
+        path: "{{ tls_source_dir }}"
+        needed: "{{ _tls and tls_cert_file | length == 0 }}"
+        dir: true
+        hint: Create it and put the certificate and key in it, or set tls_mode to later to carry on without TLS for now.
+      - setting: monitoring_site_ca_file
+        path: "{{ monitoring_site_ca_file }}"
+        needed: "{{ 'blackbox_exporter' in mmd_selected }}"
+        dir: false
+        hint: Copy the CA that signed the site's certificate there, or set monitoring_site_tls_verify to false.
+
+- name: Look for the files the answer file points at
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    follow: true
+    get_checksum: false
+  loop: "{{ _input_files }}"
+  loop_control:
+    label: "{{ item.setting }}: {{ item.path }}"
+  register: _input_stat
+
+- name: Stop if a file the answer file points at is missing
+  ansible.builtin.assert:
+    that: item.stat.isdir | default(false) if item.item.dir else item.stat.isreg | default(false)
+    fail_msg: >-
+      {{ item.item.setting }} is {{ item.item.path }}, but there's no {{ 'directory' if item.item.dir else 'file' }}
+      there. {{ item.item.hint }}
+    quiet: true
+  loop: "{{ _input_stat.results }}"
+  loop_control:
+    label: "{{ item.item.setting }}: {{ item.item.path }}"
+
+# Same names the nginx role looks for (roles/nginx/tasks/tls.yml).
+- name: Look for a certificate and key in tls_source_dir
+  ansible.builtin.stat:
+    path: "{{ tls_source_dir }}/{{ item }}"
+    follow: true
+    get_checksum: false
+  loop:
+    - "{{ nginx_server_name }}.crt"
+    - "{{ nginx_server_name }}.key"
+    - tls.crt
+    - tls.key
+  register: _input_tls_dir
+  when: _input_files | selectattr('setting', 'eq', 'tls_source_dir') | list | length > 0
+
+- name: Stop if tls_source_dir has no certificate or no key
+  ansible.builtin.assert:
+    that:
+      - _found | select('search', '\.crt$') | list | length > 0
+      - _found | select('search', '\.key$') | list | length > 0
+    fail_msg: >-
+      tls_source_dir is {{ tls_source_dir }}, but it doesn't hold both a certificate and a key. Put
+      {{ nginx_server_name }}.crt/.key (or tls.crt/tls.key) in it, or set tls_mode to later to carry on
+      without TLS for now.
+    quiet: true
+  vars:
+    _found: >-
+      {{ _input_tls_dir.results | selectattr('stat', 'defined') | selectattr('stat.isreg', 'defined')
+         | selectattr('stat.isreg') | map(attribute='item') | list }}
+  when: _input_tls_dir is not skipped

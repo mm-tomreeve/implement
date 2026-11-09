@@ -534,6 +534,30 @@ ask_addresses() {
   printf -v "${__var}" '%s' "${__addrs}"
 }
 
+ask_path() {
+  # ask_path VAR "Question" "default" file|dir [optional]
+  # Re-asks until the path exists here, so a typo shows up now rather than at the plan.
+  local __var="$1" prompt="$2" default="$3" kind="$4" optional="${5:-}" __path what=file
+  [[ "${kind}" == dir ]] && what=directory
+  while true; do
+    ask __path "${prompt}" "${default}"
+    [[ -z "${__path}" && -n "${optional}" ]] && break
+    if [[ -n "${__path}" ]]; then
+      [[ "${kind}" == dir && -d "${__path}" ]] && break
+      [[ "${kind}" == file && -f "${__path}" ]] && break
+      if [[ -n "${optional}" ]]; then
+        echo "    There's no ${what} at ${__path} on this server. Copy it there and give the path again, or leave it blank."
+      else
+        echo "    There's no ${what} at ${__path} on this server. Copy it there and press Enter, or give another path."
+        default="${__path}"
+      fi
+    else
+      echo "    A path is needed."
+    fi
+  done
+  printf -v "${__var}" '%s' "${__path}"
+}
+
 ask_secret() {
   local __var="$1" prompt="$2" reply
   read -r -s -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt} ${C_DIM}(blank = generate)${C_OFF}: " reply || no_input
@@ -648,7 +672,7 @@ interview() {
       emit mattermost_version "$(yaml_quote "${version}")"
     fi
     if [[ "${edition}" == enterprise ]]; then
-      ask lic "Path to the licence file on this server (blank to add later)" ""
+      ask_path lic "Path to the licence file on this server (blank to add later)" "" file optional
       emit mattermost_license_file "$(yaml_quote "${lic}")"
     fi
 
@@ -708,7 +732,8 @@ interview() {
       if [[ "${osurl}" == https://* ]]; then
         local ospass osca
         read -r -s -p "    Password for the OpenSearch 'mattermost' user: " ospass || no_input; echo
-        ask osca "Path to the search CA certificate on this server" "/etc/pki/tls/certs/opensearch-ca.pem"
+        ask_path osca "Path to the search CA on this server (copy /etc/opensearch/certs/root-ca.pem from the search server)" \
+          "/etc/pki/tls/certs/opensearch-ca.pem" file
         emit mattermost_opensearch_password "$(yaml_quote "${ospass}")"
         emit mattermost_opensearch_ca_file "$(yaml_quote "${osca}")"
       fi
@@ -755,15 +780,15 @@ interview() {
       ask_choice how "Where is it" "two files" "two files" "a directory"
       if [[ "${how}" == "two files" ]]; then
         local cert key chain
-        ask cert "Certificate file (PEM, full chain preferred)" ""
-        ask key "Private key file" ""
-        ask chain "Intermediate chain file (blank if already in the certificate)" ""
+        ask_path cert "Certificate file (PEM, full chain preferred)" "" file
+        ask_path key "Private key file" "" file
+        ask_path chain "Intermediate chain file (blank if already in the certificate)" "" file optional
         emit tls_cert_file "$(yaml_quote "${cert}")"
         emit tls_key_file "$(yaml_quote "${key}")"
         emit tls_chain_file "$(yaml_quote "${chain}")"
       else
         local dir
-        ask dir "Directory holding <server name>.crt/.key or tls.crt/tls.key" "/etc/pki/tls/mattermost-src"
+        ask_path dir "Directory holding <server name>.crt/.key or tls.crt/tls.key" "/etc/pki/tls/mattermost-src" dir
         emit tls_source_dir "$(yaml_quote "${dir}")"
       fi
     fi
@@ -808,7 +833,7 @@ interview() {
       ask site "Site URL users reach (checked from here; blank = skip)" "${site_default}"
       emit monitoring_site_url "$(yaml_quote "${site}")"
       if [[ "${site}" == https://* ]] && ! ask_yn "Does the site's certificate chain to a CA this server already trusts?" y; then
-        ask ca "Path to that CA certificate on this server (blank = don't verify)" ""
+        ask_path ca "Path to that CA certificate on this server (blank = don't verify)" "" file optional
         if [[ -n "${ca}" ]]; then
           emit monitoring_site_ca_file "$(yaml_quote "${ca}")"
         else

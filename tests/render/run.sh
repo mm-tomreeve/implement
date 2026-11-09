@@ -22,4 +22,10 @@ for scenario in "${HERE}"/scenarios/*.yml; do
     echo "FAIL ${OUT}/${name}.log"; rc=1
   fi
 done
+printf '%-28s ' input-files
+if "${PLAYBOOK}" -i "${REPO_DIR}/inventory/localhost.yml" "${HERE}/input_files.yml" > "${OUT}/input-files.log" 2>&1; then
+  echo "ok"
+else
+  echo "FAIL ${OUT}/input-files.log"; rc=1
+fi
 exit "${rc}"

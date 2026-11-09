@@ -1,0 +1,101 @@
+---
+# Runs roles/common/tasks/input_files.yml against real files in a scratch
+# directory: files that are there pass, and each missing one stops the check
+# with its setting named. tests/render/run.sh runs it after the scenarios.
+- name: Check the answer file's input files
+  hosts: localhost
+  gather_facts: false
+  vars:
+    mattermost_site_url: https://chat.example.com
+  tasks:
+    - name: Make a scratch directory
+      ansible.builtin.tempfile:
+        state: directory
+      register: _scratch
+
+    - name: Create the directories
+      ansible.builtin.file:
+        path: "{{ _scratch.path }}/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop: [certs, empty]
+
+    - name: Create the files
+      ansible.builtin.copy:
+        dest: "{{ _scratch.path }}/{{ item }}"
+        content: "test\n"
+        mode: "0600"
+      loop: [licence, search-ca.pem, site.crt, site.key, site-ca.pem, certs/tls.crt, certs/chain.crt, certs/chat.example.com.key]
+
+    - name: Run each case
+      ansible.builtin.include_tasks: input_files_case.yml
+      loop_control:
+        loop_var: case
+        label: "{{ case.name }}"
+      loop:
+        - name: every file present
+          vars:
+            mmd_selected: [mattermost, nginx, prometheus, blackbox_exporter]
+            mattermost_license_file: "{{ _scratch.path }}/licence"
+            mattermost_opensearch_ca_file: "{{ _scratch.path }}/search-ca.pem"
+            tls_mode: provided
+            tls_cert_file: "{{ _scratch.path }}/site.crt"
+            tls_key_file: "{{ _scratch.path }}/site.key"
+            monitoring_site_ca_file: "{{ _scratch.path }}/site-ca.pem"
+        - name: certificate directory with mixed names
+          vars:
+            mmd_selected: [nginx]
+            tls_mode: provided
+            tls_source_dir: "{{ _scratch.path }}/certs"
+        - name: missing files on a server that doesn't use them
+          vars:
+            mmd_selected: [postgresql]
+            mattermost_opensearch_ca_file: "{{ _scratch.path }}/nope.pem"
+            tls_mode: provided
+            tls_cert_file: "{{ _scratch.path }}/nope.crt"
+            tls_key_file: "{{ _scratch.path }}/nope.key"
+        - name: missing certificate with TLS later
+          vars:
+            mmd_selected: [nginx]
+            tls_mode: later
+            tls_cert_file: "{{ _scratch.path }}/nope.crt"
+        - name: missing search CA
+          fails: [mattermost_opensearch_ca_file]
+          vars:
+            mmd_selected: [mattermost]
+            mattermost_opensearch_ca_file: "{{ _scratch.path }}/nope.pem"
+        - name: licence path is a directory
+          fails: [mattermost_license_file]
+          vars:
+            mmd_selected: [mattermost]
+            mattermost_license_file: "{{ _scratch.path }}/certs"
+        - name: missing key and chain, both reported
+          fails: [tls_key_file, tls_chain_file]
+          vars:
+            mmd_selected: [nginx]
+            tls_mode: provided
+            tls_cert_file: "{{ _scratch.path }}/site.crt"
+            tls_key_file: "{{ _scratch.path }}/nope.key"
+            tls_chain_file: "{{ _scratch.path }}/nope-chain.crt"
+        - name: missing certificate directory
+          fails: [tls_source_dir]
+          vars:
+            mmd_selected: [nginx]
+            tls_mode: provided
+            tls_source_dir: "{{ _scratch.path }}/nope"
+        - name: certificate directory without a key
+          fails: [tls_source_dir]
+          vars:
+            mmd_selected: [nginx]
+            tls_mode: provided
+            tls_source_dir: "{{ _scratch.path }}/empty"
+        - name: missing site CA
+          fails: [monitoring_site_ca_file]
+          vars:
+            mmd_selected: [prometheus, blackbox_exporter]
+            monitoring_site_ca_file: "{{ _scratch.path }}/nope.pem"
+
+    - name: Remove the scratch directory
+      ansible.builtin.file:
+        path: "{{ _scratch.path }}"
+        state: absent

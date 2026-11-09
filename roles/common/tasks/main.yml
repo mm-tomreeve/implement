@@ -2,6 +2,9 @@
 - name: Plan the deployment
   ansible.builtin.include_tasks: plan.yml
 
+- name: Check the files the answer file points at
+  ansible.builtin.include_tasks: input_files.yml
+
 - name: Load or generate secrets
   ansible.builtin.include_tasks: secrets.yml
 
