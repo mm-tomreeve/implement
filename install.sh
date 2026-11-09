@@ -630,9 +630,15 @@ ask_password() {
 
 ask_yn() {
   local prompt="$1" default="${2:-y}" reply
-  read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt} ${C_DIM}[${C_OFF}${C_YEL}$( [[ ${default} == y ]] && echo Y/n || echo y/N )${C_OFF}${C_DIM}]${C_OFF}: " reply || no_input
-  reply="${reply:-${default}}"
-  [[ "${reply,,}" == y* ]]
+  while true; do
+    read -r -p "  ${C_YEL}${C_BOLD}?${C_OFF} ${prompt} ${C_DIM}[${C_OFF}${C_YEL}$( [[ ${default} == y ]] && echo Y/n || echo y/N )${C_OFF}${C_DIM}]${C_OFF}: " reply || no_input
+    reply="${reply:-${default}}"
+    case "${reply,,}" in
+      y|yes) return 0 ;;
+      n|no) return 1 ;;
+    esac
+    echo "    Please answer y or n."
+  done
 }
 
 ask_choice() {
