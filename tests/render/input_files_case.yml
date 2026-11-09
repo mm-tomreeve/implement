@@ -1,0 +1,40 @@
+---
+# One case for input_files.yml. case.fails lists the settings the check must
+# name; without it the check must pass.
+# Every setting is set on every case, so nothing leaks from the one before.
+- name: "Set the answers | {{ case.name }}"
+  ansible.builtin.set_fact:
+    mmd_selected: "{{ case.vars.mmd_selected }}"
+    tls_mode: "{{ case.vars.tls_mode | default('later') }}"
+    mattermost_license_file: "{{ case.vars.mattermost_license_file | default('') }}"
+    mattermost_opensearch_ca_file: "{{ case.vars.mattermost_opensearch_ca_file | default('') }}"
+    tls_cert_file: "{{ case.vars.tls_cert_file | default('') }}"
+    tls_key_file: "{{ case.vars.tls_key_file | default('') }}"
+    tls_chain_file: "{{ case.vars.tls_chain_file | default('') }}"
+    tls_source_dir: "{{ case.vars.tls_source_dir | default('') }}"
+    monitoring_site_ca_file: "{{ case.vars.monitoring_site_ca_file | default('') }}"
+
+- name: "Run the check | {{ case.name }}"
+  block:
+    - name: "Check the files | {{ case.name }}"
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: input_files
+
+    - name: "Record a pass | {{ case.name }}"
+      ansible.builtin.set_fact:
+        _case_errors: []
+  rescue:
+    - name: "Record the failures | {{ case.name }}"
+      ansible.builtin.set_fact:
+        _case_errors: >-
+          {{ (ansible_failed_result.results | default([ansible_failed_result]))
+             | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='msg') | list }}
+
+- name: "Compare with what was expected | {{ case.name }}"
+  ansible.builtin.assert:
+    that:
+      - _case_errors | length == case.fails | default([]) | length
+      - case.fails | default([]) | reject('in', _case_errors | join(' ')) | list | length == 0
+    fail_msg: "Expected failures for {{ case.fails | default([]) }}, got {{ _case_errors }}"
+    quiet: true

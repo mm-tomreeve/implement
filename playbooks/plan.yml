@@ -10,6 +10,11 @@
         name: common
         tasks_from: plan
 
+    - name: Check the files the answer file points at
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: input_files
+
     - name: Write the plan for the wrapper
       ansible.builtin.copy:
         dest: "{{ plan_output_file }}"

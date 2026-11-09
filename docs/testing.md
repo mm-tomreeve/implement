@@ -80,6 +80,8 @@ against the defaults.
 the layouts in `tests/render/scenarios/` (core, all-in-one, split app server, database, monitoring,
 and a failed install). It needs no root and no RHEL, and it catches most template and wiring
 mistakes. The output in `tests/render/out/` doubles as sample documents to show a customer.
+It also runs `tests/render/input_files.yml`, which points the answer file's file settings at
+real and missing files in a scratch directory and checks the plan names each missing one.
 
 The smoke test needs podman or docker with privileged containers and internet access. It runs
 `install.sh` non-interactively with `tests/smoke/answers-core.yml`, which turns off firewalld

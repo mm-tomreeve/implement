@@ -200,6 +200,11 @@ Install the database, Calls and search servers first, in any order, then the app
 monitoring. The app server needs the database password from db01's secrets file, and the search CA
 (`/etc/opensearch/certs/root-ca.pem`) copied over from search01.
 
+Files the answer file points at have to be on the server before you start: the licence, the search
+CA, the TLS certificate and key (or `tls_source_dir`) and `monitoring_site_ca_file`. The plan checks
+each one is there and stops, naming the setting, if it isn't, so a wrong path never leaves a server
+half installed. The interactive installer asks again when a path it's given doesn't exist.
+
 Anything only local components use stays on 127.0.0.1 with no firewall opening. Anything another
 server needs is opened to the addresses you list, and nothing else. Validation stops when a list
 is empty but another server has to get in: `postgresql_allowed_clients`, `opensearch_allowed_clients`
