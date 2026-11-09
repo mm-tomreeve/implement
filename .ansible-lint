@@ -1,0 +1,6 @@
+---
+# Roles share mmd_* facts and fw_*/tb_* include vars on purpose, and task
+# names put the item being acted on wherever it reads best.
+skip_list:
+  - var-naming[no-role-prefix]
+  - name[template]
