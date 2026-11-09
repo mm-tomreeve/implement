@@ -6,6 +6,7 @@ the estate and what each one runs. From that it builds:
 - Prometheus jobs for every exporter, labelled with the server's name,
 - outside-in checks of the site (`/api/v4/system/ping`), its certificate and the Calls media port,
 - the alert rules below, in Grafana, in the *Mattermost Implement* folder,
+- log checks against Loki, when the estate ships its logs there ([logging.md](logging.md)),
 - dashboards per module: an estate overview, servers, Mattermost, PostgreSQL, Nginx, OpenSearch and Calls.
 
 Only rules for modules that exist in the estate are created.
@@ -21,6 +22,7 @@ carries these labels:
 | `severity` | `info`, `warning`, `critical` |
 | `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `monitoring` |
 | `mmi_rule` | the check's id, as in the tables below |
+| `signal` | `metrics` (Prometheus) or `logs` (Loki) |
 | `deployment` | `deploy_name` from the answer file |
 
 Rules with no data (a module with no traffic yet, or Mattermost metrics without a licence) stay
@@ -54,6 +56,54 @@ monitoring_alert_overrides:
   swap-used: {tiers: {info: null}}              # drop one tier
 monitoring_alerts_disabled: [host-rebooted]      # drop a check completely
 ```
+
+## Log checks
+
+When servers ship their logs to Loki on the monitoring server, the rules include checks on what the
+logs say. They use the same tiers and labels, and their descriptions carry the LogQL to paste into
+Explore to see the lines behind the alert.
+
+There's no rule for "any error". Mattermost and PostgreSQL both log harmless errors all day
+(unique-key violations, clients going away, plugin chatter), so a count of errors would page
+someone every night and soon be ignored. Instead there are three kinds of log check:
+
+- **Signatures.** One failure mode each, matched on what the log actually says: a Go panic, a
+  PostgreSQL SQLSTATE such as `53300` (too many clients) or `XX001` (corrupt page), systemd's
+  `Scheduled restart job`, Nginx's `connect() failed (111` to Mattermost. Most stay silent for months.
+  The catastrophic ones (panic, corruption, a service systemd gave up on) fire on the first line.
+  The rest count over a window, with tiers.
+- **Errors well above last week.** `mm-log-error-spike` and `pg-log-error-spike` compare the
+  error count in the last 30 minutes with the same 30 minutes a week earlier, so a busy Monday
+  morning is judged against last Monday morning. `logging_alert_baseline_smoothing` (20) is added
+  to last week's count, so a quiet site doesn't alert on 3 errors after 0. Until there's a week of
+  history the count is judged against the smoothing alone.
+- **A new kind of error.** `mm-log-new-error` raises an info alert, one per message, when
+  Mattermost logs an error whose `msg` it hasn't logged in the previous 7 days. It's usually the
+  first sign of a config change, an upgrade or a failing integration. It stays quiet for the first
+  week after Loki is installed, when every error would look new.
+
+Log checks don't repeat the metric checks. PostgreSQL being down, a full disk and an OOM kill already
+alert from Prometheus. The log checks add what metrics can't see: why a service keeps restarting,
+which plugin is crashing, who is failing to log in to the database. They also cover Mattermost on
+sites without an Enterprise licence, where Mattermost's own metrics, and so the `mm-*` metric
+checks, are switched off.
+
+Errors you know about and have accepted can be left out of the last two kinds:
+
+```yaml
+logging_alert_ignore:
+  - "websocket: close 1001"
+  - "Unable to get the file info"
+```
+
+Each entry is a regex matched against the raw line. Signatures ignore the list: if Mattermost
+can't reach its database, you want to know. Thresholds and windows change through
+`monitoring_alert_overrides` like any other check, and `monitoring_alerts_disabled: [mm-log-new-error]`
+switches a check off.
+
+Every log check is tested against real log lines (`examples` in `tools/alert_catalogue.py`): the
+unit tests run its filters on them in Python, and the end-to-end test pushes them into Loki and runs
+the real query.
 
 ## Every check
 
@@ -156,3 +206,62 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 |---|---|---|---|---|---|
 | Prometheus config reload failed `prometheus-config` |  | < 1 |  | 5m | Run `/opt/prometheus/promtool check config /etc/prometheus/prometheus.yml`, then fix and reload. |
 | Scrapes taking too long `prometheus-scrape-slow` | > 5 s | > 10 s |  | 15m | The exporter or the network path is struggling. Dashboards and alerts lag behind reality. |
+| Logs failing to reach Loki `log-ship-failing` |  | > 0/s |  | 10m | Lines queue on disk in /var/lib/otelcol for up to an hour, then they're lost. Check Loki is up and that the monitoring server's firewall lets this server in on port 3100 (`journalctl -u otelcol -n 50`). |
+| Loki refusing log lines `loki-discarding` |  | > 0/s |  | 10m | Log alerts can't see lines Loki throws away. rate_limited or stream_limit: raise the limits in /etc/loki/config.yml or ship less. greater_than_max_sample_age: a collector is sending week-old lines; check its clock. |
+
+### Servers log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| Service restarting over and over `unit-crash-loop` | any service's logs where line matches `Scheduled restart job, restart counter is at`, per `unit` | 15m |  |  | > 2 | 0s | systemd keeps restarting it, so it may look up between checks. Read why it exits: `journalctl -u {{ $labels.unit }} -n 200`. |
+| systemd gave up restarting a service `unit-start-limit` | any service's logs where line matches `Start request repeated too quickly`, per `unit` | 15m |  |  | > 0 | 0s | It stays down until someone acts. Fix the cause (`journalctl -u {{ $labels.unit }} -n 200`), then `systemctl reset-failed {{ $labels.unit }}` and start it. |
+| Service crashed with a core dump `unit-core-dump` | any service's logs where line matches `Main process exited, code=dumped`, per `unit` | 15m |  | > 0 |  | 0s | A segfault or abort, not a clean exit. `coredumpctl list` shows the dump; keep it for the vendor. |
+| Kernel disk or filesystem errors `kernel-io-errors` | `kernel` logs where line matches `I/O error\|EXT4-fs error\|XFS \([^)]+\):.*([Ee]rror\|[Cc]orruption)\|Remounting filesystem read-only\|Aborting journal` | 15m |  |  | > 0 | 0s | Storage is failing or a filesystem is damaged. Read `dmesg -T \| tail -50` and call the storage team before PostgreSQL or Mattermost write anything else there. |
+
+### Mattermost log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| Mattermost logged a fatal error `mm-log-fatal` | `mattermost` logs where `level` is `fatal\|panic\|critical` | 5m |  |  | > 0 | 0s | Mattermost stops, or loses a part of itself, after one of these. Read the lines, then `journalctl -u mattermost -n 100` on the server. |
+| Mattermost crashed (Go panic) `mm-go-panic` | `mattermost` logs where line matches `^(panic: \|fatal error: )` | 10m |  |  | > 0 | 0s | systemd restarts it, but the crash will come back. Save the stack trace (`journalctl -u mattermost --since -15m`) and send it to Mattermost support with the version. |
+| Mattermost can't use its database `mm-log-db` | `mattermost` logs where line matches `Failed to ping DB\|pq: sorry, too many clients\|pq: the database system is (shutting down\|starting up\|in recovery mode)\|driver: bad connection\|dial tcp [^ \"]+:5432: connect: connection refused` and `level` is `error\|critical\|fatal` | 10m |  | > 10 | > 100 | 2m | Check PostgreSQL is up and accepting connections from this server, and max_connections. This is the only database alert when the database is outside the monitored estate. |
+| Mattermost can't write uploaded files `mm-log-storage` | `mattermost` logs where line matches `no space left on device\|read-only file system\|/var/opt/mattermost/data[^\"]*: permission denied\|Access Denied\.\|The specified bucket does not exist\|The AWS Access Key Id you provided does not exist\|The request signature we calculated does not match` and `level` is `warn\|error\|critical\|fatal` | 10m |  | > 0 | > 20 | 0s | Uploads are failing. For local or NFS storage check free space, mounts and ownership of the data directory. For S3 check the bucket, the keys and the endpoint. |
+| Mattermost plugin crashing `mm-log-plugin-crash` | `mattermost` logs where `msg` is `Health check failed for plugin\|Failed to restart plugin`, per `id` | 1h |  | > 0 | > 2 | 0s | Mattermost restarts a crashed plugin, and disables it after repeated crashes. Check the plugin's own log lines just before, and its version against the server version. |
+| Mattermost can't send email `mm-log-smtp` | `mattermost` logs where line matches `unable to connect to the SMTP server\|unable to send hello message\|Error while sending the email` and `level` is `warn\|error` | 30m |  | > 5 |  | 0s | Notifications, invites and password resets aren't going out. Check the SMTP settings in the System Console and that this server can reach the mail server. |
+| Search indexing failing `mm-log-search-index` | `mattermost` logs where `msg` is `Worker: Failed to index batch for job\|Worker: Failed to setup bulk processor` | 15m |  | > 0 |  | 0s | New messages won't show in search results. Check OpenSearch is green and has disk space, then run a bulk index from System Console > Environment > Elasticsearch. |
+| Mattermost background job failed `mm-log-jobs` | `mattermost` logs where `msg` is `.*job execution error` | 1h |  | > 0 |  | 0s | Data retention, compliance exports, LDAP sync and the like run as jobs. Find which one failed in System Console > Jobs or in the lines around this one. |
+| Mattermost errors well above last week `mm-log-error-spike` | `mattermost` logs where `level` is `error`, as a multiple of the same window a week earlier | 30m | > 3x | > 5x | > 10x | 15m | Something changed. Look at the top error messages now (Explore, or the Mattermost logs dashboard) and compare with last week. Add known, accepted errors to logging_alert_ignore. |
+| New kind of Mattermost error `mm-log-new-error` | `mattermost` logs where `level` is `error`, per `msg`, not seen in the 7 days before | 1h | > 0 |  |  | 0s | Usually the first sign of a config change, an upgrade or a failing integration. Harmless ones can go in logging_alert_ignore. This rule stays quiet for the first week after Loki is installed. |
+
+### PostgreSQL log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| PostgreSQL data corruption or PANIC `pg-log-corruption` | `postgresql` logs where line matches `"state_code":\s*"XX00[12]"\|"error_severity":\s*"PANIC"` | 10m |  |  | > 0 | 0s | Stop and think before restarting anything. Check the storage (`dmesg`), take a copy of the data directory, and plan a restore from backup for the affected table or index. |
+| PostgreSQL I/O or disk full errors `pg-log-io` | `postgresql` logs where `state_code` is `58...\|53100` | 10m |  |  | > 0 | 0s | Free space on the data volume first (WAL in pg_wal is the usual culprit when a replica is down), then check the storage for errors. |
+| PostgreSQL refusing connections `pg-log-conn-refused` | `postgresql` logs where `state_code` is `53300` | 5m |  |  | > 0 | 0s | Requests are failing now. Look for idle sessions in pg_stat_activity and app servers with oversized pools. pg-connections is the early warning for this. |
+| PostgreSQL login failures `pg-log-auth-failures` | `postgresql` logs where `state_code` is `28P01\|28000`, per `remote_host` | 10m |  | > 5 | > 50 | 0s | An app server with an old password after a rotation, or someone guessing. Known app servers: fix mattermost_db_password there. Unknown addresses: tighten postgresql_allowed_clients. |
+| PostgreSQL recovered from a crash `pg-log-crash-recovery` | `postgresql` logs where line matches `database system was (not properly shut down\|interrupted)` | 30m |  | > 0 |  | 0s | It replayed WAL and carried on, so data should be intact. Find out why it went down: `journalctl -u postgresql -b -1`, the OOM killer, or a host reboot. |
+| PostgreSQL checkpoints too frequent `pg-log-checkpoints` | `postgresql` logs where line matches `checkpoints are occurring too frequently` | 1h | > 0 |  |  | 0s | Write-heavy periods (imports, bulk deletes) fill WAL faster than max_wal_size allows. Raise max_wal_size if this keeps happening. |
+| PostgreSQL errors well above last week `pg-log-error-spike` | `postgresql` logs where `error_severity` is `ERROR\|FATAL\|PANIC` and `state_code` isn't `23...\|40P01\|28...\|57P0[1-3]`, as a multiple of the same window a week earlier | 30m | > 3x | > 5x | > 10x | 15m | Group the errors by state_code in Explore to see what changed. A new Mattermost version or a failing integration are the usual causes. |
+
+### Nginx log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| Nginx can't reach Mattermost `nginx-log-upstream-down` | `nginx` logs where line matches `connect\(\) failed \(111: Connection refused\) while connecting to upstream\|no live upstreams while connecting to upstream` | 5m |  | > 10 | > 100 | 2m | Users are getting 502s. Check Mattermost is running on the upstream servers and listening on 8065. |
+| Mattermost too slow to answer Nginx `nginx-log-upstream-slow` | `nginx` logs where line matches `upstream timed out \(110: Connection timed out\) while reading response header from upstream` | 10m |  | > 10 |  | 0s | Users see 504s. Usually slow database queries; check PostgreSQL CPU and long-running queries. |
+| Nginx out of connections or files `nginx-log-limits` | `nginx` logs where line matches `worker_connections are not enough\|Too many open files` | 10m |  | > 0 |  | 0s | This is why connections get dropped. Raise worker_connections and LimitNOFILE for Nginx. |
+
+### OpenSearch log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| OpenSearch ran out of heap `os-log-oom` | `opensearch` logs where line matches `java\.lang\.OutOfMemoryError` | 15m |  |  | > 0 | 0s | The JVM is unstable after this; restart OpenSearch, then raise opensearch_heap_mb or add memory. |
+| OpenSearch circuit breaker tripping `os-log-circuit-breaker` | `opensearch` logs where line matches `CircuitBreakingException` | 10m |  | > 5 |  | 0s | Searches or indexing are being refused. The heap is too small for the load; raise opensearch_heap_mb. |
+
+### Monitoring log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| Server stopped sending logs `log-host-silent` | a server in the estate that sent no log lines at all | 15m |  | < 1 |  | 15m | The log alerts are blind for this server. Check `systemctl status otelcol` on it, that logging_loki_url points here, and that otel_collector_host_name matches its name in monitoring_estate. |

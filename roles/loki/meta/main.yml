@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: loki
+  author: mattermost-implement
+  description: Grafana Loki, single binary on the filesystem, for the estate's logs
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions: [all]
+dependencies: []

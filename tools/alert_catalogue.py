@@ -18,10 +18,15 @@ Fields:
   action      what the on-call person should do. Goes in the description.
   quiet       true when the series only exist once there is traffic (a call, a login
               failure, a licence). The e2e check reports these instead of failing.
+  requires    "logs" for checks that only make sense when the estate ships logs to Loki.
+
+Log checks (LOG_CATALOGUE, further down) query Loki instead. See the notes there.
 
 Thresholds and "for" can be changed per site with monitoring_alert_overrides in the
 answer file, and any rule switched off with monitoring_alerts_disabled.
 """
+
+import json
 
 FS = 'fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs|autofs|fuse.*",mountpoint!~"/(run|dev|sys|proc)($|/.*)|/etc/.+"'
 # Virtual and tunnel interfaces the kernel creates on its own; never interesting.
@@ -32,7 +37,8 @@ CATALOGUE = [
     # ------------------------------------------------------------------ every server
     {
         "id": "target-down", "module": "host", "title": "Metrics target down",
-        "expr": 'up{job!~"blackbox.*"}',
+        # The log shipper has its own, gentler checks (log-ship-failing, log-host-silent).
+        "expr": 'up{job!~"blackbox.*|otelcol"}',
         "direction": "below", "tiers": {"critical": 1}, "for": "3m", "unit": "",
         "summary": "{{ $labels.job }} on {{ $labels.instance }} is not answering Prometheus",
         "action": "The server or the exporter is down, or the firewall is blocking the scrape. "
@@ -469,4 +475,412 @@ CATALOGUE = [
     },
 ]
 
+# ------------------------------------------------------------------ log pipeline (Prometheus)
+CATALOGUE += [
+    {
+        "id": "log-ship-failing", "module": "monitoring", "title": "Logs failing to reach Loki",
+        "requires": "logs",
+        # Counter names gained a _total suffix in newer collector releases.
+        "expr": 'sum by (instance) (rate({__name__=~"otelcol_exporter_send_failed_log_records(_total)?"}[5m]))',
+        "direction": "above", "tiers": {"warning": 0}, "for": "10m", "unit": "/s",
+        "summary": "The log shipper on {{ $labels.instance }} can't deliver to Loki",
+        "action": "Lines queue on disk in /var/lib/otelcol for up to an hour, then they're lost. Check Loki is up and "
+                  "that the monitoring server's firewall lets this server in on port 3100 (`journalctl -u otelcol -n 50`).",
+        "quiet": True,
+    },
+    {
+        "id": "loki-discarding", "module": "monitoring", "title": "Loki refusing log lines",
+        "requires": "logs",
+        "expr": "sum by (reason) (rate(loki_discarded_samples_total[10m]))",
+        "direction": "above", "tiers": {"warning": 0}, "for": "10m", "unit": "/s",
+        "summary": "Loki is discarding log lines ({{ $labels.reason }})",
+        "action": "Log alerts can't see lines Loki throws away. rate_limited or stream_limit: raise the limits in "
+                  "/etc/loki/config.yml or ship less. greater_than_max_sample_age: a collector is sending week-old lines; "
+                  "check its clock.",
+        "quiet": True,
+    },
+]
+
 SEVERITIES = ("info", "warning", "critical")
+
+
+# ------------------------------------------------------------------ log checks (Loki)
+#
+# Each entry is one failure mode, matched on what the logs actually say. There is no
+# "any error" rule: Mattermost and PostgreSQL log harmless errors all day. "Errors went
+# up" is judged against the same time last week instead (kind: baseline), and a brand
+# new kind of error only raises an info alert (kind: new).
+#
+# Extra fields on top of the ones above:
+#   source      service_name of the stream: mattermost | postgresql | nginx | opensearch |
+#               kernel, or None for every stream (systemd's messages about any unit)
+#   parser      "json" to parse each line (Mattermost and PostgreSQL jsonlog), or None
+#   match       [(field, regex)] that must all match. field "line" is a substring search
+#               of the raw line; any other field is a parsed JSON field and must match
+#               whole. Regexes stay in the subset RE2 and Python agree on, so the tests can
+#               run them on the examples.
+#   exclude     [(field, regex)] that must not match
+#   by          labels to group by on top of host_name (one alert per value)
+#   window      how far back each evaluation counts
+#   kind        count (default), baseline (now / a week ago), new (not seen in a week),
+#               silent (servers that sent nothing; built from the estate)
+#   examples / counter_examples
+#               real lines this rule must and must not match. tests/ checks both, and the
+#               e2e self-test pushes the examples into Loki and runs the rule against them.
+#
+# %(name)s in a regex is filled from the estate: db_port, data_dir (both regex-escaped).
+
+def _mm(level, msg, caller, **fields):
+    """A Mattermost JSON log line, in the field order Mattermost writes."""
+    line = {"timestamp": "2026-11-09 10:14:03.512 Z", "level": level, "msg": msg, "caller": caller}
+    line.update(fields)
+    return json.dumps(line, separators=(",", ":"))
+
+
+def _pg(severity, code, message, **fields):
+    """A PostgreSQL jsonlog line (PG 15+), with the fields PostgreSQL writes for a client backend.
+    PostgreSQL leaves out fields that don't apply; pass None to drop one."""
+    line = {"timestamp": "2026-11-09 10:14:03.512 UTC", "user": "mmuser", "dbname": "mattermost", "pid": 4242,
+            "remote_host": "10.10.1.12", "remote_port": 50412, "session_id": "672f2b1b.1092", "line_num": 3,
+            "ps": "SELECT", "session_start": "2026-11-09 10:02:03 UTC", "vxid": "5/1203", "txid": 0,
+            "error_severity": severity, "state_code": code, "message": message}
+    line.update(fields)
+    for key, value in (("application_name", ""), ("backend_type", "client backend"), ("query_id", 0)):
+        line.setdefault(key, value)
+    return json.dumps({k: v for k, v in line.items() if v is not None}, separators=(",", ":"))
+
+
+MM_DB_ERRORS = (r"Failed to ping DB|pq: sorry, too many clients|pq: the database system is "
+                r"(shutting down|starting up|in recovery mode)|driver: bad connection|"
+                r"dial tcp [^ \"]+:%(db_port)s: connect: connection refused")
+MM_STORAGE_ERRORS = (r"no space left on device|read-only file system|%(data_dir)s[^\"]*: permission denied|"
+                     r"Access Denied\.|The specified bucket does not exist|"
+                     r"The AWS Access Key Id you provided does not exist|The request signature we calculated does not match")
+PG_ERROR = ("error_severity", "ERROR|FATAL|PANIC")
+
+LOG_CATALOGUE = [
+    # ------------------------------------------------------------------ mattermost
+    {
+        "id": "mm-log-fatal", "module": "mattermost", "title": "Mattermost logged a fatal error",
+        "source": "mattermost", "parser": "json", "match": [("level", "fatal|panic|critical")],
+        "window": "5m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "Mattermost on {{ $labels.host_name }} logged {{ printf \"%.0f\" $values.A.Value }} fatal or critical entries",
+        "action": "Mattermost stops, or loses a part of itself, after one of these. Read the lines, then "
+                  "`journalctl -u mattermost -n 100` on the server.",
+        "examples": [_mm("fatal", "Error starting server", "commands/server.go:120",
+                         error="failed to initialize platform: cannot create store: dial tcp 10.10.1.11:5432: connect: connection refused")],
+        "counter_examples": [_mm("error", "Failed to ping DB", "sql/sql_utils.go:55", error="context deadline exceeded")],
+    },
+    {
+        "id": "mm-go-panic", "module": "mattermost", "title": "Mattermost crashed (Go panic)",
+        # Only on stderr, so only in the journal: mattermost.log never sees it.
+        "source": "mattermost", "parser": None, "match": [("line", r"^(panic: |fatal error: )")],
+        "window": "10m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "Mattermost on {{ $labels.host_name }} crashed with a Go panic",
+        "action": "systemd restarts it, but the crash will come back. Save the stack trace "
+                  "(`journalctl -u mattermost --since -15m`) and send it to Mattermost support with the version.",
+        "examples": ["panic: runtime error: invalid memory address or nil pointer dereference",
+                     "fatal error: concurrent map writes"],
+        "counter_examples": ["goroutine 1 [running]:", _mm("error", "panic: recovered in handler", "web/handlers.go:150")],
+    },
+    {
+        "id": "mm-log-db", "module": "mattermost", "title": "Mattermost can't use its database",
+        "source": "mattermost", "parser": "json",
+        "match": [("line", MM_DB_ERRORS), ("level", "error|critical|fatal")],
+        "window": "10m", "direction": "above", "tiers": {"warning": 10, "critical": 100}, "for": "2m", "unit": "",
+        "summary": "Mattermost on {{ $labels.host_name }} logged {{ printf \"%.0f\" $values.A.Value }} database connection errors in 10 minutes",
+        "action": "Check PostgreSQL is up and accepting connections from this server, and max_connections. "
+                  "This is the only database alert when the database is outside the monitored estate.",
+        "examples": [
+            _mm("error", "Failed to ping DB", "sql/sql_utils.go:55", database="master", **{"retrying in seconds": 10},
+                error="dial tcp 10.10.1.11:5432: connect: connection refused"),
+            _mm("error", "Unable to get the channel", "app/channel.go:2101",
+                error="failed to find Channel: pq: sorry, too many clients already"),
+        ],
+        "counter_examples": [_mm("info", "Pinging SQL", "sql/sql_utils.go:46", database="master", attempt=1),
+                             _mm("error", "Failed to send", "app/x.go:1", error="dial tcp 10.0.0.25:587: connect: connection refused")],
+    },
+    {
+        "id": "mm-log-storage", "module": "mattermost", "title": "Mattermost can't write uploaded files",
+        "source": "mattermost", "parser": "json",
+        "match": [("line", MM_STORAGE_ERRORS), ("level", "warn|error|critical|fatal")],
+        "window": "10m", "direction": "above", "tiers": {"warning": 0, "critical": 20}, "for": "0s", "unit": "",
+        "summary": "Mattermost on {{ $labels.host_name }} failed to write to its file store {{ printf \"%.0f\" $values.A.Value }} times",
+        "action": "Uploads are failing. For local or NFS storage check free space, mounts and ownership of the data "
+                  "directory. For S3 check the bucket, the keys and the endpoint.",
+        "examples": [_mm("error", "Unable to upload file(s).", "web/context.go:131", path="/api/v4/files", err_where="WriteFile",
+                         http_code=500, error="WriteFile: Encountered an error writing to file storage., open "
+                         "/var/opt/mattermost/data/20261109/teams/noteam/a.png: no space left on device")],
+        "counter_examples": [_mm("debug", "You do not have the appropriate permissions.", "web/context.go:126", http_code=403)],
+    },
+    {
+        "id": "mm-log-plugin-crash", "module": "mattermost", "title": "Mattermost plugin crashing",
+        "source": "mattermost", "parser": "json", "by": ["id"],
+        "match": [("msg", "Health check failed for plugin|Failed to restart plugin")],
+        "window": "1h", "direction": "above", "tiers": {"warning": 0, "critical": 2}, "for": "0s", "unit": "",
+        "summary": "Plugin {{ $labels.id }} on {{ $labels.host_name }} failed {{ printf \"%.0f\" $values.A.Value }} health checks in an hour",
+        "action": "Mattermost restarts a crashed plugin, and disables it after repeated crashes. Check the plugin's "
+                  "own log lines just before, and its version against the server version.",
+        "examples": [_mm("warn", "Health check failed for plugin", "plugin/health_check.go:59", id="com.mattermost.calls",
+                         error="connection is shut down")],
+        "counter_examples": [_mm("debug", "Plugin health check job starting.", "plugin/health_check.go:31")],
+    },
+    {
+        "id": "mm-log-smtp", "module": "mattermost", "title": "Mattermost can't send email",
+        "source": "mattermost", "parser": "json",
+        "match": [("line", "unable to connect to the SMTP server|unable to send hello message|Error while sending the email"),
+                  ("level", "warn|error")],
+        "window": "30m", "direction": "above", "tiers": {"warning": 5}, "for": "0s", "unit": "",
+        "summary": "Mattermost on {{ $labels.host_name }} failed to send {{ printf \"%.0f\" $values.A.Value }} emails in 30 minutes",
+        "action": "Notifications, invites and password resets aren't going out. Check the SMTP settings in the System "
+                  "Console and that this server can reach the mail server.",
+        "examples": [_mm("error", "Error while sending the email", "email/email_batching.go:271",
+                         error="unable to connect to the SMTP server: dial tcp 10.0.0.25:587: i/o timeout")],
+        "counter_examples": [_mm("warn", "Unable to convert html body to text", "mail/mail.go:320")],
+    },
+    {
+        "id": "mm-log-search-index", "module": "mattermost", "title": "Search indexing failing",
+        "source": "mattermost", "parser": "json",
+        "match": [("msg", "Worker: Failed to index batch for job|Worker: Failed to setup bulk processor")],
+        "window": "15m", "direction": "above", "tiers": {"warning": 0}, "for": "0s", "unit": "",
+        "summary": "Search indexing failed on {{ $labels.host_name }} ({{ printf \"%.0f\" $values.A.Value }} batches)",
+        "action": "New messages won't show in search results. Check OpenSearch is green and has disk space, then run a "
+                  "bulk index from System Console > Environment > Elasticsearch.",
+        "examples": [_mm("error", "Worker: Failed to index batch for job", "common/indexing_job.go:296",
+                         error="request failed: 429 Too Many Requests")],
+        "counter_examples": [_mm("warn", "Worker: Error occurred while trying to claim job", "common/indexing_job.go:232")],
+    },
+    {
+        "id": "mm-log-jobs", "module": "mattermost", "title": "Mattermost background job failed",
+        "source": "mattermost", "parser": "json", "match": [("msg", ".*job execution error")],
+        "window": "1h", "direction": "above", "tiers": {"warning": 0}, "for": "0s", "unit": "",
+        "summary": "A background job failed on {{ $labels.host_name }}",
+        "action": "Data retention, compliance exports, LDAP sync and the like run as jobs. Find which one failed in "
+                  "System Console > Jobs or in the lines around this one.",
+        "examples": [_mm("error", "SimpleWorker: job execution error", "jobs/base_workers.go:86", worker="ExportDelete",
+                         error="failed to delete export files")],
+        "counter_examples": [_mm("warn", "SimpleWorker experienced an error while trying to claim job", "jobs/base_workers.go:78")],
+    },
+    {
+        "id": "mm-log-error-spike", "module": "mattermost", "title": "Mattermost errors well above last week",
+        "source": "mattermost", "parser": "json", "match": [("level", "error")], "kind": "baseline",
+        "window": "30m", "direction": "above", "tiers": {"info": 3, "warning": 5, "critical": 10}, "for": "15m", "unit": "x",
+        "summary": "Mattermost on {{ $labels.host_name }} is logging {{ printf \"%.1f\" $values.A.Value }}x the errors of this time last week",
+        "action": "Something changed. Look at the top error messages now (Explore, or the Mattermost logs dashboard) and "
+                  "compare with last week. Add known, accepted errors to logging_alert_ignore.",
+        "examples": [_mm("error", "Unable to get the channel", "app/channel.go:2101", error="not found")],
+        "counter_examples": [_mm("warn", "Unable to get the channel", "app/channel.go:2101")],
+    },
+    {
+        "id": "mm-log-new-error", "module": "mattermost", "title": "New kind of Mattermost error",
+        "source": "mattermost", "parser": "json", "match": [("level", "error")], "kind": "new", "by": ["msg"],
+        "window": "1h", "direction": "above", "tiers": {"info": 0}, "for": "0s", "unit": "",
+        "summary": "Mattermost logged an error not seen in the last week: {{ $labels.msg }}",
+        "action": "Usually the first sign of a config change, an upgrade or a failing integration. Harmless ones can go "
+                  "in logging_alert_ignore. This rule stays quiet for the first week after Loki is installed.",
+        "examples": [_mm("error", "Failed to post webhook", "app/webhook.go:120", error="context deadline exceeded")],
+        "counter_examples": [_mm("info", "Server is started", "app/server.go:1201")],
+    },
+
+    # ------------------------------------------------------------------ postgresql (jsonlog)
+    {
+        "id": "pg-log-corruption", "module": "postgresql", "title": "PostgreSQL data corruption or PANIC",
+        "source": "postgresql", "parser": "json",
+        "match": [("line", r'"state_code":\s*"XX00[12]"|"error_severity":\s*"PANIC"')],
+        "window": "10m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "PostgreSQL on {{ $labels.host_name }} reported corruption or a PANIC",
+        "action": "Stop and think before restarting anything. Check the storage (`dmesg`), take a copy of the data "
+                  "directory, and plan a restore from backup for the affected table or index.",
+        "examples": [_pg("ERROR", "XX001", "invalid page in block 4123 of relation base/16384/16521"),
+                     _pg("PANIC", "XX000", "could not locate a valid checkpoint record")],
+        "counter_examples": [_pg("ERROR", "23505", "duplicate key value violates unique constraint \"idx_posts\"")],
+    },
+    {
+        "id": "pg-log-io", "module": "postgresql", "title": "PostgreSQL I/O or disk full errors",
+        "source": "postgresql", "parser": "json", "match": [("state_code", "58...|53100")],
+        "window": "10m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "PostgreSQL on {{ $labels.host_name }} can't read or write its files",
+        "action": "Free space on the data volume first (WAL in pg_wal is the usual culprit when a replica is down), "
+                  "then check the storage for errors.",
+        "examples": [_pg("ERROR", "53100", "could not extend file \"base/16384/16521\": No space left on device"),
+                     _pg("ERROR", "58030", "could not read block 12 in file \"base/16384/16521\": Input/output error")],
+        "counter_examples": [_pg("ERROR", "57014", "canceling statement due to statement timeout")],
+    },
+    {
+        "id": "pg-log-conn-refused", "module": "postgresql", "title": "PostgreSQL refusing connections",
+        "source": "postgresql", "parser": "json", "match": [("state_code", "53300")],
+        "window": "5m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "PostgreSQL on {{ $labels.host_name }} turned away {{ printf \"%.0f\" $values.A.Value }} connections: too many clients",
+        "action": "Requests are failing now. Look for idle sessions in pg_stat_activity and app servers with oversized "
+                  "pools. pg-connections is the early warning for this.",
+        "examples": [_pg("FATAL", "53300", "sorry, too many clients already"),
+                     _pg("FATAL", "53300", "remaining connection slots are reserved for roles with the SUPERUSER attribute")],
+        "counter_examples": [_pg("FATAL", "28P01", "password authentication failed for user \"mmuser\"")],
+    },
+    {
+        "id": "pg-log-auth-failures", "module": "postgresql", "title": "PostgreSQL login failures",
+        "source": "postgresql", "parser": "json", "match": [("state_code", "28P01|28000")], "by": ["remote_host"],
+        "window": "10m", "direction": "above", "tiers": {"warning": 5, "critical": 50}, "for": "0s", "unit": "",
+        "summary": "{{ printf \"%.0f\" $values.A.Value }} failed logins to PostgreSQL on {{ $labels.host_name }} from {{ $labels.remote_host }}",
+        "action": "An app server with an old password after a rotation, or someone guessing. Known app servers: fix "
+                  "mattermost_db_password there. Unknown addresses: tighten postgresql_allowed_clients.",
+        "examples": [_pg("FATAL", "28P01", "password authentication failed for user \"mmuser\""),
+                     _pg("FATAL", "28000", "no pg_hba.conf entry for host \"10.10.9.9\", user \"mmuser\", database \"mattermost\", SSL encryption")],
+        "counter_examples": [_pg("LOG", "00000", "connection authorized: user=mmuser database=mattermost")],
+    },
+    {
+        "id": "pg-log-crash-recovery", "module": "postgresql", "title": "PostgreSQL recovered from a crash",
+        "source": "postgresql", "parser": "json",
+        "match": [("line", "database system was (not properly shut down|interrupted)")],
+        "window": "30m", "direction": "above", "tiers": {"warning": 0}, "for": "0s", "unit": "",
+        "summary": "PostgreSQL on {{ $labels.host_name }} started after a crash or power loss",
+        "action": "It replayed WAL and carried on, so data should be intact. Find out why it went down: "
+                  "`journalctl -u postgresql -b -1`, the OOM killer, or a host reboot.",
+        "examples": [_pg("LOG", "00000", "database system was not properly shut down; automatic recovery in progress",
+                         user=None, dbname=None, remote_host=None, remote_port=None, ps=None, application_name=None,
+                         backend_type="startup")],
+        "counter_examples": [_pg("LOG", "00000", "database system is ready to accept connections")],
+    },
+    {
+        "id": "pg-log-checkpoints", "module": "postgresql", "title": "PostgreSQL checkpoints too frequent",
+        "source": "postgresql", "parser": "json", "match": [("line", "checkpoints are occurring too frequently")],
+        "window": "1h", "direction": "above", "tiers": {"info": 0}, "for": "0s", "unit": "",
+        "summary": "PostgreSQL on {{ $labels.host_name }} is checkpointing more often than it should",
+        "action": "Write-heavy periods (imports, bulk deletes) fill WAL faster than max_wal_size allows. Raise max_wal_size "
+                  "if this keeps happening.",
+        "examples": [_pg("LOG", "00000", "checkpoints are occurring too frequently (12 seconds apart)",
+                         hint="Consider increasing the configuration parameter \"max_wal_size\".")],
+        "counter_examples": [_pg("LOG", "00000", "checkpoint complete: wrote 1203 buffers (7.3%)")],
+    },
+    {
+        "id": "pg-log-error-spike", "module": "postgresql", "title": "PostgreSQL errors well above last week",
+        "source": "postgresql", "parser": "json", "match": [PG_ERROR], "kind": "baseline",
+        # Unique violations are normal for Mattermost; deadlocks and logins have their own checks;
+        # admin shutdowns happen on every restart.
+        "exclude": [("state_code", "23...|40P01|28...|57P0[1-3]")],
+        "window": "30m", "direction": "above", "tiers": {"info": 3, "warning": 5, "critical": 10}, "for": "15m", "unit": "x",
+        "summary": "PostgreSQL on {{ $labels.host_name }} is logging {{ printf \"%.1f\" $values.A.Value }}x the errors of this time last week",
+        "action": "Group the errors by state_code in Explore to see what changed. A new Mattermost version or a "
+                  "failing integration are the usual causes.",
+        "examples": [_pg("ERROR", "57014", "canceling statement due to statement timeout")],
+        "counter_examples": [_pg("ERROR", "23505", "duplicate key value violates unique constraint \"idx_posts\"")],
+    },
+
+    # ------------------------------------------------------------------ every server (journal)
+    {
+        "id": "unit-crash-loop", "module": "host", "title": "Service restarting over and over",
+        "source": None, "parser": None, "by": ["unit"],
+        "match": [("line", "Scheduled restart job, restart counter is at")],
+        "window": "15m", "direction": "above", "tiers": {"critical": 2}, "for": "0s", "unit": "",
+        "summary": "{{ $labels.unit }} on {{ $labels.host_name }} restarted {{ printf \"%.0f\" $values.A.Value }} times in 15 minutes",
+        "action": "systemd keeps restarting it, so it may look up between checks. Read why it exits: "
+                  "`journalctl -u {{ $labels.unit }} -n 200`.",
+        "examples": ["mattermost.service: Scheduled restart job, restart counter is at 3."],
+        "counter_examples": ["Started mattermost.service - Mattermost."],
+    },
+    {
+        "id": "unit-start-limit", "module": "host", "title": "systemd gave up restarting a service",
+        "source": None, "parser": None, "by": ["unit"],
+        "match": [("line", "Start request repeated too quickly")],
+        "window": "15m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "systemd stopped trying to start {{ $labels.unit }} on {{ $labels.host_name }}",
+        "action": "It stays down until someone acts. Fix the cause (`journalctl -u {{ $labels.unit }} -n 200`), then "
+                  "`systemctl reset-failed {{ $labels.unit }}` and start it.",
+        "examples": ["rtcd.service: Start request repeated too quickly."],
+        "counter_examples": ["rtcd.service: Scheduled restart job, restart counter is at 1."],
+    },
+    {
+        "id": "unit-core-dump", "module": "host", "title": "Service crashed with a core dump",
+        "source": None, "parser": None, "by": ["unit"],
+        "match": [("line", "Main process exited, code=dumped")],
+        "window": "15m", "direction": "above", "tiers": {"warning": 0}, "for": "0s", "unit": "",
+        "summary": "{{ $labels.unit }} on {{ $labels.host_name }} crashed (core dumped)",
+        "action": "A segfault or abort, not a clean exit. `coredumpctl list` shows the dump; keep it for the vendor.",
+        "examples": ["rtcd.service: Main process exited, code=dumped, status=11/SEGV"],
+        "counter_examples": ["rtcd.service: Main process exited, code=exited, status=0/SUCCESS"],
+    },
+    {
+        "id": "kernel-io-errors", "module": "host", "title": "Kernel disk or filesystem errors",
+        "source": "kernel", "parser": None,
+        "match": [("line", r"I/O error|EXT4-fs error|XFS \([^)]+\):.*([Ee]rror|[Cc]orruption)|"
+                           r"Remounting filesystem read-only|Aborting journal")],
+        "window": "15m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "The kernel on {{ $labels.host_name }} reported disk or filesystem errors",
+        "action": "Storage is failing or a filesystem is damaged. Read `dmesg -T | tail -50` and call the storage team "
+                  "before PostgreSQL or Mattermost write anything else there.",
+        "examples": ["blk_update_request: I/O error, dev sdb, sector 2048 op 0x1:(WRITE) flags 0x800 phys_seg 1 prio class 0",
+                     "EXT4-fs error (device dm-2): ext4_find_entry:1658: inode #2: comm mattermost: reading directory lblock 0",
+                     "XFS (dm-0): Metadata corruption detected at xfs_buf_ioend+0x51/0x1c0"],
+        "counter_examples": ["EXT4-fs (dm-2): mounted filesystem with ordered data mode. Quota mode: none."],
+    },
+
+    # ------------------------------------------------------------------ nginx (error.log)
+    {
+        "id": "nginx-log-upstream-down", "module": "nginx", "title": "Nginx can't reach Mattermost",
+        "source": "nginx", "parser": None,
+        "match": [("line", r"connect\(\) failed \(111: Connection refused\) while connecting to upstream|"
+                           r"no live upstreams while connecting to upstream")],
+        "window": "5m", "direction": "above", "tiers": {"warning": 10, "critical": 100}, "for": "2m", "unit": "",
+        "summary": "Nginx on {{ $labels.host_name }} got {{ printf \"%.0f\" $values.A.Value }} refused connections from Mattermost in 5 minutes",
+        "action": "Users are getting 502s. Check Mattermost is running on the upstream servers and listening on 8065.",
+        "examples": ['2026/11/09 10:14:03 [error] 1234#1234: *5678 connect() failed (111: Connection refused) while '
+                     'connecting to upstream, client: 10.0.0.5, server: chat.example.com, request: "GET /api/v4/users/me '
+                     'HTTP/1.1", upstream: "http://127.0.0.1:8065/api/v4/users/me", host: "chat.example.com"'],
+        "counter_examples": ['2026/11/09 10:14:03 [info] 1234#1234: *5678 client closed connection while waiting for request'],
+    },
+    {
+        "id": "nginx-log-upstream-slow", "module": "nginx", "title": "Mattermost too slow to answer Nginx",
+        "source": "nginx", "parser": None,
+        "match": [("line", r"upstream timed out \(110: Connection timed out\) while reading response header from upstream")],
+        "window": "10m", "direction": "above", "tiers": {"warning": 10}, "for": "0s", "unit": "",
+        "summary": "{{ printf \"%.0f\" $values.A.Value }} requests timed out waiting for Mattermost on {{ $labels.host_name }}",
+        "action": "Users see 504s. Usually slow database queries; check PostgreSQL CPU and long-running queries.",
+        "examples": ['2026/11/09 10:14:03 [error] 1234#1234: *5678 upstream timed out (110: Connection timed out) while '
+                     'reading response header from upstream, client: 10.0.0.5, server: chat.example.com'],
+        "counter_examples": ['2026/11/09 10:14:03 [error] 1234#1234: *5678 upstream timed out (110: Connection timed out) '
+                             'while reading upstream, client: 10.0.0.5'],
+    },
+    {
+        "id": "nginx-log-limits", "module": "nginx", "title": "Nginx out of connections or files",
+        "source": "nginx", "parser": None, "match": [("line", "worker_connections are not enough|Too many open files")],
+        "window": "10m", "direction": "above", "tiers": {"warning": 0}, "for": "0s", "unit": "",
+        "summary": "Nginx on {{ $labels.host_name }} ran out of worker connections or file descriptors",
+        "action": "This is why connections get dropped. Raise worker_connections and LimitNOFILE for Nginx.",
+        "examples": ["2026/11/09 10:14:03 [alert] 1234#1234: 1024 worker_connections are not enough"],
+        "counter_examples": ["2026/11/09 10:14:03 [notice] 1234#1234: signal process started"],
+    },
+
+    # ------------------------------------------------------------------ opensearch
+    {
+        "id": "os-log-oom", "module": "opensearch", "title": "OpenSearch ran out of heap",
+        "source": "opensearch", "parser": None, "match": [("line", r"java\.lang\.OutOfMemoryError")],
+        "window": "15m", "direction": "above", "tiers": {"critical": 0}, "for": "0s", "unit": "",
+        "summary": "OpenSearch on {{ $labels.host_name }} hit an OutOfMemoryError",
+        "action": "The JVM is unstable after this; restart OpenSearch, then raise opensearch_heap_mb or add memory.",
+        "examples": ["[2026-11-09T10:14:03,512][ERROR][o.o.b.OpenSearchUncaughtExceptionHandler] [search01] fatal error "
+                     "in thread [opensearch[search01][write][T#2]], exiting java.lang.OutOfMemoryError: Java heap space"],
+        "counter_examples": ["[2026-11-09T10:14:03,512][WARN ][o.o.m.j.JvmGcMonitorService] [search01] [gc][1203] overhead, "
+                             "spent [1.2s] collecting in the last [1.5s]"],
+    },
+    {
+        "id": "os-log-circuit-breaker", "module": "opensearch", "title": "OpenSearch circuit breaker tripping",
+        "source": "opensearch", "parser": None, "match": [("line", "CircuitBreakingException")],
+        "window": "10m", "direction": "above", "tiers": {"warning": 5}, "for": "0s", "unit": "",
+        "summary": "OpenSearch on {{ $labels.host_name }} refused {{ printf \"%.0f\" $values.A.Value }} requests to protect its heap",
+        "action": "Searches or indexing are being refused. The heap is too small for the load; raise opensearch_heap_mb.",
+        "examples": ["[2026-11-09T10:14:03,512][WARN ][r.suppressed] [search01] path: /posts/_search, params: {} "
+                     "org.opensearch.core.common.breaker.CircuitBreakingException: [parent] Data too large"],
+        "counter_examples": ["[2026-11-09T10:14:03,512][WARN ][o.o.c.r.a.DiskThresholdMonitor] [search01] high disk watermark exceeded"],
+    },
+
+    # ------------------------------------------------------------------ the log pipeline itself
+    {
+        "id": "log-host-silent", "module": "monitoring", "title": "Server stopped sending logs",
+        "source": None, "parser": None, "match": [], "kind": "silent",
+        "window": "15m", "direction": "below", "tiers": {"warning": 1}, "for": "15m", "unit": "",
+        "summary": "No logs from {{ $labels.host_name }} for 15 minutes",
+        "action": "The log alerts are blind for this server. Check `systemctl status otelcol` on it, that "
+                  "logging_loki_url points here, and that otel_collector_host_name matches its name in monitoring_estate.",
+        "examples": [], "counter_examples": [],
+    },
+]

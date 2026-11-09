@@ -31,6 +31,11 @@
   ansible.builtin.set_fact:
     _with_exporters: "{{ deploy_monitoring_exporters | bool or 'prometheus' in _base_selection }}"
 
+- name: Ship logs from every server that has a Loki to send to
+  ansible.builtin.set_fact:
+    _with_log_shipping: >-
+      {{ deploy_log_shipping | bool and ('loki' in _base_selection or logging_loki_url | length > 0) }}
+
 - name: Settle the final component list in install order
   ansible.builtin.set_fact:
     mmd_selected: >-
@@ -39,5 +44,11 @@
            + (['postgres_exporter'] if _with_exporters and 'postgresql' in _base_selection else [])
            + (['nginx_exporter'] if _with_exporters and 'nginx' in _base_selection else [])
            + (['opensearch_exporter'] if _with_exporters and 'opensearch' in _base_selection else [])
-           + (['blackbox_exporter'] if 'prometheus' in _base_selection else [])) | list }}
+           + (['blackbox_exporter'] if 'prometheus' in _base_selection else [])
+           + (['otel_collector'] if _with_log_shipping | bool else [])) | list }}
     mmd_profiles_used: "{{ _req_profiles }}"
+    # Why this server's logs stay put, for the plan and the report. Blank when they're shipped.
+    mmd_log_shipping_skipped: >-
+      {{ '' if _with_log_shipping | bool
+         else ('deploy_log_shipping is off' if not (deploy_log_shipping | bool)
+               else 'there is no Loki on this server and logging_loki_url is empty') }}

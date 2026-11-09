@@ -40,6 +40,8 @@
     mmd_prometheus_url: >-
       {{ grafana_prometheus_url if grafana_prometheus_url | length > 0 else 'http://127.0.0.1:' ~ prometheus_port }}
     mmd_exporter_bind: "{{ '0.0.0.0' if monitoring_scrape_sources | length > 0 else '127.0.0.1' }}"
+    mmd_loki_url: >-
+      {{ ('http://127.0.0.1:' ~ loki_port) if 'loki' in mmd_selected else logging_loki_url | regex_replace('/+$', '') }}
     mmd_tls_enabled: "{{ 'nginx' in mmd_selected and tls_mode == 'provided' }}"
     mmd_mattermost_metrics: "{{ mattermost_edition == 'enterprise' }}"
     # The version /opt/mattermost points at now, blank on a first install. Re-runs
@@ -63,7 +65,7 @@
     mmd_estate: >-
       {{ (monitoring_estate | rejectattr('name', 'equalto', ansible_facts['hostname']) | list)
          + [{'name': ansible_facts['hostname'], 'address': '127.0.0.1',
-             'components': mmd_selected | intersect(['mattermost', 'nginx', 'postgresql', 'rtcd', 'opensearch', 'prometheus', 'grafana'])}] }}
+             'components': mmd_selected | intersect(['mattermost', 'nginx', 'postgresql', 'rtcd', 'opensearch', 'prometheus', 'loki', 'grafana'])}] }}
   when: "'prometheus' in mmd_selected or 'grafana' in mmd_selected"
 
 - name: Derive the settings that depend on the facts above

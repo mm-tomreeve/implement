@@ -45,6 +45,21 @@
     (mmd_sizing.ram_have_mb | int) < (mmd_sizing.ram_needed_mb | int)
     or (mmd_sizing.cpus_have | int) < (mmd_sizing.cpus_needed | int)
 
+- name: Add a finding when this server's logs aren't shipped anywhere
+  ansible.builtin.set_fact:
+    mmd_findings: >-
+      {{ mmd_findings + [{
+           'id': 'no-log-shipping',
+           'severity': 'low',
+           'message': 'Logs stay on this server: ' ~ mmd_log_shipping_skipped ~ '.',
+           'advice': 'Set logging_loki_url to the monitoring server (e.g. http://10.10.1.15:3100) and re-run, '
+                     ~ 'so its logs can be searched in Grafana and the log alerts cover it.'}] }}
+  when:
+    - deploy_log_shipping | bool
+    - mmd_log_shipping_skipped | length > 0
+    # Only where a monitoring server watches this one; a standalone server has nowhere to ship to.
+    - monitoring_scrape_sources | length > 0
+
 - name: Add a finding when PostgreSQL may run out of connections
   ansible.builtin.set_fact:
     mmd_findings: >-

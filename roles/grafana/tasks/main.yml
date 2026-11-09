@@ -64,6 +64,34 @@
           editable: false
   notify: Restart grafana
 
+- name: Provision the Loki datasource
+  ansible.builtin.copy:
+    dest: "{{ grafana_conf_dir }}/provisioning/datasources/loki.yml"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      apiVersion: 1
+      datasources:
+        - name: Loki
+          uid: {{ grafana_loki_datasource_uid }}
+          type: loki
+          access: proxy
+          url: {{ mmd_loki_url }}
+          editable: false
+          jsonData:
+            maxLines: 1000
+  when: mmd_loki_url | length > 0
+  notify: Restart grafana
+
+- name: Remove the Loki datasource when there is no Loki
+  ansible.builtin.file:
+    path: "{{ grafana_conf_dir }}/provisioning/datasources/loki.yml"
+    state: absent
+  when: mmd_loki_url | length == 0
+  notify: Restart grafana
+
 - name: Provision the dashboard folder
   ansible.builtin.copy:
     dest: "{{ grafana_conf_dir }}/provisioning/dashboards/mattermost.yml"
@@ -102,6 +130,23 @@
     mode: "0640"
   with_fileglob: "dashboards/*.json"
   when: mmd_estate | default([]) | selectattr('components', 'contains', 'mattermost') | list | length > 0
+
+- name: Install the Mattermost logs dashboard
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', 'loki/mattermost-loki-logs.json') | replace('${DS_LOKI}', grafana_loki_datasource_uid) }}"
+    dest: "{{ grafana_dashboard_dir }}/mattermost-loki-logs.json"
+    owner: root
+    group: "{{ grafana_user }}"
+    mode: "0640"
+  when:
+    - mmd_loki_url | length > 0
+    - monitoring_dashboards_enabled | bool
+
+- name: Remove the logs dashboard when there is no Loki
+  ansible.builtin.file:
+    path: "{{ grafana_dashboard_dir }}/mattermost-loki-logs.json"
+    state: absent
+  when: mmd_loki_url | length == 0 or not (monitoring_dashboards_enabled | bool)
 
 - name: Install the systemd unit
   ansible.builtin.copy:

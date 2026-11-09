@@ -1,0 +1,15 @@
+---
+profile: moderate
+exclude_paths:
+  - collections/
+  - tests/
+  - roles/grafana/files/dashboards/
+skip_list:
+  # Shared helpers loop over include_role with a templated name on purpose.
+  - var-naming[no-role-prefix]
+  # Task names carry templated item names to make the output readable.
+  - name[template]
+  # yamllint reports long lines as warnings; Jinja expressions are hard to wrap.
+  - yaml[line-length]
+warn_list:
+  - experimental

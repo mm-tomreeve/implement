@@ -1,0 +1,98 @@
+---
+- name: Install the OpenTelemetry Collector
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: tarball_install
+  vars:
+    tb_name: otel_collector
+    tb_artifact: "{{ mmd_artifacts.otel_collector }}"
+    tb_user: "{{ otel_collector_user }}"
+    tb_strip: 0
+    tb_creates: otelcol-contrib
+
+- name: Restart when the version changed
+  ansible.builtin.debug:
+    msg: "The collector now points at {{ mmd_artifacts.otel_collector.version }}"
+  changed_when: tb_changed | bool
+  notify: Restart otelcol
+
+- name: Let the collector read the journal
+  ansible.builtin.user:
+    name: "{{ otel_collector_user }}"
+    groups: [systemd-journal]
+    append: true
+
+- name: Create the collector's directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ otel_collector_user }}"
+    mode: "0750"
+  loop:
+    - {path: "{{ otel_collector_conf_dir }}", owner: root}
+    - {path: "{{ otel_collector_data_dir }}", owner: "{{ otel_collector_user }}"}
+
+- name: Write the collector config
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ otel_collector_conf_dir }}/config.yaml"
+    owner: root
+    group: "{{ otel_collector_user }}"
+    mode: "0640"
+    validate: /opt/otel_collector/otelcol-contrib validate --config=%s
+  vars:
+    _otel_files: "{{ otel_collector_sources | select('in', mmd_selected) | list }}"
+    _otel_units: >-
+      {{ ((mmd_selected | select('in', otel_collector_units) | map('extract', otel_collector_units) | list)
+          + otel_collector_journald_extra_units) | unique }}
+  notify: Restart otelcol
+
+# CAP_DAC_READ_SEARCH lets the collector read log files whatever their mode:
+# Mattermost and PostgreSQL create theirs 0600. It can read, never write.
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/otelcol.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      [Unit]
+      Description=OpenTelemetry Collector (ships logs to Loki)
+      After=network-online.target
+
+      [Service]
+      User={{ otel_collector_user }}
+      Group={{ otel_collector_user }}
+      SupplementaryGroups=systemd-journal
+      AmbientCapabilities=CAP_DAC_READ_SEARCH
+      CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+      ExecStart=/opt/otel_collector/otelcol-contrib --config={{ otel_collector_conf_dir }}/config.yaml
+      Restart=always
+      MemoryMax={{ otel_collector_memory_mib | int * 2 }}M
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=read-only
+      ReadWritePaths={{ otel_collector_data_dir }}
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart otelcol
+
+- name: Enable and start the collector
+  ansible.builtin.systemd:
+    name: otelcol
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Open the collector's metrics to Prometheus servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ otel_collector_metrics_port }}", proto: tcp}]
+    fw_sources: "{{ monitoring_scrape_sources }}"
+    fw_public: false
+  when: monitoring_scrape_sources | length > 0

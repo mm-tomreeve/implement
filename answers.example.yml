@@ -180,6 +180,23 @@ grafana_admin_password: ""
 grafana_prometheus_url: ""              # only when Prometheus is on another server
 grafana_allowed_sources: []             # default: open to all, Grafana has its own login
 
+# ---------------------------------------------------------------- logging
+# Every server with a Loki to send to gets an OpenTelemetry Collector that ships its
+# logs: Mattermost, PostgreSQL, Nginx errors, OpenSearch, and the journal for our units.
+# The monitoring profile runs Loki. Point every other server at it:
+logging_loki_url: ""                    # e.g. http://10.10.1.15:3100 (blank = local Loki, or none)
+deploy_log_shipping: true               # false = don't ship this server's logs
+loki_retention_period: 336h             # on the monitoring server; 1-3 GB a day is typical
+loki_allowed_sources: []                # extra senders; monitoring_estate servers are always allowed
+# Must match this server's name in the monitoring server's monitoring_estate.
+otel_collector_host_name: "{{ ansible_facts['hostname'] }}"
+otel_collector_nginx_access: false      # also ship Nginx access logs
+otel_collector_journald_extra_units: [] # e.g. [sshd, sudo] for audit use
+# Errors you have accepted, as regexes. They don't count towards the log error-spike
+# and new-error alerts.
+logging_alert_ignore: []
+#  - "websocket: close 1001"
+
 # ---------------------------------------------------------------- host
 firewall_manage: true
 firewall_zone: public

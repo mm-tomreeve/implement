@@ -76,6 +76,17 @@
   loop: [server.key, server.crt]
   when: mmd_postgresql_ssl | bool
 
+- name: Create the log directory for shipped logs
+  ansible.builtin.file:
+    path: "{{ postgresql_log_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+    # The policy labels /var/log/postgresql postgresql_log_t; set it in case the path differs.
+    setype: "{{ 'postgresql_log_t' if (selinux_manage | bool and ansible_facts['selinux']['status'] | default('disabled') == 'enabled') else omit }}"
+  when: "'otel_collector' in mmd_selected"
+
 - name: Write Mattermost tuning
   ansible.builtin.template:
     src: mattermost.conf.j2

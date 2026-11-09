@@ -4,7 +4,7 @@
 #   tb_name:     prometheus
 #   tb_artifact: "{{ mmd_artifacts.prometheus }}"
 #   tb_user:     prometheus
-#   tb_strip:    1 (0 for tarballs with no top-level directory)
+#   tb_strip:    1 (0 for tarballs with no top-level directory; ignored for .zip)
 # Sets tb_changed so the caller can restart its service.
 - name: "{{ tb_name }} | create the service user"
   ansible.builtin.user:
@@ -26,7 +26,8 @@
     src: "{{ tb_artifact.path }}"
     dest: "/opt/{{ tb_name }}-{{ tb_artifact.version }}"
     remote_src: true
-    extra_opts: ["--strip-components={{ tb_strip | default(1) }}"]
+    # unzip has no --strip-components, and the zips we use have no top-level directory.
+    extra_opts: "{{ [] if tb_artifact.path.endswith('.zip') else ['--strip-components=' ~ (tb_strip | default(1))] }}"
     owner: root
     group: root
     creates: "/opt/{{ tb_name }}-{{ tb_artifact.version }}/{{ tb_creates | default(tb_name) }}"

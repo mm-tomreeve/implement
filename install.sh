@@ -28,8 +28,8 @@ declare -A PROFILE_COMPONENTS=(
   [database]="postgresql"
   [calls]="rtcd"
   [search]="opensearch"
-  [monitoring]="prometheus grafana"
-  [all-in-one]="postgresql mattermost nginx rtcd opensearch prometheus grafana"
+  [monitoring]="prometheus loki grafana"
+  [all-in-one]="postgresql mattermost nginx rtcd opensearch prometheus loki grafana"
 )
 declare -A PROFILE_DESCRIPTIONS=(
   [core]="PostgreSQL, Mattermost and Nginx on one server. Fine for small teams."
@@ -37,10 +37,10 @@ declare -A PROFILE_DESCRIPTIONS=(
   [database]="Dedicated PostgreSQL server for Mattermost."
   [calls]="Dedicated Calls media server (rtcd)."
   [search]="Dedicated OpenSearch node for Enterprise search."
-  [monitoring]="Prometheus and Grafana with the Mattermost dashboards."
+  [monitoring]="Prometheus, Loki and Grafana with the Mattermost dashboards and logs."
   [all-in-one]="Everything on one box. Lab and proof-of-concept use only."
 )
-COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch prometheus grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter)
+COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
 
 ANSWERS=""
 PROFILES=""
@@ -925,9 +925,15 @@ interview() {
         echo "monitoring_estate:" >> "${answers_out}"
         printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
         echo
-        info "Install each of those servers with these two answers so this server can scrape them:"
+        if has_component loki; then
+          info "Install each of those servers with these answers so this server can scrape them"
+          info "and they ship their logs here:"
+        else
+          info "Install each of those servers with these two answers so this server can scrape them:"
+        fi
         info "${C_YEL}deploy_monitoring_exporters: true${C_OFF}"
         info "${C_YEL}monitoring_scrape_sources: [${self_ip}]${C_OFF}"
+        has_component loki && info "${C_YEL}logging_loki_url: http://${self_ip}:3100${C_OFF}"
       fi
     else
       emit monitoring_alerts_enabled false
@@ -945,6 +951,7 @@ interview() {
     fi
   fi
 
+  local first_scraper=""
   if ! has_component prometheus; then
     section "Monitoring"
     info "Exporters let a monitoring server elsewhere watch this one (host, and each component here)."
@@ -954,7 +961,23 @@ interview() {
       ask_addresses scr "Prometheus server addresses allowed to scrape this server" \
         "Prometheus can't scrape the exporters without at least one address."
       emit monitoring_scrape_sources "$(yaml_list "${scr}")"
+      first_scraper="${scr%%,*}"
+      first_scraper="${first_scraper// /}"
+      [[ "${first_scraper}" == */* ]] && first_scraper=""   # a CIDR isn't a server
     fi
+  fi
+
+  if ! has_component loki; then
+    local lurl lurl_default=""
+    [[ -n "${first_scraper}" ]] && lurl_default="http://${first_scraper}:3100"
+    info "${C_DIM}Logs: an OpenTelemetry Collector can ship this server's logs to Loki on the monitoring server.${C_OFF}"
+    while true; do
+      ask lurl "Loki URL for log shipping (none = keep logs on this server)" "${lurl_default:-none}"
+      [[ "${lurl}" == none || -z "${lurl}" ]] && { lurl=""; break; }
+      [[ "${lurl}" == http://* || "${lurl}" == https://* ]] && break
+      echo "    Give a URL such as http://10.10.1.15:3100, or none."
+    done
+    emit logging_loki_url "$(yaml_quote "${lurl}")"
   fi
 
   if [[ "${ONLINE}" != true && -z "${OFFLINE_SOURCE}" ]]; then

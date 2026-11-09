@@ -116,6 +116,9 @@ postgresql_spare_connections: 50
 # auto = on when remote clients are allowed (self-signed certificate).
 postgresql_ssl: auto
 postgresql_data_dir: /var/lib/pgsql/data
+# When this server ships its logs, PostgreSQL writes JSON logs (jsonlog) here instead of
+# the text log in the data directory, so the log alerts can match on SQLSTATE codes.
+postgresql_log_dir: /var/log/postgresql
 # Share of RAM for shared_buffers and effective_cache_size. Lower when Mattermost shares the box.
 postgresql_shared_buffers_pct: "{{ 15 if 'mattermost' in mmd_selected else 25 }}"
 postgresql_effective_cache_pct: "{{ 50 if 'mattermost' in mmd_selected else 75 }}"
@@ -230,3 +233,32 @@ monitoring_site_ca_file: ""
 # A tier set to null is switched off. Rule ids are listed in docs/alerts.md.
 monitoring_alert_overrides: {}
 monitoring_alerts_disabled: []
+
+# ---------------------------------------------------------------- logging
+# An OpenTelemetry Collector goes on every server that has a Loki to send to: Loki
+# on this server, or logging_loki_url. Set this to false to leave one server out.
+deploy_log_shipping: true
+logging_loki_url: ""              # e.g. http://mon01.internal:3100 (blank = local Loki, or none)
+loki_version: "3.7.9"
+loki_port: 3100
+loki_data_dir: /var/lib/loki
+loki_retention_period: 336h       # 14 days
+# Extra senders allowed to push to Loki. Servers in monitoring_estate are always allowed.
+loki_allowed_sources: []
+# The collector config uses component names from 0.165 (file_log, otlp_http); older releases reject it.
+otel_collector_version: "0.165.0"
+otel_collector_metrics_port: 8888
+# The name logs are labelled with. Use the same name as this server's entry in the
+# monitoring server's monitoring_estate, so alerts and the shipping check line up.
+otel_collector_host_name: "{{ ansible_facts['hostname'] }}"
+# Log files to tail when the component is on this server. nginx means error.log only.
+otel_collector_sources: [mattermost, postgresql, nginx, opensearch]
+otel_collector_nginx_access: false        # also ship access.log (large on busy sites)
+otel_collector_journald: true             # systemd's messages about our units, and logs only in the journal
+otel_collector_journald_extra_units: []   # opt-in extras, e.g. [sshd, sudo]
+otel_collector_kernel: true               # kernel messages at error and above (disk and filesystem errors)
+# Log alerts: lines matching these regexes never count towards the error-spike and
+# new-error rules. Use it for errors you know about and have accepted.
+logging_alert_ignore: []
+# Added to last week's count before comparing, so quiet sites don't alert on 2 errors after 0.
+logging_alert_baseline_smoothing: 20

@@ -10,6 +10,7 @@
      {'job': 'rtcd',       'component': 'rtcd',       'port': rtcd_api_port,            'path': '/metrics'},
      {'job': 'prometheus', 'component': 'prometheus', 'port': prometheus_port,          'path': '/metrics'},
      {'job': 'grafana',    'component': 'grafana',    'port': grafana_port,             'path': '/metrics'},
+     {'job': 'loki',       'component': 'loki',       'port': loki_port,                'path': '/metrics'},
    ] %}
 {% set estate = mmd_estate | default([]) %}
 {% set extra_names = prometheus_scrape_targets | map(attribute='job') | list %}
@@ -37,6 +38,18 @@ scrape_configs:
 
 {%   endif %}
 {% endfor %}
+{% if 'loki' in mmd_selected and estate %}
+  # The log shipper on every server. With Loki here, every server is expected to ship.
+  # Its own alerts (log-ship-failing, log-host-silent) cover it, not target-down.
+  - job_name: otelcol
+    metrics_path: /metrics
+    static_configs:
+{%   for s in estate %}
+      - targets: ["{{ s.address }}:{{ otel_collector_metrics_port }}"]
+        labels: {instance: "{{ s.name }}"}
+{%   endfor %}
+
+{% endif %}
 {% if 'blackbox_exporter' in mmd_selected and monitoring_site_url | length > 0 %}
   # The site as users reach it, checked from this server.
   - job_name: blackbox_http
