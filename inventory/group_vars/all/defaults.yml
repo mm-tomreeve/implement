@@ -222,6 +222,7 @@ monitoring_estate: []
 monitoring_alerts_enabled: true
 monitoring_dashboards_enabled: true
 # URL users use. The monitoring server checks <url>/api/v4/system/ping from outside.
+# blackbox_exporter is only installed when this is set or the estate runs rtcd.
 monitoring_site_url: "{{ mattermost_site_url if 'mattermost' in (mmd_selected | default([])) else '' }}"
 # Check the site's certificate against the system trust store (plus the CA file below).
 monitoring_site_tls_verify: true

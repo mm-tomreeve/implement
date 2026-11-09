@@ -11,3 +11,4 @@ tls_mode: provided
 tls_cert_file: /root/lab.crt
 tls_key_file: /root/lab.key
 rtcd_ice_host_override: 203.0.113.10
+render_expect_selected: [blackbox_exporter]

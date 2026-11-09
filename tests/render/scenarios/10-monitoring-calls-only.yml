@@ -1,0 +1,10 @@
+---
+# Render scenario: a monitoring server with no site URL but a Calls server in
+# the estate, so blackbox_exporter is kept for the Calls port check.
+render_host: mon01
+deploy_name: chat-prod
+deploy_profiles: [monitoring]
+monitoring_estate:
+  - {name: app01, address: 10.10.1.12, components: [mattermost, nginx]}
+  - {name: calls01, address: 10.10.1.13, components: [rtcd]}
+render_expect_selected: [blackbox_exporter]
