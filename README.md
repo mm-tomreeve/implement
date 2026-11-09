@@ -97,6 +97,13 @@ Just run `./install.sh`. It asks for the profile, the site URL, which Mattermost
 where uploaded files go, TLS, and whatever the chosen components need. Passwords left blank are
 generated and kept in `/etc/mattermost-implement/secrets.yml` (root only).
 
+On any server that isn't the monitoring server it then asks two questions: should Prometheus on
+the monitoring server watch this one, and should its logs go to Loki there. A yes installs the
+exporters or the log collector, points them at the address you give, and opens only the ports
+Prometheus needs, to that address only. Logs go out to Loki, so nothing opens for them here. At the
+end it prints the line to add on the monitoring server, whose firewall then lets this server in.
+A server running Loki without Prometheus also asks which servers send it logs.
+
 ### From an answer file
 
 Copy [answers.example.yml](answers.example.yml), which documents every setting, and run:
