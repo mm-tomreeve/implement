@@ -18,11 +18,11 @@ mmd_profiles:
     description: Dedicated OpenSearch node for Enterprise search.
     components: [opensearch]
   monitoring:
-    description: Prometheus and Grafana with the Mattermost dashboards.
-    components: [prometheus, grafana]
+    description: Prometheus, Loki and Grafana with the Mattermost dashboards and logs.
+    components: [prometheus, loki, grafana]
   all-in-one:
     description: Everything on one box. Lab and proof-of-concept use only.
-    components: [postgresql, mattermost, nginx, rtcd, opensearch, prometheus, grafana]
+    components: [postgresql, mattermost, nginx, rtcd, opensearch, prometheus, loki, grafana]
 
 # Install order. Things other components depend on come first.
 mmd_component_order:
@@ -36,5 +36,7 @@ mmd_component_order:
   - nginx_exporter
   - opensearch_exporter
   - blackbox_exporter
+  - loki
+  - otel_collector
   - prometheus
   - grafana

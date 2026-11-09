@@ -1,0 +1,7 @@
+---
+loki_user: loki
+loki_conf_dir: /etc/loki
+loki_grpc_port: 9096
+# Lines older than this are refused, so a collector that was down for a long time
+# doesn't push stale history (and stale alerts) on reconnect.
+loki_reject_older_than: 168h

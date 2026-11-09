@@ -16,10 +16,11 @@ dashboards directory. Standard library only.
 
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from alert_catalogue import BLOCKDEV, CATALOGUE, FS, NETDEV, SEVERITIES  # noqa: E402
+from alert_catalogue import BLOCKDEV, CATALOGUE, FS, LOG_CATALOGUE, NETDEV, SEVERITIES  # noqa: E402
 
 MODULE_COMPONENTS = {
     "mattermost": "mattermost",
@@ -33,6 +34,12 @@ MODULE_NAMES = {
     "host": "Servers", "site": "Site availability", "mattermost": "Mattermost", "postgresql": "PostgreSQL",
     "nginx": "Nginx", "opensearch": "OpenSearch", "rtcd": "Calls (rtcd)", "monitoring": "Monitoring",
 }
+# Log lines the e2e self-test pushes carry this host name, so its queries see only them.
+SELFTEST_HOST = "mmi-selftest"
+DURATION = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+# Log rules that look back a week are costlier, so their group runs less often.
+TREND_GROUP = "Log trends"
+TREND_INTERVAL = "15m"
 # Mattermost brand colours for thresholds: Sapphire, Sunglow, and red for critical.
 TIER_COLOURS = {"ok": "#3db887", "info": "#1C58D9", "warning": "#FFBC1F", "critical": "#D24B4E"}
 
@@ -55,19 +62,137 @@ def effective_rules(spec):
     overrides = spec.get("overrides") or {}
     disabled = set(spec.get("disabled") or [])
     params = dict({"mm_max_conns": 300, "db_name": "mattermost"}, **(spec.get("params") or {}))
+    logs = logs_on(spec)
     rules = []
-    for entry in CATALOGUE:
+    for entry in CATALOGUE + (LOG_CATALOGUE if logs else []):
         if entry["module"] not in present or entry["id"] in disabled:
+            continue
+        if entry.get("requires") == "logs" and not logs:
             continue
         rule = dict(entry)
         over = overrides.get(entry["id"], {})
         rule["tiers"] = dict(entry["tiers"], **(over.get("tiers") or {}))
         rule["tiers"] = {k: v for k, v in rule["tiers"].items() if v is not None}
         rule["for"] = over.get("for", entry["for"])
-        if "%(" in rule["expr"]:
-            rule["expr"] = rule["expr"] % params
-        rules.append(rule)
+        if "source" in entry:
+            rule["datasource"] = "loki"
+            rule["expr"] = logql_for(rule, spec)
+            rule["logs_query"] = lines_query(rule, spec)
+        else:
+            rule["datasource"] = "prometheus"
+            if "%(" in rule["expr"]:
+                rule["expr"] = rule["expr"] % params
+        if rule["tiers"]:
+            rules.append(rule)
     return rules
+
+
+# ------------------------------------------------------------------ logql
+
+def logs_on(spec):
+    """Ansible may hand booleans over as strings."""
+    return str(spec.get("loki", False)).strip().lower() in ("true", "1", "yes")
+
+
+def seconds(duration):
+    return int(duration[:-1]) * DURATION[duration[-1]]
+
+
+def log_params(spec):
+    params = spec.get("params") or {}
+    return {"db_port": re.escape(str(params.get("db_port", 5432))),
+            "data_dir": re.escape(str(params.get("data_dir", "/var/opt/mattermost/data")))}
+
+
+def filled(regex, spec):
+    return regex % log_params(spec) if "%(" in regex else regex
+
+
+def q(text):
+    """A LogQL string. Backticks keep regexes readable; fall back to an escaped string."""
+    return "`%s`" % text if "`" not in text else json.dumps(text)
+
+
+def selector(rule, selftest=False, host=None):
+    matchers = ['service_name="%s"' % rule["source"]] if rule.get("source") else []
+    if selftest or host:
+        matchers.append('host_name="%s"' % (SELFTEST_HOST if selftest else host))
+    return "{%s}" % ", ".join(matchers or ['host_name=~".+"'])
+
+
+def pipeline(rule, spec):
+    """Line filters first (cheap), then the parser, then exact field filters."""
+    parts = []
+    match = [(f, filled(r, spec)) for f, r in rule.get("match", [])]
+    exclude = [(f, filled(r, spec)) for f, r in rule.get("exclude", [])]
+    for field, regex in match:
+        if field == "line":
+            parts.append("|~ " + q(regex))
+        elif rule.get("parser") == "json":
+            # A prefilter on the raw line, so Loki only parses lines that could match.
+            parts.append("|~ " + q('"%s":\\s*"(%s)"' % (field, regex)))
+    for field, regex in exclude:
+        if field == "line":
+            parts.append("!~ " + q(regex))
+    if rule.get("kind") in ("baseline", "new"):
+        for regex in spec.get("log_ignore") or []:
+            parts.append("!~ " + q(regex))
+    if rule.get("parser") == "json":
+        parts.append('| json | __error__=""')
+    for field, regex in match:
+        if field != "line":
+            parts.append("| %s=~%s" % (field, q(regex)))
+    for field, regex in exclude:
+        if field != "line":
+            parts.append("| %s!~%s" % (field, q(regex)))
+    return " ".join(parts)
+
+
+def count_query(rule, spec, by=None, window=None, offset="", selftest=False):
+    labels = ", ".join(["host_name"] + rule.get("by", []) if by is None else by)
+    return "sum by (%s) (count_over_time(%s %s [%s]%s))" % (
+        labels, selector(rule, selftest), pipeline(rule, spec), window or rule["window"],
+        " offset " + offset if offset else "")
+
+
+def logql_for(rule, spec, selftest=False):
+    kind = rule.get("kind", "count")
+    if kind == "count":
+        return count_query(rule, spec, selftest=selftest)
+    if kind == "baseline":
+        # Now against the same window a week ago. The smoothing stops a quiet site alerting
+        # on 3 errors after 0, and a server with no history yet is judged on the smoothing alone.
+        now = count_query(rule, spec, selftest=selftest)
+        past = count_query(rule, spec, offset="7d", selftest=selftest)
+        smooth = spec.get("log_smoothing", 20)
+        return "(%s / (%s + %s)) or (%s / %s)" % (now, past, smooth, now, smooth)
+    if kind == "new":
+        by = rule.get("by", [])
+        now = count_query(rule, spec, by=by, selftest=selftest)
+        week = count_query(rule, spec, by=by, window="7d", offset=rule["window"], selftest=selftest)
+        return "%s unless %s" % (now, week)
+    if kind == "silent":
+        names = [s["name"] for s in spec.get("servers", [])]
+        expr = 'sum by (host_name) (count_over_time({host_name=~"%s"} [%s]))' % (
+            "|".join(re.escape(n) for n in names), rule["window"])
+        for name in names:
+            expr += ' or label_replace(vector(0), "host_name", "%s", "", "")' % name
+        return expr
+    raise ValueError("unknown kind %s" % kind)
+
+
+def history_gate(rule):
+    """Only judge "new" errors once Loki holds a week of this source's logs."""
+    return "sum(count_over_time(%s [1h] offset 7d))" % selector(rule)
+
+
+def lines_query(rule, spec):
+    """The log query behind an alert, for its description: paste it into Explore."""
+    if rule.get("kind") == "silent":
+        return '{host_name="{{ $labels.host_name }}"}'
+    # "new" alerts are per message, not per server, so they carry no host_name.
+    sel = selector(rule, host=None if rule.get("kind") == "new" else "{{ $labels.host_name }}")
+    return ("%s %s" % (sel, pipeline(rule, spec))).strip()
 
 
 def evaluators(direction, tiers):
@@ -90,46 +215,67 @@ def evaluators(direction, tiers):
     return out
 
 
+def query(ref, expr, rule, spec):
+    if rule["datasource"] == "loki":
+        window = seconds(rule.get("window", "15m"))
+        return {"refId": ref, "relativeTimeRange": {"from": window, "to": 0},
+                "datasourceUid": spec.get("loki_datasource_uid", "loki"),
+                "model": {"expr": expr, "queryType": "instant", "editorMode": "code", "refId": ref,
+                          "intervalMs": 60000, "maxDataPoints": 43200}}
+    return {"refId": ref, "relativeTimeRange": {"from": 900, "to": 0},
+            "datasourceUid": spec.get("datasource_uid", "prometheus"),
+            "model": {"expr": expr, "instant": True, "range": False, "refId": ref,
+                      "intervalMs": 15000, "maxDataPoints": 43200}}
+
+
 def rule_json(rule, tier, evaluator, spec):
     uid = ("mmi-%s-%s" % (rule["id"], tier[:4]))[:40]
     threshold = evaluator["params"]
     shown = (" %s %s" % ({"gt": ">", "lt": "<"}.get(evaluator["type"], "between"),
                          " and ".join("%g" % p for p in threshold)))
+    data = [query("A", rule["expr"], rule, spec)]
+    judged = "A"
+    if rule.get("kind") == "new":
+        # B: did this source log anything a week ago? Until it did, every error looks new.
+        data.append(query("B", history_gate(rule), rule, spec))
+        data.append({"refId": "M", "relativeTimeRange": {"from": 0, "to": 0}, "datasourceUid": "__expr__",
+                     "model": {"type": "math", "expression": "$A * ($B > 0)", "refId": "M"}})
+        judged = "M"
+    data.append({"refId": "C", "relativeTimeRange": {"from": 0, "to": 0}, "datasourceUid": "__expr__",
+                 "model": {"type": "threshold", "expression": judged, "refId": "C",
+                           "conditions": [{"evaluator": evaluator}]}})
+    description = "%s\n\nThreshold:%s%s. Tier: %s." % (rule["action"], shown, rule.get("unit", ""), tier)
+    if rule.get("logs_query"):
+        description += "\n\nThe lines, for Explore (Loki): %s" % rule["logs_query"]
     return {
         "uid": uid,
         "title": "%s [%s]" % (rule["title"], tier),
         "condition": "C",
-        "data": [
-            {
-                "refId": "A",
-                "relativeTimeRange": {"from": 900, "to": 0},
-                "datasourceUid": spec.get("datasource_uid", "prometheus"),
-                "model": {"expr": rule["expr"], "instant": True, "range": False, "refId": "A",
-                          "intervalMs": 15000, "maxDataPoints": 43200},
-            },
-            {
-                "refId": "C",
-                "relativeTimeRange": {"from": 0, "to": 0},
-                "datasourceUid": "__expr__",
-                "model": {"type": "threshold", "expression": "A", "refId": "C",
-                          "conditions": [{"evaluator": evaluator}]},
-            },
-        ],
+        "data": data,
         "noDataState": "OK",
         "execErrState": "Error",
         "for": rule["for"],
         "annotations": {
             "summary": rule["summary"],
-            "description": "%s\n\nThreshold:%s%s. Tier: %s." % (rule["action"], shown, rule.get("unit", ""), tier),
+            "description": description,
         },
         "labels": {
             "severity": tier,
             "module": rule["module"],
             "mmi_rule": rule["id"],
+            "signal": "logs" if rule["datasource"] == "loki" else "metrics",
             "deployment": spec.get("deployment", "mattermost"),
         },
         "isPaused": False,
     }
+
+
+def group_of(rule):
+    if rule.get("kind") in ("baseline", "new"):
+        return TREND_GROUP, TREND_INTERVAL
+    if rule["datasource"] == "loki":
+        return "%s logs" % MODULE_NAMES[rule["module"]], "1m"
+    return MODULE_NAMES[rule["module"]], "1m"
 
 
 def build_alerts(spec):
@@ -137,14 +283,14 @@ def build_alerts(spec):
     count = {s: 0 for s in SEVERITIES}
     for rule in effective_rules(spec):
         for tier, evaluator in evaluators(rule["direction"], rule["tiers"]).items():
-            groups.setdefault(rule["module"], []).append(rule_json(rule, tier, evaluator, spec))
+            groups.setdefault(group_of(rule), []).append(rule_json(rule, tier, evaluator, spec))
             count[tier] += 1
     doc = {
         "apiVersion": 1,
         "groups": [
-            {"orgId": 1, "name": MODULE_NAMES[m], "folder": spec.get("folder", "Mattermost Implement"),
-             "interval": "1m", "rules": rules}
-            for m, rules in sorted(groups.items())
+            {"orgId": 1, "name": name, "folder": spec.get("folder", "Mattermost Implement"),
+             "interval": interval, "rules": rules}
+            for (name, interval), rules in sorted(groups.items())
         ],
     }
     return doc, count
@@ -236,11 +382,11 @@ class Board:
                   "options": {"displayMode": "gradient", "orientation": "horizontal", "showUnfilled": True,
                               "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}}}, w, h)
 
-    def alerts(self, title, w=24, h=8):
+    def alerts(self, title, w=24, h=8, labels=""):
         self.add({"type": "alertlist", "title": title,
                   "options": {"viewMode": "list", "groupMode": "default", "maxItems": 50, "sortOrder": 3,
                               "stateFilter": {"firing": True, "pending": True, "noData": False, "normal": False, "error": True},
-                              "alertInstanceLabelFilter": "", "folder": None, "showInstances": True}}, w, h)
+                              "alertInstanceLabelFilter": labels, "folder": None, "showInstances": True}}, w, h)
 
     def text(self, content, w=24, h=3):
         self.add({"type": "text", "title": "", "options": {"mode": "markdown", "content": content}}, w, h)
@@ -292,6 +438,8 @@ def overview(spec, present):
            steps={"critical": 1}, desc="Grafana-managed alerts are listed in the panel below.")
     b.stat("Servers", 'count(up{job="node"})', w=6)
     b.alerts("Firing and pending alerts")
+    if logs_on(spec):
+        b.alerts("From the logs", h=6, labels='{signal="logs"}')
     b.row("Servers")
     b.gauge("Disk used (fullest filesystem)", 'max by (instance) (100 * (1 - node_filesystem_avail_bytes{%s} / node_filesystem_size_bytes{%s}))' % (FS, FS),
             w=8, steps=tiers_of("disk-used", spec))
@@ -489,9 +637,21 @@ def build(spec):
             "rules": sum(count.values()),
             "by_severity": count,
             "dashboards": sorted(n[:-5] for n in build_dashboards(spec)),
-            "rule_queries": [{"id": r["id"], "module": r["module"], "expr": r["expr"], "quiet": bool(r.get("quiet"))} for r in rules],
+            "rule_queries": [rule_query(r, spec) for r in rules],
         },
     }
+
+
+def rule_query(rule, spec):
+    """What the e2e check needs to run a rule's query, and to self-test a log rule."""
+    out = {"id": rule["id"], "module": rule["module"], "expr": rule["expr"], "datasource": rule["datasource"],
+           # Log signatures only have data once the failure happens.
+           "quiet": bool(rule.get("quiet")) or (rule["datasource"] == "loki" and rule.get("kind") != "silent")}
+    if rule["datasource"] == "loki" and rule.get("kind", "count") == "count" and rule.get("examples"):
+        out["selftest_expr"] = logql_for(rule, spec, selftest=True)
+        out["selftest_service"] = rule.get("source") or "journal"
+        out["examples"] = rule["examples"]
+    return out
 
 
 def catalogue_markdown(heading="###", suffix=""):
@@ -512,7 +672,47 @@ def catalogue_markdown(heading="###", suffix=""):
             action = r["action"].replace("|", "\\|")
             out.append("| %s `%s` | %s | %s | %s |" % (r["title"], r["id"], " | ".join(cells), r["for"], action))
         out.append("")
+    for module in ["host", "mattermost", "postgresql", "nginx", "opensearch", "monitoring"]:
+        rules = [r for r in LOG_CATALOGUE if r["module"] == module]
+        if not rules:
+            continue
+        out += ["%s %s log checks" % (heading, MODULE_NAMES[module]), "",
+                "| Check | Watches for | Window | Info | Warning | Critical | For | What to do |",
+                "|---|---|---|---|---|---|---|---|"]
+        for r in rules:
+            sign = ">" if r["direction"] == "above" else "<"
+            cells = []
+            for tier in SEVERITIES:
+                value = r["tiers"].get(tier)
+                cells.append("" if value is None else "%s %g%s" % (sign, value, r.get("unit", "")))
+            out.append("| %s `%s` | %s | %s | %s | %s | %s |" % (
+                r["title"], r["id"], watches_for(r).replace("|", "\\|"), r["window"], " | ".join(cells), r["for"],
+                r["action"].replace("|", "\\|")))
+        out.append("")
     return "\n".join(out).rstrip() + "\n"
+
+
+def watches_for(rule):
+    """One line for the docs: what a log check matches, in its own terms."""
+    def part(field, regex, negate=False):
+        regex = filled(regex, {})
+        if field == "line":
+            return "line %s `%s`" % ("doesn't match" if negate else "matches", regex)
+        return "`%s` %s `%s`" % (field, "isn't" if negate else "is", regex)
+    source = "`%s` logs" % rule["source"] if rule.get("source") else "any service's logs"
+    kind = rule.get("kind", "count")
+    if kind == "silent":
+        return "a server in the estate that sent no log lines at all"
+    what = " and ".join([part(f, r) for f, r in rule.get("match", [])]
+                        + [part(f, r, True) for f, r in rule.get("exclude", [])])
+    text = "%s where %s" % (source, what)
+    if rule.get("by"):
+        text += ", per %s" % ", ".join("`%s`" % b for b in rule["by"])
+    if kind == "baseline":
+        text += ", as a multiple of the same window a week earlier"
+    if kind == "new":
+        text += ", not seen in the 7 days before"
+    return text
 
 
 def main(argv):

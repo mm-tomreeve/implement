@@ -49,6 +49,8 @@ COMPONENT_ARTIFACTS = {
     "nginx_exporter": ["nginx_exporter"],
     "opensearch_exporter": ["opensearch_exporter"],
     "blackbox_exporter": ["blackbox_exporter"],
+    "loki": ["loki"],
+    "otel_collector": ["otel_collector"],
 }
 
 # GitHub-hosted artifacts: repo and asset name template.
@@ -62,6 +64,9 @@ GITHUB_ASSETS = {
     "opensearch_exporter": ("prometheus-community/elasticsearch_exporter",
                             "elasticsearch_exporter-{version}.linux-{arch}.tar.gz"),
     "blackbox_exporter": ("prometheus/blackbox_exporter", "blackbox_exporter-{version}.linux-{arch}.tar.gz"),
+    "loki": ("grafana/loki", "loki-linux-{arch}.zip"),
+    "otel_collector": ("open-telemetry/opentelemetry-collector-releases",
+                       "otelcol-contrib_{version}_linux_{arch}.tar.gz"),
 }
 
 # Checksum files published next to each release, so pinned versions can skip the
@@ -74,6 +79,9 @@ GITHUB_SUMS = {
     "blackbox_exporter": "sha256sums.txt",
     "opensearch_exporter": "sha256sums.txt",
     "nginx_exporter": "nginx-prometheus-exporter_{version}_checksums.txt",
+    "loki": "SHA256SUMS",
+    # One file per asset holding just the digest.
+    "otel_collector": "{asset}.sha256",
 }
 
 # Filename patterns used when scanning a hand-made offline directory.
@@ -88,6 +96,8 @@ SCAN_PATTERNS = {
     "nginx_exporter": r"^nginx-prometheus-exporter_(?P<version>\d+\.\d+\.\d+)_linux_(?P<arch>amd64|arm64)\.tar\.gz$",
     "opensearch_exporter": r"^elasticsearch_exporter-(?P<version>\d+\.\d+\.\d+)\.linux-(?P<arch>amd64|arm64)\.tar\.gz$",
     "blackbox_exporter": r"^blackbox_exporter-(?P<version>\d+\.\d+\.\d+)\.linux-(?P<arch>amd64|arm64)\.tar\.gz$",
+    "loki": r"^loki-(?:(?P<version>\d+\.\d+\.\d+)-)?linux-(?P<arch>amd64|arm64)\.zip$",
+    "otel_collector": r"^otelcol-contrib_(?P<version>\d+\.\d+\.\d+)_linux_(?P<arch>amd64|arm64)\.tar\.gz$",
     "grafana": r"^grafana(?:-enterprise)?[-_]v?(?P<version>\d+\.\d+\.\d+)(?:[._][^/]*?)?[._]linux[-_](?P<arch>amd64|arm64)\.tar\.gz$",
 }
 
@@ -258,6 +268,9 @@ def github_release(repo, version):
 
 
 def sums_lookup(text, wanted):
+    words = text.split()
+    if len(words) == 1 and re.fullmatch(r"[0-9a-fA-F]{64}", words[0]):
+        return words[0].lower()  # a per-asset file with only the digest in it
     for line in text.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[1].lstrip("*") == wanted:
@@ -273,7 +286,7 @@ def resolve_github(name, version, arch):
         resolved = version.lstrip("v")
         wanted = template.format(version=resolved, arch=arch)
         base = "https://github.com/%s/releases/download/v%s/" % (repo, resolved)
-        sums_name = sums.format(version=resolved)
+        sums_name = sums.format(version=resolved, asset=wanted)
         digest = sums_lookup(http_get(base + sums_name).decode("utf-8"), wanted)
         if not digest:
             raise ResolveError("%s %s: %s has no entry for %s" % (repo, resolved, sums_name, wanted))

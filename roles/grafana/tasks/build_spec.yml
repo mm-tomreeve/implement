@@ -8,12 +8,19 @@
       site_url: "{{ monitoring_site_url }}"
       servers: "{{ mmd_estate | default([]) }}"
       datasource_uid: "{{ grafana_datasource_uid }}"
+      # Log checks need a Loki for Grafana to query.
+      loki: "{{ mmd_loki_url | length > 0 }}"
+      loki_datasource_uid: "{{ grafana_loki_datasource_uid }}"
+      log_ignore: "{{ logging_alert_ignore }}"
+      log_smoothing: "{{ logging_alert_baseline_smoothing | int }}"
       folder: "{{ grafana_alert_folder }}"
       overrides: "{{ monitoring_alert_overrides }}"
       disabled: "{{ monitoring_alerts_disabled }}"
       params:
         db_name: "{{ mattermost_db_name }}"
         mm_max_conns: "{{ mattermost_db_max_open_conns | int }}"
+        db_port: "{{ mattermost_db_port | int }}"
+        data_dir: "{{ mattermost_data_dir }}"
 
 - name: Run the builder
   ansible.builtin.command:

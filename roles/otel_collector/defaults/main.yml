@@ -1,0 +1,21 @@
+---
+otel_collector_user: otelcol
+otel_collector_conf_dir: /etc/otelcol
+otel_collector_data_dir: /var/lib/otelcol
+otel_collector_memory_mib: 256
+# systemd unit for each component, for the journald receiver.
+otel_collector_units:
+  mattermost: mattermost
+  postgresql: postgresql
+  nginx: nginx
+  rtcd: rtcd
+  opensearch: opensearch
+  prometheus: prometheus
+  grafana: grafana
+  loki: loki
+  otel_collector: otelcol
+  node_exporter: node_exporter
+  postgres_exporter: postgres_exporter
+  nginx_exporter: nginx_exporter
+  opensearch_exporter: opensearch_exporter
+  blackbox_exporter: blackbox_exporter

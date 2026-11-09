@@ -1,0 +1,96 @@
+---
+- name: Install Loki
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: tarball_install
+  vars:
+    tb_name: loki
+    tb_artifact: "{{ mmd_artifacts.loki }}"
+    tb_user: "{{ loki_user }}"
+    tb_creates: "loki-linux-{{ mmd_arch }}"
+
+- name: Restart when the version changed
+  ansible.builtin.debug:
+    msg: "Loki now points at {{ mmd_artifacts.loki.version }}"
+  changed_when: tb_changed | bool
+  notify: Restart loki
+
+# Data lives outside /opt so moving the version symlink keeps it.
+- name: Create Loki directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ loki_user }}"
+    mode: "0750"
+  loop:
+    - {path: "{{ loki_conf_dir }}", owner: root}
+    - {path: "{{ loki_data_dir }}", owner: "{{ loki_user }}"}
+
+# Who may push logs (mmd_loki_sources) is worked out in common/tasks/wiring.yml.
+- name: Write the Loki config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ loki_conf_dir }}/config.yml"
+    owner: root
+    group: "{{ loki_user }}"
+    mode: "0640"
+  vars:
+    _loki_bind: "{{ '0.0.0.0' if mmd_loki_sources | length > 0 else '127.0.0.1' }}"
+  notify: Restart loki
+
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/loki.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      [Unit]
+      Description=Grafana Loki
+      After=network-online.target
+
+      [Service]
+      User={{ loki_user }}
+      Group={{ loki_user }}
+      ExecStart=/opt/loki/loki-linux-{{ mmd_arch }} -config.file={{ loki_conf_dir }}/config.yml
+      Restart=always
+      LimitNOFILE=65536
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=read-only
+      ReadWritePaths={{ loki_data_dir }}
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart loki
+
+- name: Enable and start Loki
+  ansible.builtin.systemd:
+    name: loki
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Open Loki to the servers that ship logs here
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ loki_port }}", proto: tcp}]
+    fw_sources: "{{ mmd_loki_sources }}"
+    fw_public: false
+  when: mmd_loki_sources | length > 0
+
+# The collectors installed next start pushing straight away.
+- name: Wait for Loki to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ loki_port }}/ready"
+  register: _loki_up
+  until: _loki_up.status == 200
+  retries: 24
+  delay: 5

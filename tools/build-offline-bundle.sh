@@ -71,7 +71,7 @@ pinned_default() {
   sed -n "s/^$1:[[:space:]]*\"\{0,1\}\([^\"#]*\)\"\{0,1\}.*/\1/p" "${DEFAULTS}" | head -n1 | tr -d '[:space:]'
 }
 declare -a VERSION_ARGS=()
-for name in opensearch prometheus node_exporter postgres_exporter grafana rtcd nginx_exporter opensearch_exporter blackbox_exporter; do
+for name in opensearch prometheus node_exporter postgres_exporter grafana rtcd nginx_exporter opensearch_exporter blackbox_exporter loki otel_collector; do
   value="$(pinned_default "${name}_version")"
   [[ -n "${value}" ]] && VERSION_ARGS+=(--version "${name}=${value}")
 done

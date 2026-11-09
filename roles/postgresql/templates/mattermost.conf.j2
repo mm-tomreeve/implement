@@ -12,6 +12,19 @@ work_mem = {{ postgresql_work_mem }}
 maintenance_work_mem = {{ [[(ansible_facts['memtotal_mb'] * 5 / 100) | int, 64] | max, 1024] | min }}MB
 random_page_cost = {{ postgresql_random_page_cost }}
 idle_in_transaction_session_timeout = 60s
+{% if 'otel_collector' in mmd_selected %}
+
+# Logs are shipped to Loki, so write them as JSON: each line carries error_severity and
+# the SQLSTATE (state_code), which the log alerts match on rather than English text.
+logging_collector = on
+log_destination = 'jsonlog'
+log_directory = '{{ postgresql_log_dir }}'
+log_filename = 'postgresql-%a.log'
+log_rotation_age = 1d
+log_rotation_size = 0
+log_truncate_on_rotation = on
+log_file_mode = 0640
+{% endif %}
 tcp_keepalives_idle = 5
 tcp_keepalives_interval = 1
 tcp_keepalives_count = 5

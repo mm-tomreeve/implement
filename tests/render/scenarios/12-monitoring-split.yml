@@ -1,0 +1,12 @@
+---
+# Render scenario: a monitoring server whose estate has Grafana and a second
+# Prometheus elsewhere, so its firewall opens Prometheus and the exporters to them.
+render_host: mon01
+deploy_name: chat-prod
+deploy_profiles: [monitoring]
+monitoring_site_url: https://chat.example.com
+monitoring_estate:
+  - {name: app01, address: 10.10.1.12, components: [mattermost, nginx]}
+  - {name: db01, address: 10.10.1.11, components: [postgresql]}
+  - {name: gfx01, address: 10.10.1.16, components: [grafana]}
+  - {name: mon02, address: 10.10.1.17, components: [prometheus, loki]}

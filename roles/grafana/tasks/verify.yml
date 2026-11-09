@@ -25,6 +25,19 @@
   failed_when: false
   no_log: true
 
+- name: Ask Grafana whether the Loki datasource works
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/datasources/uid/{{ grafana_loki_datasource_uid }}/health"
+    user: admin
+    password: "{{ mmd_secrets.grafana_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    timeout: 15
+  register: _v_gf_loki_ds
+  failed_when: false
+  no_log: true
+  when: mmd_loki_url | length > 0
+
 - name: Count the Mattermost dashboards
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ grafana_port }}/api/search?type=dash-db&query=Mattermost"
@@ -107,6 +120,15 @@
         detail: >-
           {{ 'datasource ' ~ mmd_prometheus_url ~ ' OK' if _v_gf_ds.status | default(0) == 200
              else 'HTTP ' ~ (_v_gf_ds.status | default('none')) ~ ' (401 means the admin password was changed in the UI)' }}
+      - component: grafana
+        name: Loki datasource answers
+        severity: warning
+        status: "{{ 'skip' if mmd_loki_url | length == 0 else ('pass' if _v_gf_loki_ds.status | default(0) == 200 else 'warn') }}"
+        detail: >-
+          {{ 'no Loki on this estate' if mmd_loki_url | length == 0
+             else ('datasource ' ~ mmd_loki_url ~ ' OK' if _v_gf_loki_ds.status | default(0) == 200
+                   else 'HTTP ' ~ (_v_gf_loki_ds.status | default('none'))
+                        ~ ': ' ~ (_v_gf_loki_ds.json.message | default('no answer'))) }}
       - component: grafana
         name: Estate alert rules are loaded
         status: >-

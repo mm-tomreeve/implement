@@ -122,6 +122,23 @@ class Offline(unittest.TestCase):
         self.assertEqual(result["prometheus"]["checksum"], "")
         self.assertTrue(any("scanned" in w for w in warnings))
 
+    def test_log_shippers_are_scanned_with_their_checksum_files(self):
+        loki = write(os.path.join(self.dir, "loki-linux-amd64.zip"))
+        write(os.path.join(self.dir, "loki-canary-linux-amd64.zip"))
+        otel = write(os.path.join(self.dir, "otelcol-contrib_0.165.0_linux_amd64.tar.gz"))
+        with open(os.path.join(self.dir, "SHA256SUMS"), "w", encoding="utf-8") as handle:
+            handle.write("%s  loki-linux-amd64.zip\n" % loki)
+        # otelcol-contrib publishes one file per asset holding only the digest.
+        with open(os.path.join(self.dir, "otelcol-contrib_0.165.0_linux_amd64.tar.gz.sha256"), "w",
+                  encoding="utf-8") as handle:
+            handle.write(otel + "\n")
+        result = rv.resolve_offline(self.dir, ["loki", "otel_collector"], "amd64", MM,
+                                    {"otel_collector": "0.165.0"}, [])
+        self.assertEqual(result["loki"]["filename"], "loki-linux-amd64.zip")
+        self.assertEqual(result["loki"]["checksum"], "sha256:" + loki)
+        self.assertEqual(result["otel_collector"]["version"], "0.165.0")
+        self.assertEqual(result["otel_collector"]["checksum"], "sha256:" + otel)
+
     def test_wrong_pinned_version_is_an_error(self):
         write(os.path.join(self.dir, "prometheus-3.15.1.linux-amd64.tar.gz"))
         with self.assertRaises(rv.ResolveError):
@@ -160,6 +177,12 @@ class Helpers(unittest.TestCase):
     def test_needed_artifacts(self):
         self.assertEqual(rv.needed_artifacts(["postgresql", "nginx"]), [])
         self.assertEqual(rv.needed_artifacts(["opensearch"]), ["opensearch", "opensearch_icu"])
+
+    def test_sums_lookup_reads_both_formats(self):
+        digest = "ab" * 32
+        self.assertEqual(rv.sums_lookup("%s  loki-linux-amd64.zip\n" % digest, "loki-linux-amd64.zip"), digest)
+        self.assertEqual(rv.sums_lookup(digest.upper() + "\n", "anything"), digest)
+        self.assertEqual(rv.sums_lookup("%s  other.zip\n" % digest, "loki-linux-amd64.zip"), "")
 
     def test_version_key_orders_numerically(self):
         self.assertGreater(rv.version_key("11.10.4"), rv.version_key("11.9.2"))

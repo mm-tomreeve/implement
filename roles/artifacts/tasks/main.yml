@@ -77,6 +77,8 @@
           nginx_exporter: "{{ nginx_exporter_version }}"
           opensearch_exporter: "{{ opensearch_exporter_version }}"
           blackbox_exporter: "{{ blackbox_exporter_version }}"
+          loki: "{{ loki_version }}"
+          otel_collector: "{{ otel_collector_version }}"
         _pin_args: >-
           {%- set out = [] -%}{%- for k, v in _pins.items() -%}{%- set _ = out.append('--version=' ~ k ~ '=' ~ v) -%}{%- endfor -%}{{ out }}
         _resolver_argv: >-

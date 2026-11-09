@@ -18,7 +18,7 @@ mmd_catalogue:
     paths:
       config: "{{ postgresql_data_dir }}/postgresql.conf, {{ postgresql_data_dir }}/conf.d/mattermost.conf"
       data: "{{ postgresql_data_dir }}"
-      logs: "{{ postgresql_data_dir }}/log"
+      logs: "{{ (postgresql_log_dir ~ ' (jsonlog)') if 'otel_collector' in mmd_selected else postgresql_data_dir ~ '/log' }}"
     min_ram_mb: 2048
     min_cpus: 2
     ports:
@@ -48,7 +48,7 @@ mmd_catalogue:
       - port: "{{ mattermost_metrics_port }}"
         proto: tcp
         purpose: Prometheus metrics (Enterprise)
-        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+        allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
       - port: "{{ mattermost_calls_port }}"
         proto: udp/tcp
         purpose: Built-in Calls media (only when no rtcd is configured)
@@ -97,7 +97,7 @@ mmd_catalogue:
       - port: "{{ rtcd_api_port }}"
         proto: tcp
         purpose: rtcd API and metrics (Mattermost and Prometheus)
-        allowed: "{{ (rtcd_api_sources + monitoring_scrape_sources) | unique | join(', ') if (rtcd_api_sources + monitoring_scrape_sources) else 'localhost only' }}"
+        allowed: "{{ (rtcd_api_sources + mmd_scrape_sources) | unique | join(', ') if (rtcd_api_sources + mmd_scrape_sources) else 'localhost only' }}"
 
   opensearch:
     title: OpenSearch {{ opensearch_version }}
@@ -135,7 +135,7 @@ mmd_catalogue:
       - port: "{{ prometheus_port }}"
         proto: tcp
         purpose: Prometheus UI and API
-        allowed: "{{ prometheus_allowed_sources | join(', ') if prometheus_allowed_sources else 'localhost only' }}"
+        allowed: "{{ mmd_prometheus_sources | join(', ') if mmd_prometheus_sources else 'localhost only' }}"
 
   grafana:
     title: Grafana OSS {{ grafana_version }}
@@ -154,7 +154,7 @@ mmd_catalogue:
       - port: "{{ grafana_port }}"
         proto: tcp
         purpose: Grafana web UI
-        allowed: "{{ grafana_allowed_sources | join(', ') if grafana_allowed_sources else 'any' }}"
+        allowed: "{{ (grafana_allowed_sources + mmd_scrape_sources) | unique | join(', ') if grafana_allowed_sources else 'any' }}"
 
   node_exporter:
     title: node_exporter {{ node_exporter_version }}
@@ -171,7 +171,7 @@ mmd_catalogue:
       - port: "{{ node_exporter_port }}"
         proto: tcp
         purpose: Host metrics
-        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+        allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
 
   postgres_exporter:
     title: postgres_exporter {{ postgres_exporter_version }}
@@ -188,7 +188,7 @@ mmd_catalogue:
       - port: "{{ postgres_exporter_port }}"
         proto: tcp
         purpose: PostgreSQL metrics
-        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+        allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
 
 
   # -- exporters added automatically with their component
@@ -207,7 +207,7 @@ mmd_catalogue:
       - port: "{{ nginx_exporter_port }}"
         proto: tcp
         purpose: Nginx metrics
-        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+        allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
 
   opensearch_exporter:
     title: elasticsearch_exporter {{ opensearch_exporter_version }}
@@ -225,7 +225,7 @@ mmd_catalogue:
       - port: "{{ opensearch_exporter_port }}"
         proto: tcp
         purpose: OpenSearch metrics
-        allowed: "{{ monitoring_scrape_sources | join(', ') if monitoring_scrape_sources else 'localhost only' }}"
+        allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
 
   blackbox_exporter:
     title: blackbox_exporter {{ blackbox_exporter_version }}
@@ -244,6 +244,44 @@ mmd_catalogue:
         proto: tcp
         purpose: Probe endpoint for Prometheus
         allowed: localhost only
+
+  loki:
+    title: Loki {{ loki_version }}
+    summary: Stores the logs every server ships, for Grafana to search and alert on.
+    source: github.com/grafana/loki release binary
+    service: loki
+    user: loki
+    paths:
+      install: /opt/loki -> /opt/loki-<version>
+      config: /etc/loki/config.yml
+      data: "{{ loki_data_dir }} ({{ loki_retention_period }} retention, roughly 1-3 GB a day)"
+      logs: journald (journalctl -u loki)
+    min_ram_mb: 1024
+    min_cpus: 1
+    ports:
+      - port: "{{ loki_port }}"
+        proto: tcp
+        purpose: Log push (OTLP over HTTP), queries and metrics
+        allowed: "{{ mmd_loki_sources | join(', ') or 'localhost only' }}"
+
+  otel_collector:
+    title: OpenTelemetry Collector (contrib) {{ otel_collector_version }}
+    summary: Ships this server's logs to Loki.
+    source: github.com/open-telemetry/opentelemetry-collector-releases otelcol-contrib tarball
+    service: otelcol
+    user: otelcol
+    paths:
+      install: /opt/otel_collector -> /opt/otel_collector-<version>
+      config: /etc/otelcol/config.yaml
+      data: /var/lib/otelcol (read positions, so restarts don't ship lines twice)
+      logs: journald (journalctl -u otelcol)
+    min_ram_mb: 128
+    min_cpus: 0
+    ports:
+      - port: "{{ otel_collector_metrics_port }}"
+        proto: tcp
+        purpose: The collector's own metrics
+        allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
 
 # Hard dependencies. Each entry is checked by roles/common/tasks/validate.yml.
 mmd_dependency_checks:
@@ -282,7 +320,7 @@ mmd_dependency_checks:
       Mattermost isn't on this server, so list the app servers that use the rtcd API in
       rtcd_api_sources. Single addresses or CIDRs both work, e.g. [10.10.1.12] or [10.10.1.0/24].
   - component: node_exporter
-    ok: "{{ 'prometheus' in mmd_selected or monitoring_scrape_sources | length > 0 }}"
+    ok: "{{ 'prometheus' in mmd_selected or mmd_scrape_sources | length > 0 }}"
     message: >-
       deploy_monitoring_exporters is on but monitoring_scrape_sources is empty, so the exporters would
       only listen on localhost. List the Prometheus servers that scrape this one, e.g. [10.10.1.15].
@@ -311,6 +349,14 @@ mmd_dependency_checks:
   - component: postgres_exporter
     ok: "{{ 'postgresql' in mmd_selected }}"
     message: postgres_exporter runs next to PostgreSQL. Add postgresql to this server.
+  - component: otel_collector
+    ok: "{{ mmd_loki_url | length > 0 }}"
+    message: >-
+      The OpenTelemetry Collector has nowhere to send logs. Add loki to this server or set logging_loki_url,
+      e.g. http://10.10.1.15:3100.
+  - component: otel_collector
+    ok: "{{ logging_loki_url is match('^https?://[^/]+') or logging_loki_url | length == 0 }}"
+    message: logging_loki_url must be a URL such as http://10.10.1.15:3100.
   - component: grafana
     ok: "{{ 'prometheus' in mmd_selected or grafana_prometheus_url | length > 0 }}"
     message: Grafana needs a Prometheus. Add prometheus to this server or set grafana_prometheus_url.
