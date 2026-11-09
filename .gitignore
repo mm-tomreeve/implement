@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+
+# Ansible collections installed by `make collections` / install.sh
+collections/
+
+# Test output
+tests/render/out/
+tests/smoke/out/
+tests/e2e/out/
+
+# Local answer files (may hold credentials)
+answers.yml
+
+# Offline bundles from tools/build-offline-bundle.sh
+mm-bundle-*
