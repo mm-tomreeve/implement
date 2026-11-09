@@ -1,0 +1,26 @@
+---
+# The answer file is passed with -e, so a misspelt setting is silently ignored and
+# a wrong type only shows up as a template error deep in a role. Catch both here.
+# Verify and report runs pass mmd_answers_strict: false, so a setting a newer
+# toolkit dropped doesn't stop them; they only warn.
+- name: Check the answer file's settings and types
+  ansible.builtin.set_fact:
+    _answer_problems: "{{ mmd_answers_file | answer_problems(inventory_dir ~ '/group_vars/all/defaults.yml') }}"
+  when: mmd_answers_file | default('') | length > 0
+
+- name: Stop if the answer file has problems
+  ansible.builtin.assert:
+    that: _answer_problems | length == 0
+    fail_msg: "{{ mmd_answers_file }} has problems: {{ _answer_problems | join(' ') }}"
+    quiet: true
+  when:
+    - mmd_answers_strict | default(true) | bool
+    - _answer_problems | default([]) | length > 0
+
+- name: Warn about problems in the answer file
+  ansible.builtin.debug:
+    msg: "WARNING: {{ mmd_answers_file }}: {{ item }}"
+  loop: "{{ _answer_problems }}"
+  when:
+    - not (mmd_answers_strict | default(true) | bool)
+    - _answer_problems | default([]) | length > 0

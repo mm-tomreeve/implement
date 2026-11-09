@@ -27,6 +27,9 @@
       ansible.builtin.include_role:
         name: common
         tasks_from: plan
+      vars:
+        # Scenarios carry render_* keys of their own.
+        mmd_answers_strict: false
 
     - name: Check the scenario got the components it expects
       ansible.builtin.assert:

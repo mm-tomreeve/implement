@@ -1,6 +1,9 @@
 ---
 # Everything needed to describe the deployment without changing the server.
 # playbooks/plan.yml runs only this file, so it must stay read-only.
+- name: Check the answer file
+  ansible.builtin.include_tasks: answers.yml
+
 - name: Check the operating system
   ansible.builtin.include_tasks: assert_os.yml
 

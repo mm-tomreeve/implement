@@ -8,6 +8,9 @@
       ansible.builtin.include_role:
         name: common
         tasks_from: plan
+      vars:
+        # Only warn about the answer file, so an old one doesn't block a re-check.
+        mmd_answers_strict: false
 
     - name: Load the saved deployment state
       ansible.builtin.include_tasks: tasks/load_state.yml
