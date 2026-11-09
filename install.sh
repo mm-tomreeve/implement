@@ -83,10 +83,17 @@ else
 fi
 WIDTH=64
 
-say()  { printf '%s\n' "${C_BLUE}${C_BOLD}${G_ARROW}${C_OFF} ${C_BOLD}$*${C_OFF}"; }
+# Steps, warnings and errors also go to the run log, so a run that stops before
+# Ansible starts still says how far it got and why. Nothing is logged until
+# setup_logging has created the file.
+log_line() {
+  [[ -n "${LOG_FILE:-}" ]] || return 0
+  printf '%s install.sh | %s\n' "$(date '+%F %T')" "$*" | sed $'s/\e\\[[0-9;]*m//g' >> "${LOG_FILE}" 2>/dev/null || true
+}
+say()  { log_line "$*"; printf '%s\n' "${C_BLUE}${C_BOLD}${G_ARROW}${C_OFF} ${C_BOLD}$*${C_OFF}"; }
 info() { printf '    %s\n' "$*"; }
-warn() { printf '%s\n' "${C_YEL}${C_BOLD}WARNING:${C_OFF} $*" >&2; }
-die()  { printf '%s\n' "${C_RED}${C_BOLD}ERROR:${C_OFF} $*" >&2; exit 1; }
+warn() { log_line "WARNING: $*"; printf '%s\n' "${C_YEL}${C_BOLD}WARNING:${C_OFF} $*" >&2; }
+die()  { log_line "ERROR: $*"; printf '%s\n' "${C_RED}${C_BOLD}ERROR:${C_OFF} $*" >&2; exit 1; }
 
 no_input() {
   echo
@@ -117,6 +124,7 @@ banner() {
   echo
 }
 trap 'die "install.sh stopped at line ${LINENO}. Logs are in ${LOG_DIR}."' ERR
+trap 'echo; log_line "Stopped with Ctrl-C."; exit 130' INT
 
 usage() {
   cat <<EOF
@@ -1135,6 +1143,7 @@ main() {
   check_os
   setup_logging
   TOOL_VERSION="$(tool_version)"
+  log_line "Started: install.sh $* (${TOOL_VERSION}, $(host_name), ${OS_PRETTY})"
   banner "${TOOL_VERSION} ${G_DOT} $(host_name) ${G_DOT} ${OS_PRETTY}"
   [[ -z "${LOCAL_REPO}" ]] || setup_local_repo
   # Only installs need installers; re-testing and reporting work from what is on disk.
