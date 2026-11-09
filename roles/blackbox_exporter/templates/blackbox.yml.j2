@@ -14,7 +14,8 @@ modules:
 {% if monitoring_site_ca_file | length > 0 %}
         ca_file: {{ blackbox_exporter_conf_dir }}/site-ca.pem
 {% endif %}
-  # Can clients open a TCP connection to the Calls media port?
+  # Is rtcd accepting TCP on the Calls media port? Media prefers UDP, which
+  # blackbox can't meaningfully test, so this is a stand-in.
   tcp_connect:
     prober: tcp
     timeout: 5s

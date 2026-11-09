@@ -192,11 +192,11 @@ CATALOGUE = [
         "action": "Renew it, put it where tls_cert_file points and re-run install.sh on the app servers.",
     },
     {
-        "id": "calls-port-unreachable", "module": "rtcd", "title": "Calls media port unreachable",
+        "id": "calls-port-unreachable", "module": "rtcd", "title": "Calls media port closed",
         "expr": 'probe_success{job="blackbox_tcp_calls"}',
         "direction": "below", "tiers": {"critical": 1}, "for": "3m", "unit": "",
-        "summary": "Nobody can connect to Calls media on {{ $labels.instance }}",
-        "action": "Calls will connect but carry no audio. Check rtcd is running and the firewall allows the media port.",
+        "summary": "rtcd on {{ $labels.instance }} isn't accepting TCP connections on the media port from the monitoring server",
+        "action": "Calls may connect but carry no audio. Check rtcd is running and listening on the media port, and the firewall allows it.",
     },
 
     # ------------------------------------------------------------------ mattermost
