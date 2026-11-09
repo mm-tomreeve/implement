@@ -106,6 +106,10 @@ Copy [answers.example.yml](answers.example.yml), which documents every setting, 
 Nothing is asked that the answer file already settles. Add `--non-interactive --yes` for fully
 unattended runs.
 
+The plan stops if the answer file has a setting it doesn't know (usually a typo) or a value of the
+wrong kind, such as `10.0.0.5` where a list like `[10.0.0.5]` is needed. `--verify-only` and
+`--report-only` only warn, so an older answer file doesn't block them.
+
 ### From flags
 
 ```bash
