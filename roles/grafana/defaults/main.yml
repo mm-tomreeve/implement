@@ -7,3 +7,4 @@ grafana_dashboard_dir: /var/lib/grafana/dashboards/mattermost
 grafana_implement_dashboard_dir: /var/lib/grafana/dashboards/implement
 grafana_alert_folder: Mattermost Implement
 grafana_datasource_uid: prometheus
+grafana_loki_datasource_uid: loki

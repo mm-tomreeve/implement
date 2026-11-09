@@ -1,0 +1,65 @@
+# {{ ansible_managed }}
+# Single binary, filesystem storage. Based on the Mattermost docs guide
+# "Deploy Grafana Loki for centralized logging".
+auth_enabled: false
+
+server:
+  http_listen_address: {{ _loki_bind }}
+  http_listen_port: {{ loki_port }}
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: {{ loki_grpc_port }}
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: {{ loki_data_dir }}
+  storage:
+    filesystem:
+      chunks_directory: {{ loki_data_dir }}/chunks
+      rules_directory: {{ loki_data_dir }}/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: {{ loki_retention_period }}
+  reject_old_samples: true
+  reject_old_samples_max_age: {{ loki_reject_older_than }}
+  allow_structured_metadata: true
+  volume_enabled: true
+  # The log alerts compare today with a week ago, so queries must reach back that far.
+  max_query_lookback: {{ loki_retention_period }}
+  otlp_config:
+    resource_attributes:
+      attributes_config:
+        # On top of Loki's defaults (service.name and friends): which server, which estate.
+        - action: index_label
+          attributes: [host.name, deployment]
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+compactor:
+  working_directory: {{ loki_data_dir }}/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false

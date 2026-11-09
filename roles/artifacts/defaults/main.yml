@@ -11,6 +11,8 @@ artifacts_tarball_components:
   - nginx_exporter
   - opensearch_exporter
   - blackbox_exporter
+  - loki
+  - otel_collector
 # Artifacts that must carry a valid GPG signature when artifact_require_signature is on.
 artifacts_signed:
   - mattermost

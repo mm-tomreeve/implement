@@ -1,6 +1,6 @@
 # {{ ansible_managed }}
 [api]
-http.listen_address = "{{ '127.0.0.1' if (rtcd_api_sources + monitoring_scrape_sources) | length == 0 else '' }}:{{ rtcd_api_port }}"
+http.listen_address = "{{ '127.0.0.1' if (rtcd_api_sources + mmd_scrape_sources) | length == 0 else '' }}:{{ rtcd_api_port }}"
 http.tls.enable = false
 http.tls.cert_file = ""
 http.tls.cert_key = ""

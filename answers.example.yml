@@ -170,6 +170,13 @@ monitoring_scrape_sources: []           # Prometheus servers allowed to scrape h
 
 prometheus_retention: 15d
 prometheus_allowed_sources: []          # who can reach the Prometheus UI (default: localhost only)
+# monitoring_estate (on the monitoring server) lists every other server and what it runs:
+# mattermost, nginx, postgresql, rtcd, opensearch, prometheus, loki, grafana. Servers
+# listed with grafana or prometheus are let in to this Prometheus, and ones with
+# prometheus may also scrape the exporters here, without adding them above.
+monitoring_estate: []
+#  - {name: app01, address: 10.10.1.12, components: [mattermost, nginx]}
+#  - {name: gfx01, address: 10.10.1.16, components: [grafana]}
 # Other servers to scrape from this Prometheus.
 prometheus_scrape_targets: []
 #  - {job: node, targets: ["db01.internal:9100", "app01.internal:9100"]}
@@ -179,6 +186,23 @@ prometheus_scrape_targets: []
 grafana_admin_password: ""
 grafana_prometheus_url: ""              # only when Prometheus is on another server
 grafana_allowed_sources: []             # default: open to all, Grafana has its own login
+
+# ---------------------------------------------------------------- logging
+# Every server with a Loki to send to gets an OpenTelemetry Collector that ships its
+# logs: Mattermost, PostgreSQL, Nginx errors, OpenSearch, and the journal for our units.
+# The monitoring profile runs Loki. Point every other server at it:
+logging_loki_url: ""                    # e.g. http://10.10.1.15:3100 (blank = local Loki, or none)
+deploy_log_shipping: true               # false = don't ship this server's logs
+loki_retention_period: 336h             # on the monitoring server; 1-3 GB a day is typical
+loki_allowed_sources: []                # extra senders; monitoring_estate servers are always allowed
+# Must match this server's name in the monitoring server's monitoring_estate.
+otel_collector_host_name: "{{ ansible_facts['hostname'] }}"
+otel_collector_nginx_access: false      # also ship Nginx access logs
+otel_collector_journald_extra_units: [] # e.g. [sshd, sudo] for audit use
+# Errors you have accepted, as regexes. They don't count towards the log error-spike
+# and new-error alerts.
+logging_alert_ignore: []
+#  - "websocket: close 1001"
 
 # ---------------------------------------------------------------- host
 firewall_manage: true

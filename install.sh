@@ -28,8 +28,8 @@ declare -A PROFILE_COMPONENTS=(
   [database]="postgresql"
   [calls]="rtcd"
   [search]="opensearch"
-  [monitoring]="prometheus grafana"
-  [all-in-one]="postgresql mattermost nginx rtcd opensearch prometheus grafana"
+  [monitoring]="prometheus loki grafana"
+  [all-in-one]="postgresql mattermost nginx rtcd opensearch prometheus loki grafana"
 )
 declare -A PROFILE_DESCRIPTIONS=(
   [core]="PostgreSQL, Mattermost and Nginx on one server. Fine for small teams."
@@ -37,10 +37,10 @@ declare -A PROFILE_DESCRIPTIONS=(
   [database]="Dedicated PostgreSQL server for Mattermost."
   [calls]="Dedicated Calls media server (rtcd)."
   [search]="Dedicated OpenSearch node for Enterprise search."
-  [monitoring]="Prometheus and Grafana with the Mattermost dashboards."
+  [monitoring]="Prometheus, Loki and Grafana with the Mattermost dashboards and logs."
   [all-in-one]="Everything on one box. Lab and proof-of-concept use only."
 )
-COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch prometheus grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter)
+COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
 
 ANSWERS=""
 PROFILES=""
@@ -661,6 +661,128 @@ choose_components() {
   SELECTED+=" ${extra[*]-} "
 }
 
+# What Prometheus scrapes on this server, as "what (port)", one per line. Keep in step
+# with roles/common/tasks/selection.yml and the firewall tasks of each role.
+scrape_ports() {
+  echo "host metrics, node_exporter (9100)"
+  has_component postgresql && echo "PostgreSQL metrics, postgres_exporter (9187)"
+  has_component nginx && echo "Nginx metrics, nginx_exporter (9113)"
+  has_component opensearch && echo "OpenSearch metrics, opensearch_exporter (9114)"
+  has_component mattermost && [[ "${MM_EDITION:-enterprise}" == enterprise ]] && echo "Mattermost metrics (8067)"
+  has_component rtcd && echo "rtcd metrics (8045)"
+  has_component loki && echo "Loki metrics (3100)"
+  has_component grafana && echo "Grafana metrics (3000)"
+  [[ "$1" == true ]] && echo "the log collector's metrics (8888)"
+  return 0
+}
+
+# Turn what someone typed for Loki into a URL: a URL as given, host:port, or a bare
+# address or name that gets the default port.
+loki_url_from() {
+  local v="$1"
+  if [[ "${v}" == http://* || "${v}" == https://* ]]; then printf '%s' "${v%/}"
+  elif [[ "${v}" =~ ^[^:]+:[0-9]+$ ]]; then printf 'http://%s' "${v}"
+  elif [[ "${v}" == *:* ]]; then printf 'http://[%s]:3100' "${v}"
+  else printf 'http://%s:3100' "${v}"
+  fi
+}
+
+# Monitoring and logs on a server that doesn't run Prometheus: should the monitoring
+# server watch it, and should its logs go to Loki? Each yes installs what's needed
+# here, opens only the ports that needs, and points it at the right server. The
+# monitoring server then has to list this one, which the end of this says how to do.
+monitoring_and_logs() {
+  local watched=false shipped=false scr="" prom_addr="" lsrc lurl line
+  if ! has_component prometheus; then
+    section "Monitoring and logs"
+    info "A monitoring server (Prometheus, Loki and Grafana) can watch this server and keep its logs."
+    info "${C_DIM}For each yes we install what's needed here and open only the ports it needs.${C_OFF}"
+    echo
+    if ask_yn "Should Prometheus on your monitoring server watch this server?" y; then
+      watched=true
+      ask_addresses scr "Address of the Prometheus server (several: comma-separated)" \
+        "Prometheus can't reach this server's metrics without at least one address."
+      emit deploy_monitoring_exporters true
+      emit monitoring_scrape_sources "$(yaml_list "${scr}")"
+      prom_addr="${scr%%,*}"
+      prom_addr="${prom_addr// /}"
+      [[ "${prom_addr}" == */* ]] && prom_addr=""   # a CIDR isn't a server
+    else
+      emit deploy_monitoring_exporters false
+    fi
+  fi
+
+  if has_component loki; then
+    if ! has_component prometheus; then
+      # Nobody else tells this Loki who sends to it, so ask here.
+      echo
+      info "Loki runs here. Its port (3100) opens only to the servers you list."
+      ask lsrc "Servers that send logs here, and the Grafana server (comma-separated IPs; blank = this server only)" ""
+      emit loki_allowed_sources "$(yaml_list "${lsrc}")"
+    fi
+  else
+    echo
+    if ask_yn "Send this server's logs to Loki on your monitoring server?" y; then
+      shipped=true
+      while true; do
+        ask lurl "Address of the Loki server (or its URL)" "${prom_addr}"
+        [[ -n "${lurl}" ]] && break
+        echo "    Give the Loki server's address, e.g. 10.10.1.15, or http://10.10.1.15:3100."
+      done
+      lurl="$(loki_url_from "${lurl}")"
+      emit logging_loki_url "$(yaml_quote "${lurl}")"
+      emit deploy_log_shipping true
+    else
+      emit deploy_log_shipping false
+      if has_component grafana; then
+        ask lurl "Loki server for Grafana to search (address or URL; blank = none)" "${prom_addr}"
+        [[ -n "${lurl}" ]] && lurl="$(loki_url_from "${lurl}")"
+      else
+        lurl=""
+      fi
+      emit logging_loki_url "$(yaml_quote "${lurl}")"
+    fi
+  fi
+
+  [[ "${watched}" == true || "${shipped}" == true ]] || return 0
+  echo
+  say "What this sets up here"
+  if [[ "${watched}" == true ]]; then
+    info "Prometheus at ${scr} gets in to:"
+    while IFS= read -r line; do info "  ${line}"; done < <(scrape_ports "${shipped}")
+  fi
+  if [[ "${shipped}" == true ]]; then
+    info "The OpenTelemetry Collector sends this server's logs to ${lurl}."
+    info "${C_DIM}It connects out, so no port opens here for that.${C_OFF}"
+  fi
+
+  # The monitoring server has to know about this one: its firewall lets it in to
+  # Loki, and Prometheus only scrapes the servers it's told about.
+  local self_ip comps=() c short
+  self_ip="$(primary_ip)"
+  while [[ -z "${self_ip}" ]]; do
+    ask self_ip "This server's address, as the monitoring server sees it" ""
+  done
+  short="$(hostname -s 2>/dev/null || uname -n)"
+  for c in mattermost nginx postgresql rtcd opensearch prometheus loki grafana; do
+    has_component "${c}" && comps+=("${c}")
+  done
+  local joined
+  joined="$(IFS=,; echo "${comps[*]-}")"
+  echo
+  say "Then, on the monitoring server"
+  info "Add this server when the installer asks for the other servers, or add this line"
+  info "to monitoring_estate in its answer file, and run it again:"
+  info "${C_YEL}  - {name: ${short}, address: ${self_ip}, components: [${joined//,/, }]}${C_OFF}"
+  info "${C_DIM}That adds this server's checks, alerts and dashboards there, and opens its firewall to this server:${C_OFF}"
+  [[ "${shipped}" == true ]] && info "${C_DIM}  Loki (3100), so the logs get in${C_OFF}"
+  [[ "${shipped}" != true && -n "${lurl:-}" ]] && has_component grafana \
+    && info "${C_DIM}  Loki (3100), so Grafana here can search the logs${C_OFF}"
+  has_component grafana && info "${C_DIM}  Prometheus (9090), so Grafana here can query it${C_OFF}"
+  has_component prometheus && info "${C_DIM}  Prometheus and the exporters, so this Prometheus can scrape them${C_OFF}"
+  return 0
+}
+
 interview() {
   local answers_out="$1"
   local fqdn
@@ -688,6 +810,7 @@ interview() {
     MM_SITE_URL="${site}"
     ask_choice edition "Edition" enterprise enterprise team
     emit mattermost_edition "${edition}"
+    MM_EDITION="${edition}"
     ask_choice channel "Which build" latest-esr latest-esr latest-stable pinned
     emit mattermost_version_channel "${channel}"
     if [[ "${channel}" == pinned ]]; then
@@ -869,7 +992,9 @@ interview() {
       echo
       info "${C_DIM}Now the other servers. For each one, give its name, address and what it runs.${C_OFF}"
       local estate_lines=() snames=() saddrs=() scomps_list=() sname saddr scomps n bad picked names
-      local i short mods=(mattermost nginx postgresql rtcd opensearch)
+      # Prometheus, Loki and Grafana elsewhere get scraped too, and this server's
+      # firewall opens Prometheus to the ones that query it (see wiring.yml).
+      local i short mods=(mattermost nginx postgresql rtcd opensearch prometheus loki grafana)
       short="$(hostname -s 2>/dev/null || uname -n)"
       while true; do
         estate_lines=() snames=() saddrs=() scomps_list=()
@@ -922,17 +1047,43 @@ interview() {
         echo "    Let's go through the servers again."
       done
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
-        local self_ip
+        local self_ip scrapers grafanas="" queriers=""
         self_ip="$(primary_ip)"
         while [[ -z "${self_ip}" ]]; do
           ask self_ip "This server's address, as the other servers see it" ""
         done
         echo "monitoring_estate:" >> "${answers_out}"
         printf '%s\n' "${estate_lines[@]}" >> "${answers_out}"
+        # Every Prometheus in the estate scrapes every server, so they all go in
+        # monitoring_scrape_sources. Grafana and other Prometheus servers query this one.
+        scrapers="${self_ip}"
+        for i in "${!snames[@]}"; do
+          [[ ", ${scomps_list[$i]}, " == *", prometheus, "* ]] && scrapers+=", ${saddrs[$i]}"
+          [[ ", ${scomps_list[$i]}, " == *", grafana, "* ]] && grafanas+="${grafanas:+, }${snames[$i]}"
+          [[ ", ${scomps_list[$i]}, " == *", grafana, "* || ", ${scomps_list[$i]}, " == *", prometheus, "* ]] \
+            && queriers+="${queriers:+, }${snames[$i]}"
+        done
         echo
-        info "Install each of those servers with these two answers so this server can scrape them:"
+        if has_component loki; then
+          info "When you install each of those servers, answer yes to being watched by Prometheus"
+          info "and to sending its logs to Loki, and give ${self_ip}. In an answer file that's:"
+        else
+          info "When you install each of those servers, answer yes to being watched by Prometheus"
+          info "and give ${self_ip}. In an answer file that's:"
+        fi
         info "${C_YEL}deploy_monitoring_exporters: true${C_OFF}"
-        info "${C_YEL}monitoring_scrape_sources: [${self_ip}]${C_OFF}"
+        info "${C_YEL}monitoring_scrape_sources: [${scrapers}]${C_OFF}"
+        has_component loki && info "${C_YEL}logging_loki_url: http://${self_ip}:3100${C_OFF}"
+        if [[ -n "${grafanas}" ]]; then
+          info "On ${grafanas}, also:"
+          info "${C_YEL}grafana_prometheus_url: http://${self_ip}:9090${C_OFF}"
+        fi
+        echo
+        info "${C_DIM}This server's firewall will be opened for them:${C_OFF}"
+        [[ -n "${queriers}" ]] && info "${C_DIM}  Prometheus (9090) to ${queriers}${C_OFF}"
+        has_component loki && info "${C_DIM}  Loki (3100) to every server listed, for log shipping and queries${C_OFF}"
+        [[ "${scrapers}" != "${self_ip}" ]] && info "${C_DIM}  exporters and metrics ports to the other Prometheus servers${C_OFF}"
+        [[ -z "${queriers}" ]] && ! has_component loki && info "${C_DIM}  nothing extra: this server only reaches out to them${C_OFF}"
       fi
     else
       emit monitoring_alerts_enabled false
@@ -950,17 +1101,7 @@ interview() {
     fi
   fi
 
-  if ! has_component prometheus; then
-    section "Monitoring"
-    info "Exporters let a monitoring server elsewhere watch this one (host, and each component here)."
-    if ask_yn "Install exporters for a monitoring server elsewhere?" y; then
-      local scr
-      emit deploy_monitoring_exporters true
-      ask_addresses scr "Prometheus server addresses allowed to scrape this server" \
-        "Prometheus can't scrape the exporters without at least one address."
-      emit monitoring_scrape_sources "$(yaml_list "${scr}")"
-    fi
-  fi
+  monitoring_and_logs
 
   if [[ "${ONLINE}" != true && -z "${OFFLINE_SOURCE}" ]]; then
     section "Offline artifacts"

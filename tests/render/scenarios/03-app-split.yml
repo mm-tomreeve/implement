@@ -18,3 +18,4 @@ deploy_monitoring_exporters: true
 monitoring_scrape_sources: [10.10.9.5]
 tls_mode: provided
 tls_source_dir: /root/certs
+logging_loki_url: http://10.10.9.5:3100

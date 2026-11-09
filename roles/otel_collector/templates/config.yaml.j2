@@ -1,0 +1,218 @@
+# {{ ansible_managed }}
+# Ships this server's logs to Loki over OTLP/HTTP. Based on the samples in the Mattermost
+# docs guide "Deploy Grafana Loki for centralized logging", with two changes: read positions
+# are saved in {{ otel_collector_data_dir }} so restarts don't ship lines twice, and new
+# installs start at the end of each file rather than backfilling (old lines would fire alerts).
+{% set files = _otel_files %}
+{% set journal = otel_collector_journald | bool and _otel_units | length > 0 %}
+{% set kernel = otel_collector_kernel | bool %}
+extensions:
+  file_storage:
+    directory: {{ otel_collector_data_dir }}
+
+receivers:
+{% if 'mattermost' in files %}
+  # Mattermost's JSON log. The json parser in LogQL reads its fields.
+  file_log/mattermost:
+    include: ["{{ mattermost_log_dir }}/mattermost.log"]
+    start_at: end
+    storage: file_storage
+    operators:
+      - type: regex_parser
+        regex: '"level":\s*"(?P<sev>[a-z]+)"'
+        on_error: send_quiet
+        severity:
+          parse_from: attributes.sev
+          mapping:
+            debug: [debug]
+            info: [info]
+            warn: [warn]
+            error: [error]
+            fatal: [critical, fatal, panic]
+      - {type: remove, field: attributes.sev, if: 'attributes.sev != nil'}
+    resource:
+      service.name: mattermost
+{% endif %}
+{% if 'postgresql' in files %}
+  # PostgreSQL in jsonlog format: error_severity, state_code (SQLSTATE), message, ...
+  file_log/postgresql:
+    include: ["{{ postgresql_log_dir }}/*.json"]
+    start_at: end
+    storage: file_storage
+    operators:
+      - type: regex_parser
+        regex: '"error_severity":\s*"(?P<sev>[A-Z0-9]+)"'
+        on_error: send_quiet
+        severity:
+          parse_from: attributes.sev
+          mapping:
+            debug: [DEBUG1, DEBUG2, DEBUG3, DEBUG4, DEBUG5]
+            info: [LOG, INFO, NOTICE]
+            warn: [WARNING]
+            # FATAL ends one session (a failed login, say), not the server.
+            error: [ERROR, FATAL]
+            fatal: [PANIC]
+      - {type: remove, field: attributes.sev, if: 'attributes.sev != nil'}
+    resource:
+      service.name: postgresql
+{% endif %}
+{% if 'nginx' in files %}
+  file_log/nginx:
+    include: ["/var/log/nginx/error.log"{{ ', "/var/log/nginx/access.log"' if otel_collector_nginx_access | bool else '' }}]
+    start_at: end
+    storage: file_storage
+    operators:
+      - type: regex_parser
+        regex: '^\S+ \S+ \[(?P<sev>[a-z]+)\]'
+        on_error: send_quiet
+        severity:
+          parse_from: attributes.sev
+          mapping:
+            debug: [debug]
+            info: [info, notice]
+            warn: [warn]
+            error: [error, crit]
+            fatal: [alert, emerg]
+      - {type: remove, field: attributes.sev, if: 'attributes.sev != nil'}
+    resource:
+      service.name: nginx
+{% endif %}
+{% if 'opensearch' in files %}
+  # Warnings and errors only; INFO is chatty and never needed for alerting.
+  file_log/opensearch:
+    include: ["{{ opensearch_log_dir }}/*.log"]
+    exclude: ["{{ opensearch_log_dir }}/*_deprecation.log", "{{ opensearch_log_dir }}/*slowlog.log",
+              "{{ opensearch_log_dir }}/*detailslog.log", "{{ opensearch_log_dir }}/*_audit.log",
+              "{{ opensearch_log_dir }}/gc.log*"]
+    start_at: end
+    storage: file_storage
+    multiline:
+      line_start_pattern: '^\[\d{4}-\d{2}-\d{2}'
+    operators:
+      - type: filter
+        expr: 'body matches "^\\[[^\\]]+\\]\\[(INFO|DEBUG|TRACE)"'
+      - type: regex_parser
+        regex: '^\[[^\]]+\]\[(?P<sev>[A-Z]+)\s*\]'
+        on_error: send_quiet
+        severity:
+          parse_from: attributes.sev
+          mapping:
+            warn: [WARN]
+            error: [ERROR]
+            fatal: [FATAL]
+      - {type: remove, field: attributes.sev, if: 'attributes.sev != nil'}
+    resource:
+      service.name: opensearch
+{% endif %}
+{% if journal %}
+  # Units that only log to the journal, and systemd's own messages about all of our
+  # units (start, stop, exit codes, restart loops), which never reach the log files.
+  journald/units:
+    units: {{ _otel_units | map('regex_replace', '$', '.service') | list | to_json }}
+    priority: info
+    start_at: end
+    storage: file_storage
+{% endif %}
+{% if kernel %}
+  # Kernel errors: disk I/O and filesystem trouble shows here before anything else notices.
+  journald/kernel:
+    matches:
+      - _TRANSPORT: kernel
+    priority: err
+    start_at: end
+    storage: file_storage
+{% endif %}
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: {{ otel_collector_memory_mib }}
+    spike_limit_mib: {{ (otel_collector_memory_mib | int / 4) | int }}
+  resource:
+    attributes:
+      - {key: host.name, value: {{ otel_collector_host_name | to_json }}, action: upsert}
+      # The docs' logs dashboard filters on this one.
+      - {key: service.instance.id, value: {{ otel_collector_host_name | to_json }}, action: upsert}
+      - {key: deployment, value: {{ deploy_name | to_json }}, action: upsert}
+{% if journal or kernel %}
+  # Mattermost writes every line to the journal as well as to mattermost.log (console
+  # logging is on). Drop those JSON copies, but keep what isn't JSON: Go panics and
+  # "fatal error:" crashes only ever go to stderr.
+  filter/mattermost_copies:
+    error_mode: ignore
+    log_conditions:
+      - 'log.body["_COMM"] == "mattermost" and IsMatch(log.body["MESSAGE"], "^\\s*\\{")'
+  # Flatten journal entries so Loki queries look the same as for files: the message as
+  # the line, the unit as service_name, and PRIORITY as the severity.
+  transform/journald:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.attributes["unit"], log.body["_SYSTEMD_UNIT"]) where log.body["_SYSTEMD_UNIT"] != nil
+          - set(log.attributes["unit"], log.body["UNIT"]) where log.body["UNIT"] != nil
+          - set(log.attributes["comm"], log.body["_COMM"]) where log.body["_COMM"] != nil
+          - set(log.attributes["priority"], log.body["PRIORITY"]) where log.body["PRIORITY"] != nil
+          - set(log.severity_number, SEVERITY_NUMBER_FATAL) where log.body["PRIORITY"] == "0" or log.body["PRIORITY"] == "1" or log.body["PRIORITY"] == "2"
+          - set(log.severity_number, SEVERITY_NUMBER_ERROR) where log.body["PRIORITY"] == "3"
+          - set(log.severity_number, SEVERITY_NUMBER_WARN) where log.body["PRIORITY"] == "4"
+          - set(log.severity_number, SEVERITY_NUMBER_INFO) where log.body["PRIORITY"] == "5" or log.body["PRIORITY"] == "6"
+          - set(log.severity_number, SEVERITY_NUMBER_DEBUG) where log.body["PRIORITY"] == "7"
+          - set(log.attributes["service.name"], log.attributes["unit"]) where log.attributes["unit"] != nil
+          - replace_pattern(log.attributes["service.name"], "\\.service$", "") where log.attributes["service.name"] != nil
+          - set(log.attributes["service.name"], "kernel") where log.body["_TRANSPORT"] == "kernel"
+          - set(log.attributes["service.name"], "journal") where log.attributes["service.name"] == nil
+          - set(log.body, log.body["MESSAGE"])
+  # Moves service.name from each entry up to the resource, where Loki makes it a label.
+  groupbyattrs/service:
+    keys: [service.name]
+{% endif %}
+  # One spelling of the level for every source, which Loki turns into detected_level.
+  transform/severity_text:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.severity_text, "fatal") where log.severity_number >= SEVERITY_NUMBER_FATAL
+          - set(log.severity_text, "error") where log.severity_number >= SEVERITY_NUMBER_ERROR and log.severity_number < SEVERITY_NUMBER_FATAL
+          - set(log.severity_text, "warn") where log.severity_number >= SEVERITY_NUMBER_WARN and log.severity_number < SEVERITY_NUMBER_ERROR
+          - set(log.severity_text, "info") where log.severity_number >= SEVERITY_NUMBER_INFO and log.severity_number < SEVERITY_NUMBER_WARN
+          - set(log.severity_text, "debug") where log.severity_number > SEVERITY_NUMBER_UNSPECIFIED and log.severity_number < SEVERITY_NUMBER_INFO
+  batch: {}
+
+exporters:
+  otlp_http/loki:
+    endpoint: {{ (mmd_loki_url ~ '/otlp') | to_json }}
+    # Queue on disk, so a Loki restart or a network blip doesn't lose lines.
+    sending_queue:
+      enabled: true
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 1h
+
+service:
+  extensions: [file_storage]
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: {{ mmd_exporter_bind | to_json }}
+                port: {{ otel_collector_metrics_port }}
+  pipelines:
+{% if files %}
+    logs/files:
+      receivers: {{ files | map('regex_replace', '^', 'file_log/') | list | to_json }}
+      processors: [memory_limiter, transform/severity_text, resource, batch]
+      exporters: [otlp_http/loki]
+{% endif %}
+{% if journal or kernel %}
+    logs/journal:
+      receivers: {{ ((['journald/units'] if journal else []) + (['journald/kernel'] if kernel else [])) | to_json }}
+      processors: [memory_limiter, filter/mattermost_copies, transform/journald, transform/severity_text, groupbyattrs/service, resource, batch]
+      exporters: [otlp_http/loki]
+{% endif %}

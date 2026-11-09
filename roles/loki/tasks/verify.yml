@@ -1,0 +1,65 @@
+---
+- name: Probe the Loki service
+  ansible.builtin.command: systemctl is-active loki  # noqa: command-instead-of-module
+  register: _v_loki_service
+  changed_when: false
+  failed_when: false
+
+- name: Ask Loki whether it is ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ loki_port }}/ready"
+    timeout: 10
+  register: _v_loki_ready
+  failed_when: false
+
+- name: Wait for the first logs to arrive
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ loki_port }}/loki/api/v1/label/service_name/values"
+    return_content: true
+    timeout: 10
+  register: _v_loki_services
+  until: _v_loki_services.json.data | default([]) | length > 0
+  retries: 6
+  delay: 10
+  failed_when: false
+
+- name: List the servers that have shipped logs in the last 15 minutes
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1:{{ loki_port }}/loki/api/v1/label/host_name/values?start={{ ((now(utc=true).timestamp() - 900) * 1000000000) | int }}
+    return_content: true
+    timeout: 10
+  register: _v_loki_hosts
+  failed_when: false
+
+- name: Record Loki checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _shipping: "{{ _v_loki_hosts.json.data | default([]) }}"
+    _expected: "{{ mmd_estate | default([]) | map(attribute='name') | list }}"
+    _silent: "{{ _expected | difference(_shipping) }}"
+    checks:
+      - component: loki
+        name: Service is active
+        ok: "{{ _v_loki_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_loki_service.stdout }}"
+      - component: loki
+        name: Loki is ready
+        ok: "{{ _v_loki_ready.status | default(0) == 200 }}"
+        detail: "HTTP {{ _v_loki_ready.status | default('none') }} on port {{ loki_port }}"
+      - component: loki
+        name: Logs are arriving
+        severity: warning
+        ok: "{{ _v_loki_services.json.data | default([]) | length > 0 }}"
+        detail: "services seen: {{ _v_loki_services.json.data | default([]) | join(', ') or 'none yet' }}"
+      - component: loki
+        name: Every estate server ships logs
+        severity: warning
+        ok: "{{ _silent | length == 0 }}"
+        detail: >-
+          {{ ('all ' ~ (_expected | length) ~ ' servers sent logs in the last 15 minutes') if not _silent
+             else ('nothing in 15 minutes from ' ~ (_silent | join(', '))
+                   ~ '. Install them with logging_loki_url pointing here, and make sure otel_collector_host_name'
+                   ~ ' matches their name in monitoring_estate') }}

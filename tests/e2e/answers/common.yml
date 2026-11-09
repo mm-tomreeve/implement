@@ -14,3 +14,5 @@ opensearch_heap_mb: 512
 grafana_admin_password: E2eGrafanaPassw0rd
 deploy_monitoring_exporters: true
 monitoring_scrape_sources: [172.30.10.15]
+# Every server ships its logs to Loki on mon01 (mon01 uses its own Loki).
+logging_loki_url: http://172.30.10.15:3100

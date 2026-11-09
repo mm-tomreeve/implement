@@ -108,8 +108,10 @@ Before production, deal with these:
 {% if has.mm and mattermost_db_replica_hosts %}{% set _ = ext.append(['PostgreSQL read replicas', mattermost_db_replica_hosts | join(', '), 'Mattermost sends reads here (Enterprise)']) %}{% endif %}
 {% if has.os and opensearch_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', opensearch_allowed_clients | join(', '), 'Allowed to query OpenSearch']) %}{% endif %}
 {% if has.rtcd and rtcd_api_sources %}{% set _ = ext.append(['Mattermost app servers', rtcd_api_sources | join(', '), 'Allowed to use the rtcd API']) %}{% endif %}
-{% if monitoring_scrape_sources %}{% set _ = ext.append(['Prometheus servers', monitoring_scrape_sources | join(', '), 'Allowed to scrape metrics here']) %}{% endif %}
+{% if mmd_scrape_sources %}{% set _ = ext.append(['Prometheus servers', mmd_scrape_sources | join(', '), 'Allowed to scrape metrics here']) %}{% endif %}
 {% for job in prometheus_scrape_targets if has.prom %}{% set _ = ext.append(['Scrape job ' ~ job.job, job.targets | join(', '), 'Scraped by this Prometheus']) %}{% endfor %}
+{% if 'otel_collector' in mmd_selected and 'loki' not in mmd_selected %}{% set _ = ext.append(['Loki', mmd_loki_url, 'This server ships its logs here']) %}{% endif %}
+{% if 'loki' in mmd_selected and mmd_loki_sources | default([]) %}{% set _ = ext.append(['Estate servers', mmd_loki_sources | join(', '), 'Allowed to push logs to Loki']) %}{% endif %}
 {% if ext %}
 | What | Where | Why |
 |---|---|---|
@@ -525,7 +527,7 @@ and keeps {{ prometheus_retention }} of data. Each target is labelled with its s
 
 | Server | Address | Runs | Scraped |
 |---|---|---|---|
-{% set scrape_jobs = {'postgresql': 'postgres_exporter', 'nginx': 'nginx_exporter', 'opensearch': 'opensearch_exporter', 'mattermost': 'Mattermost metrics', 'rtcd': 'rtcd metrics', 'prometheus': 'Prometheus', 'grafana': 'Grafana'} %}
+{% set scrape_jobs = {'postgresql': 'postgres_exporter', 'nginx': 'nginx_exporter', 'opensearch': 'opensearch_exporter', 'mattermost': 'Mattermost metrics', 'rtcd': 'rtcd metrics', 'prometheus': 'Prometheus', 'loki': 'Loki', 'grafana': 'Grafana'} %}
 {% for s in mmd_estate | default([]) %}
 | {{ s.name }} | {{ s.address }} | {{ s.components | join(', ') | default('host only', true) }} | node_exporter{% for c in s.components %}{% if c in scrape_jobs %}, {{ scrape_jobs[c] }}{% endif %}{% endfor %}{{ ', Calls port check' if 'rtcd' in s.components and 'blackbox_exporter' in sel else '' }} |
 {% endfor %}

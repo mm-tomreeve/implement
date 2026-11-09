@@ -1,0 +1,57 @@
+---
+- name: Probe the collector service
+  ansible.builtin.command: systemctl is-active otelcol  # noqa: command-instead-of-module
+  register: _v_otel_service
+  changed_when: false
+  failed_when: false
+
+- name: Check this server can reach Loki
+  ansible.builtin.uri:
+    url: "{{ mmd_loki_url }}/ready"
+    timeout: 10
+  register: _v_otel_loki
+  failed_when: false
+
+- name: Read the collector's own metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ otel_collector_metrics_port }}/metrics"
+    return_content: true
+    timeout: 10
+  register: _v_otel_metrics
+  failed_when: false
+
+- name: Record collector checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    # Counter names gained a _total suffix in newer releases; accept both.
+    _failed: >-
+      {{ _v_otel_metrics.content | default('')
+         | regex_findall('(?m)^otelcol_exporter_send_failed_log_records(?:_total)?\{[^}]*\} ([0-9.e+]+)$')
+         | map('float') | sum }}
+    _sent: >-
+      {{ _v_otel_metrics.content | default('')
+         | regex_findall('(?m)^otelcol_exporter_sent_log_records(?:_total)?\{[^}]*\} ([0-9.e+]+)$')
+         | map('float') | sum }}
+    checks:
+      - component: otel_collector
+        name: Service is active
+        severity: warning
+        ok: "{{ _v_otel_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_otel_service.stdout }} (journalctl -u otelcol)"
+      - component: otel_collector
+        name: Loki is reachable
+        severity: warning
+        ok: "{{ _v_otel_loki.status | default(0) == 200 }}"
+        detail: >-
+          {{ mmd_loki_url ~ ' answers' if _v_otel_loki.status | default(0) == 200
+             else 'HTTP ' ~ (_v_otel_loki.status | default('none')) ~ ' from ' ~ mmd_loki_url
+                  ~ '/ready. Check the address and that the monitoring server lets this one in on port ' ~ loki_port }}
+      - component: otel_collector
+        name: No lines failed to send
+        severity: warning
+        ok: "{{ _v_otel_metrics.status | default(0) == 200 and _failed | float == 0 }}"
+        detail: >-
+          {{ ('metrics not answering on port ' ~ otel_collector_metrics_port) if _v_otel_metrics.status | default(0) != 200
+             else ((_sent | float | int) ~ ' sent, ' ~ (_failed | float | int) ~ ' failed so far') }}

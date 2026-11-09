@@ -105,7 +105,7 @@ in_box app01 'bash /opt/mmd/tests/e2e/functional.sh' | tee "${OUT}/functional.lo
 log "Every alert query against live data on mon01 (after two scrape intervals)"
 sleep 70
 observability_rc=0
-in_box mon01 'python3 -I /opt/mmd/tests/e2e/observability_check.py' | tee "${OUT}/observability.log" || observability_rc=$?
+in_box mon01 'python3 -I /opt/mmd/tests/e2e/observability_check.py --selftest' | tee "${OUT}/observability.log" || observability_rc=$?
 
 log "Re-running every server's checks now the whole estate is up"
 for s in "${SERVERS[@]}"; do
