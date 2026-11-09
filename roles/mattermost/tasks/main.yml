@@ -253,16 +253,21 @@
     mode: "0644"
   notify: Restart mattermost
 
+# Enable before restarting, so a failed first start is still enabled at boot.
+- name: Enable Mattermost at boot
+  ansible.builtin.systemd:
+    name: mattermost
+    enabled: true
+    daemon_reload: true
+
 # Restart first, so a new version or config starts once, not started and then restarted.
 - name: Apply pending restarts
   ansible.builtin.meta: flush_handlers
 
-- name: Enable and start Mattermost
+- name: Start Mattermost
   ansible.builtin.systemd:
     name: mattermost
     state: started
-    enabled: true
-    daemon_reload: true
 
 - name: Open Mattermost to remote proxies
   ansible.builtin.include_role:
