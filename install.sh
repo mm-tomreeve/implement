@@ -284,24 +284,24 @@ list_sources() {
   done
 }
 
-# Check every source in parallel. Any HTTP answer counts as reachable (api.github.com
-# answers 403 when it rate-limits); only a network failure or timeout counts as down.
+# Check every source in parallel and print each result as it comes in. Any HTTP
+# answer counts as reachable (api.github.com answers 403 when it rate-limits); only
+# a network failure or timeout counts as down.
 check_sources() {
   local tmp h failed=0
   tmp="$(mktemp -d)"
   for h in "${SOURCE_HOSTS[@]}"; do
-    ( if curl -sS -o /dev/null --max-time 10 --retry 1 --retry-delay 2 "https://${h}/" 2>/dev/null; then
-        echo ok; else echo fail; fi > "${tmp}/${h}" ) &
+    ( status=fail mark="${C_RED}${C_BOLD}FAIL${C_OFF}"
+      if curl -sS -o /dev/null --max-time 5 --retry 1 --retry-delay 2 "https://${h}/" 2>/dev/null; then
+        status=ok mark="${C_GRN}${C_BOLD}ok  ${C_OFF}"
+      fi
+      echo "${status}" > "${tmp}/${h}"
+      printf '      %s %s %s\n' "${mark}" "$(printf '%-38s' "${h}")" "${C_DIM}${SOURCE_PURPOSE[${h}]}${C_OFF}" ) &
   done
   wait
   for h in "${SOURCE_HOSTS[@]}"; do
     SOURCE_OK[${h}]="$(cat "${tmp}/${h}")"
-    if [[ "${SOURCE_OK[${h}]}" == ok ]]; then
-      printf '      %s %s %s\n' "${C_GRN}${C_BOLD}ok  ${C_OFF}" "$(printf '%-38s' "${h}")" "${C_DIM}${SOURCE_PURPOSE[${h}]}${C_OFF}"
-    else
-      printf '      %s %s %s\n' "${C_RED}${C_BOLD}FAIL${C_OFF}" "$(printf '%-38s' "${h}")" "${C_DIM}${SOURCE_PURPOSE[${h}]}${C_OFF}"
-      failed=$((failed + 1))
-    fi
+    [[ "${SOURCE_OK[${h}]}" == ok ]] || failed=$((failed + 1))
   done
   rm -rf "${tmp}"
   [[ "${SOURCE_OK[galaxy.ansible.com]}" == ok ]] && GALAXY_OK=true
