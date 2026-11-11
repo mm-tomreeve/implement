@@ -117,7 +117,7 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 
 | Check | Info | Warning | Critical | For | What to do |
 |---|---|---|---|---|---|
-| Metrics target down `target-down` |  |  | < 1 | 3m | The server or the exporter is down, or the firewall is blocking the scrape. Check `systemctl status` for the service on that host, then `firewall-cmd --list-all`. |
+| Metrics target down `target-down` |  |  | < 1 | 3m | The server, or one of its exporters, is down, or the firewall is blocking the scrape. Check the "Up by job and server" panel on the host dashboard for which job, then `systemctl status` for that service on the host, then `firewall-cmd --list-all`. |
 | Mattermost Implement service not running `service-not-active` |  |  | < 1 | 2m | Run `systemctl status {{ $labels.name }}` and `journalctl -u {{ $labels.name }} -n 100` on the host. |
 | Disk usage `disk-used` | > 70% | > 80% | > 95% | 10m | Find what is growing with `du -xh --max-depth=2 {{ $labels.mountpoint }} \| sort -h \| tail`. Usual suspects: Mattermost data, PostgreSQL WAL, OpenSearch indices, logs in /var/log. |
 | Disk predicted full within 24 hours `disk-fills-24h` |  | < 0 GiB |  | 30m | Growth over the last 6 hours points to a full disk tomorrow. Find the cause before the usage alerts start. |
