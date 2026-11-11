@@ -45,6 +45,9 @@ class Consistency(unittest.TestCase):
         mods = re.search(r"local i short mods=\(([^)]*)\)", INSTALL_SH).group(1).split()
         with open(os.path.join(ROOT, "roles/prometheus/templates/prometheus.yml.j2"), encoding="utf-8") as handle:
             jobs = set(re.findall(r"'component': '(\w+)'", handle.read()))
+        # NFS has no exporter of its own. The node job scrapes every server in the estate,
+        # and node_exporter's nfsd, nfs and mountstats collectors carry the NFS metrics.
+        jobs.add("nfs")
         self.assertEqual(sorted(set(mods) - jobs), [])
         self.assertTrue({"prometheus", "loki", "grafana"} <= set(mods))
 

@@ -47,7 +47,7 @@
         mmd_artifact_mode: online
         mmd_artifact_warnings: []
         mmd_artifacts: >-
-          {%- set out = {} -%}{%- for c in mmd_selected if c not in ['postgresql', 'nginx'] -%}
+          {%- set out = {} -%}{%- for c in mmd_selected if c not in ['postgresql', 'nginx', 'nfs'] -%}
           {%- set _ = out.update({c: {'name': c, 'version': '1.2.3', 'filename': c ~ '-1.2.3-linux-amd64.tar.gz',
                 'sha256': 'ab' * 32, 'checksum_verified': true, 'checksum_source': 'github-asset-digest',
                 'signature': 'verified' if c in ['mattermost', 'opensearch'] else 'not published',
@@ -58,6 +58,11 @@
           - {component: mattermost, name: API ping returns OK, severity: critical, status: pass, detail: "HTTP 200, status OK"}
           - {component: nginx, name: Websocket upgrade reaches Mattermost, severity: warning, status: warn, detail: "HTTP 400 | pipe in detail"}
           - {component: nginx, name: Mattermost answers over HTTPS, severity: critical, status: skip, detail: TLS not configured yet}
+        # What the nfs role works out from the ids on the server it exports from.
+        mmd_nfs_uid: "997"
+        mmd_nfs_gid: "995"
+        mmd_nfs_rw_options: rw,sync,no_subtree_check,all_squash,anonuid=997,anongid=995
+        mmd_nfs_ro_options: ro,sync,no_subtree_check,all_squash,anonuid=997,anongid=995
         mmd_host_firewall: ["public (active)", "  services: ssh", "  ports: 80/tcp 443/tcp"]
         mmd_host_selinux: Enforcing
         mmd_host_disk: ["/ 34", "/var/lib/pgsql 12"]

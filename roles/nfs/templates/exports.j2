@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+# One line per export: the directory, then every client with its options.
+# NFSv4 only, so clients mount {{ ansible_facts['fqdn'] }}:{{ nfs_export_dir }} over 2049/tcp.
+{% if mmd_nfs_rw_clients %}
+{{ nfs_export_dir }} {% for c in mmd_nfs_rw_clients %}{{ c }}({{ mmd_nfs_rw_options }}){{ ' ' if not loop.last }}{% endfor %}
+
+{% endif %}
+{% if nfs_readonly_clients %}
+{{ nfs_export_dir }} {% for c in nfs_readonly_clients %}{{ c }}({{ mmd_nfs_ro_options }}){{ ' ' if not loop.last }}{% endfor %}
+
+{% endif %}

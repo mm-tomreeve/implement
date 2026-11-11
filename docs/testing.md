@@ -45,6 +45,9 @@ n/a in the report.
 | opensearch | Service active, cluster green or yellow | critical |
 | opensearch | Requests without credentials refused (security on) | critical |
 | opensearch | analysis-icu plugin installed | warning |
+| nfs | Service active and the kernel has nfsd threads running | critical |
+| nfs | Listening on 2049, the share is exported and every listed client is in the export | critical |
+| nfs | The share's owner can write to it, NFSv3 and UDP are off, and the share has space | warning |
 | prometheus | Service active and ready | critical |
 | prometheus | All scrape targets up | warning |
 | grafana | Service active and health OK | critical |
@@ -81,8 +84,8 @@ artifacts role, the pinned GPG fingerprints against the resolver, and the exampl
 against the defaults.
 
 `make render` runs the real plan tasks and report role against made-up facts and results for
-the layouts in `tests/render/scenarios/` (core, all-in-one, split app server, database, monitoring,
-and a failed install). It needs no root and no RHEL, and it catches most template and wiring
+the layouts in `tests/render/scenarios/` (core, all-in-one, split app server, database, NFS storage,
+monitoring, and a failed install). It needs no root and no RHEL, and it catches most template and wiring
 mistakes. The output in `tests/render/out/` doubles as sample documents to show a customer.
 It also runs `tests/render/input_files.yml`, which points the answer file's file settings at
 real and missing files in a scratch directory and checks the plan names each missing one.

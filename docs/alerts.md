@@ -8,7 +8,8 @@ the estate and what each one runs. From that it builds:
   (a TCP connect from the monitoring server; UDP and reachability from users' networks aren't tested),
 - the alert rules below, in Grafana, in the *Mattermost Implement* folder,
 - log checks against Loki, when the estate ships its logs there ([logging.md](logging.md)),
-- dashboards per module: an estate overview, servers, Mattermost, PostgreSQL, Nginx, OpenSearch and Calls.
+- dashboards per module: an estate overview, servers, Mattermost, PostgreSQL, Nginx, OpenSearch, Calls
+  and NFS storage.
 
 Only rules for modules that exist in the estate are created.
 
@@ -21,7 +22,7 @@ carries these labels:
 | Label | Values |
 |---|---|
 | `severity` | `info`, `warning`, `critical` |
-| `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `monitoring` |
+| `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `nfs`, `monitoring` |
 | `mmi_rule` | the check's id, as in the tables below |
 | `signal` | `metrics` (Prometheus) or `logs` (Loki) |
 | `deployment` | `deploy_name` from the answer file |
@@ -200,6 +201,16 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 | UDP receive buffer overflows `udp-buffer-errors` |  | > 0/s | > 50/s | 5m | Media packets are being lost before rtcd reads them. Check net.core.rmem_max and CPU on the host. |
 | rtcd media errors `rtcd-errors` | > 10 | > 50 | > 200 | 0s | Check `journalctl -u rtcd` for the error types. Network paths and ICE settings are the usual cause. |
 | Calls packet loss reported by clients `rtcd-packet-loss` | > 2% | > 5% | > 10% | 10m | Users will hear choppy audio. Check bandwidth to the rtcd server and UDP buffer overflows. |
+
+### NFS storage
+
+| Check | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|
+| NFS server RPC errors `nfs-rpc-errors` |  | > 0/s | > 1/s | 10m | Clients are being refused. auth errors usually mean a client outside the export list or a mismatched sec= setting; check `exportfs -v` and `journalctl -u nfs-server`. |
+| NFS stale file handles `nfs-stale-handles` |  | > 0 | > 100 | 5m | Clients are holding handles the server no longer knows: the export was re-created, the filesystem was remounted, or files were deleted underneath an open client. Remount the share on the client. |
+| NFS mount not responding `nfs-mount-timeouts` |  | > 0/min | > 1/min | 5m | The NFS server isn't answering. Uploads and downloads hang while this lasts. Check the server is up, that port 2049 is open to this client, and the network between them. |
+| NFS operation latency `nfs-mount-latency` | > 20 ms | > 50 ms | > 200 ms | 15m | File uploads and previews are slow for everyone on this server. Check the NFS server's disk and network, and that both ends are on the same subnet rather than crossing a firewall or a VPN. |
+| NFS retransmissions `nfs-retransmits` | > 1% | > 5% | > 10% | 15m | Replies are being lost or are too slow, so the client asks again. Look for packet loss between the client and the NFS server, and at load on the server. |
 
 ### Monitoring
 

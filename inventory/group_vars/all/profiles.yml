@@ -17,6 +17,9 @@ mmd_profiles:
   search:
     description: Dedicated OpenSearch node for Enterprise search.
     components: [opensearch]
+  storage:
+    description: NFS file storage for the Mattermost data directory.
+    components: [nfs]
   monitoring:
     description: Prometheus, Loki and Grafana with the Mattermost dashboards and logs.
     components: [prometheus, loki, grafana]
@@ -26,6 +29,7 @@ mmd_profiles:
 
 # Install order. Things other components depend on come first.
 mmd_component_order:
+  - nfs
   - postgresql
   - opensearch
   - rtcd

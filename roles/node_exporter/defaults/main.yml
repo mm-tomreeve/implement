@@ -1,8 +1,11 @@
 ---
 node_exporter_user: node_exporter
-node_exporter_collectors: [systemd]
+# mountstats is off by default in node_exporter. It is what the NFS alerts on the
+# client side read; on a server with no NFS mounts it produces nothing.
+node_exporter_collectors: [systemd, mountstats]
 # The systemd collector only reports the units Mattermost Implement cares about.
-node_exporter_units: [mattermost, postgresql, nginx, rtcd, opensearch, prometheus, grafana, node_exporter,
-                      postgres_exporter, nginx_exporter, opensearch_exporter, blackbox_exporter, chronyd]
+node_exporter_units: [mattermost, postgresql, nginx, rtcd, opensearch, nfs-server, prometheus, grafana,
+                      node_exporter, postgres_exporter, nginx_exporter, opensearch_exporter, blackbox_exporter,
+                      chronyd]
 # firewalld is only watched when we manage it; otherwise "not running" may be deliberate.
 node_exporter_watched_units: "{{ node_exporter_units + (['firewalld'] if firewall_manage | bool else []) }}"

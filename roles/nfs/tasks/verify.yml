@@ -1,0 +1,107 @@
+---
+# verify.yml also runs on its own (install.sh --verify-only), so the report's
+# mount command and export options are worked out here too.
+- name: Work out the ids and the export options
+  ansible.builtin.include_tasks: facts.yml
+
+- name: Probe the NFS server service
+  ansible.builtin.command: systemctl is-active nfs-server  # noqa: command-instead-of-module
+  register: _v_nfs_service
+  changed_when: false
+  failed_when: false
+
+- name: Count the kernel's nfsd threads
+  ansible.builtin.slurp:
+    src: /proc/fs/nfsd/threads
+  register: _v_nfs_threads
+  failed_when: false
+
+- name: Read the NFS versions the kernel is serving
+  ansible.builtin.slurp:
+    src: /proc/fs/nfsd/versions
+  register: _v_nfs_versions
+  failed_when: false
+
+- name: List what is exported now
+  ansible.builtin.command: exportfs -s
+  register: _v_nfs_exports
+  changed_when: false
+  failed_when: false
+
+- name: Check the NFS port is listening
+  ansible.builtin.command: ss -Hlnt sport = :{{ nfs_port }}
+  register: _v_nfs_listen
+  changed_when: false
+  failed_when: false
+
+- name: Check the owner can write to the share
+  ansible.builtin.command: runuser -u {{ nfs_owner_user }} -- test -w {{ nfs_export_dir }}
+  register: _v_nfs_writable
+  changed_when: false
+  failed_when: false
+
+- name: Measure the space left on the share
+  ansible.builtin.command: df -BG --output=avail {{ nfs_export_dir }}
+  register: _v_nfs_space
+  changed_when: false
+  failed_when: false
+
+- name: Read the nfs-utils version
+  ansible.builtin.command: rpm -q --queryformat '%{VERSION}' nfs-utils  # noqa: command-instead-of-module
+  register: _v_nfs_version
+  changed_when: false
+  failed_when: false
+
+- name: Keep the NFS version for the report
+  ansible.builtin.set_fact:
+    mmd_versions: "{{ mmd_versions | default({}) | combine({'nfs': _v_nfs_version.stdout | default('unknown', true)}) }}"
+
+- name: Record NFS checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _exported: "{{ _v_nfs_exports.stdout | default('') }}"
+    _missing: "{{ (nfs_allowed_clients + nfs_readonly_clients) | reject('in', _exported) | list }}"
+    _threads: "{{ (_v_nfs_threads.content | default('') | b64decode | trim) or '0' }}"
+    _versions: "{{ _v_nfs_versions.content | default('') | b64decode | trim }}"
+    checks:
+      - component: nfs
+        name: Service is active
+        ok: "{{ _v_nfs_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_nfs_service.stdout }}"
+      - component: nfs
+        name: The kernel server has threads running
+        ok: "{{ _threads | int > 0 }}"
+        detail: >-
+          {{ (_threads ~ ' nfsd threads') if _threads | int > 0
+             else 'no nfsd threads. A container without the nfsd kernel module cannot serve NFS.' }}
+      - component: nfs
+        name: Listening on port {{ nfs_port }}
+        ok: "{{ _v_nfs_listen.stdout | default('') | length > 0 }}"
+        detail: "{{ _v_nfs_listen.stdout_lines | default([]) | length }} listening socket(s) on {{ nfs_port }}/tcp"
+      - component: nfs
+        name: "{{ nfs_export_dir }} is exported"
+        ok: "{{ nfs_export_dir in _exported }}"
+        detail: "{{ _exported | replace('\n', ' ') | truncate(200) if _exported else 'exportfs -s returned nothing' }}"
+      - component: nfs
+        name: Every listed client is in the export
+        severity: warning
+        ok: "{{ _missing | length == 0 }}"
+        detail: >-
+          {{ ((nfs_allowed_clients + nfs_readonly_clients) | length ~ ' client(s) exported to')
+             if _missing | length == 0 else ('not exported to ' ~ _missing | join(', ')) }}
+      - component: nfs
+        name: "{{ nfs_owner_user }} can write to the share"
+        ok: "{{ _v_nfs_writable.rc | default(1) == 0 }}"
+        detail: "{{ nfs_export_dir }} is {{ 'writable' if _v_nfs_writable.rc | default(1) == 0 else 'not writable' }} by {{ nfs_owner_user }}"
+      - component: nfs
+        name: NFSv3 and UDP are switched off
+        severity: info
+        ok: "{{ '-3' in _versions }}"
+        detail: "{{ ('kernel serves ' ~ _versions) if _versions else 'could not read /proc/fs/nfsd/versions' }}"
+      - component: nfs
+        name: The share has space
+        severity: info
+        status: "{{ 'pass' if _v_nfs_space.rc | default(1) == 0 else 'warn' }}"
+        detail: "{{ _v_nfs_space.stdout_lines | default([]) | last | default('df failed') | trim }} free on {{ nfs_export_dir }}"

@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: nfs
+  author: mattermost-implement
+  description: NFSv4 server exporting a share for the Mattermost data directory
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions: [all]
+dependencies: []

@@ -28,11 +28,13 @@ MODULE_COMPONENTS = {
     "nginx": "nginx",
     "opensearch": "opensearch",
     "rtcd": "rtcd",
+    "nfs": "nfs",
     "monitoring": "prometheus",
 }
 MODULE_NAMES = {
     "host": "Servers", "site": "Site availability", "mattermost": "Mattermost", "postgresql": "PostgreSQL",
-    "nginx": "Nginx", "opensearch": "OpenSearch", "rtcd": "Calls (rtcd)", "monitoring": "Monitoring",
+    "nginx": "Nginx", "opensearch": "OpenSearch", "rtcd": "Calls (rtcd)", "nfs": "NFS storage",
+    "monitoring": "Monitoring",
 }
 # Log lines the e2e self-test pushes carry this host name, so its queries see only them.
 SELFTEST_HOST = "mmi-selftest"
@@ -605,6 +607,46 @@ def calls_board(spec):
     return b.json()
 
 
+def nfs_board(spec):
+    b = Board("mmi-nfs", "NFS storage", spec, ["nfs"], [instance_var(spec, "node_uname_info")])
+    sel = 'instance=~"$instance"'
+    b.text("The top half is the NFS server (nfsd). The bottom half is what the servers mounting the share see, "
+           "so pick an app server in the Server list to look at its side of the same traffic.", h=2)
+    b.row("The NFS server")
+    b.stat("nfsd threads", "max(node_nfsd_server_threads{%s})" % sel, w=6)
+    b.stat("Share read", "sum(rate(node_nfsd_disk_bytes_read_total{%s}[5m]))" % sel, unit="Bps", w=6)
+    b.stat("Share written", "sum(rate(node_nfsd_disk_bytes_written_total{%s}[5m]))" % sel, unit="Bps", w=6)
+    b.stat("Stale handles (15m)", "sum(increase(node_nfsd_file_handles_stale_total{%s}[15m])) or vector(0)" % sel,
+           w=6, steps=tiers_of("nfs-stale-handles", spec))
+    b.timeseries("Share throughput", [("rate(node_nfsd_disk_bytes_read_total{%s}[5m])" % sel, "{{instance}} read"),
+                                      ("rate(node_nfsd_disk_bytes_written_total{%s}[5m])" % sel, "{{instance}} written")],
+                 unit="Bps")
+    b.timeseries("Calls per second by operation",
+                 [('topk(10, sum by (method) (rate(node_nfsd_requests_total{proto="4",%s}[5m])))' % sel, "{{method}}")],
+                 unit="ops", desc="NFSv4 operations the server handled. v3 is switched off by the nfs role.")
+    b.timeseries("RPC errors", [("sum by (instance, error) (rate(node_nfsd_rpc_errors_total{%s}[5m]))" % sel, "{{instance}} {{error}}")],
+                 unit="ops", steps=tiers_of("nfs-rpc-errors", spec),
+                 desc="auth means a client the export list doesn't allow, or a mismatched sec= setting.")
+    b.timeseries("Reply cache", [("rate(node_nfsd_reply_cache_hits_total{%s}[5m])" % sel, "{{instance}} hits"),
+                                 ("rate(node_nfsd_reply_cache_misses_total{%s}[5m])" % sel, "{{instance}} misses")], unit="ops")
+    b.row("The servers mounting it")
+    per_mount = "sum by (instance, export) (rate(node_mountstats_nfs_operations_%s{%s}[5m]))"
+    b.timeseries("Operation latency",
+                 [("1000 * %s / clamp_min(%s, 1)" % (per_mount % ("request_time_seconds_total", sel),
+                                                     per_mount % ("requests_total", sel)), "{{instance}} {{export}}")],
+                 unit="ms", steps=tiers_of("nfs-mount-latency", spec))
+    b.timeseries("Timeouts waiting for the server", [("%s * 60" % (per_mount % ("major_timeouts_total", sel)), "{{instance}} {{export}}")],
+                 unit="cpm", steps=tiers_of("nfs-mount-timeouts", spec),
+                 desc="A major timeout means the client gave up waiting and started again. Uploads hang while this happens.")
+    b.timeseries("Retransmissions", [("100 * rate(node_nfs_rpc_retransmissions_total{%s}[5m]) / clamp_min(rate(node_nfs_rpcs_total{%s}[5m]), 1)" % (sel, sel), "{{instance}}")],
+                 unit="percent", steps=tiers_of("nfs-retransmits", spec))
+    b.timeseries("Client throughput by mount",
+                 [("sum by (instance, export) (rate(node_mountstats_nfs_total_read_bytes_total{%s}[5m]))" % sel, "{{instance}} {{export}} read"),
+                  ("sum by (instance, export) (rate(node_mountstats_nfs_total_write_bytes_total{%s}[5m]))" % sel, "{{instance}} {{export}} written")],
+                 unit="Bps")
+    return b.json()
+
+
 def build_dashboards(spec):
     present = modules_present(spec)
     boards = {"mmi-overview.json": overview(spec, present), "mmi-host.json": host_board(spec)}
@@ -618,6 +660,8 @@ def build_dashboards(spec):
         boards["mmi-opensearch.json"] = opensearch_board(spec)
     if "rtcd" in present:
         boards["mmi-calls.json"] = calls_board(spec)
+    if "nfs" in present:
+        boards["mmi-nfs.json"] = nfs_board(spec)
     return boards
 
 
@@ -657,7 +701,7 @@ def rule_query(rule, spec):
 def catalogue_markdown(heading="###", suffix=""):
     """Per-module tables for docs/alerts.md and the README. tests/ checks both match."""
     out = []
-    for module in ["host", "site", "mattermost", "postgresql", "nginx", "opensearch", "rtcd", "monitoring"]:
+    for module in ["host", "site", "mattermost", "postgresql", "nginx", "opensearch", "rtcd", "nfs", "monitoring"]:
         rules = [r for r in CATALOGUE if r["module"] == module]
         if not rules:
             continue

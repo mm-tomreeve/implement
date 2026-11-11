@@ -99,6 +99,28 @@ mmd_catalogue:
         purpose: rtcd API and metrics (Mattermost and Prometheus)
         allowed: "{{ (rtcd_api_sources + mmd_scrape_sources) | unique | join(', ') if (rtcd_api_sources + mmd_scrape_sources) else 'localhost only' }}"
 
+  nfs:
+    title: NFS file storage
+    summary: >-
+      NFSv4 share for the Mattermost data directory, so every app server sees the same
+      uploaded files. Mount it on the app servers yourself; this server only serves it.
+    source: RHEL AppStream (dnf)
+    service: nfs-server
+    user: root
+    paths:
+      config: /etc/exports.d/mattermost-implement.exports, /etc/nfs.conf.d/90-mattermost-implement.conf
+      data: "{{ nfs_export_dir }}"
+      logs: journald (journalctl -u nfs-server)
+    min_ram_mb: 512
+    min_cpus: 1
+    ports:
+      - port: "{{ nfs_port }}"
+        proto: tcp
+        purpose: NFSv4 (v3, UDP, rpcbind and statd are switched off, so this is the only port)
+        allowed: >-
+          {{ (nfs_allowed_clients + nfs_readonly_clients) | unique | join(', ')
+             if (nfs_allowed_clients + nfs_readonly_clients) else 'nobody yet' }}
+
   opensearch:
     title: OpenSearch {{ opensearch_version }}
     summary: Search backend for Mattermost Enterprise search.
@@ -346,6 +368,20 @@ mmd_dependency_checks:
     message: >-
       The PostgreSQL on this server is a read-only replica, so Mattermost can't write to it. Set mattermost_db_host
       to the primary (and mattermost_db_replica_hosts to send reads here).
+  - component: nfs
+    ok: "{{ (nfs_allowed_clients + nfs_readonly_clients) | length > 0 }}"
+    message: >-
+      The NFS share would be exported to nobody. List the Mattermost app servers that mount it in
+      nfs_allowed_clients. Single addresses or CIDRs both work, e.g. [10.10.1.12] or [10.10.1.0/24].
+  - component: nfs
+    ok: "{{ nfs_squash in ['all', 'none'] }}"
+    message: nfs_squash must be all (client writes land as the share's owner) or none (uids must match).
+  - component: nfs
+    ok: "{{ nfs_write_mode in ['sync', 'async'] }}"
+    message: nfs_write_mode must be sync or async.
+  - component: nfs
+    ok: "{{ nfs_export_dir is match('^/..') }}"
+    message: nfs_export_dir must be an absolute path below the root, e.g. /srv/mattermost/data.
   - component: postgres_exporter
     ok: "{{ 'postgresql' in mmd_selected }}"
     message: postgres_exporter runs next to PostgreSQL. Add postgresql to this server.
@@ -390,6 +426,11 @@ mmd_colocation_rules:
     severity: medium
     message: PostgreSQL shares the server with Mattermost.
     advice: Fine up to roughly 1,000 users. Beyond that, or if you want HA later, run PostgreSQL on its own server.
+  - id: storage-with-app
+    when_all: [nfs, mattermost]
+    severity: medium
+    message: The NFS share is served by the app server that uses it.
+    advice: Shared storage exists so several app servers see the same files, and so losing one app server doesn't take the uploads with it. Serve it from its own server or a NAS before you add a second app server.
   - id: monitoring-with-workload
     when_any_with: [prometheus, grafana]
     workloads: [mattermost, postgresql, opensearch, rtcd]

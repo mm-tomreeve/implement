@@ -1,0 +1,9 @@
+---
+- name: Re-export the NFS shares
+  ansible.builtin.command: exportfs -ra
+  changed_when: true
+
+- name: Restart nfs-server
+  ansible.builtin.systemd:
+    name: nfs-server
+    state: restarted

@@ -184,6 +184,41 @@ opensearch_heap_mb: auto
 opensearch_allowed_clients: []
 opensearch_admin_password: ""
 
+# ---------------------------------------------------------------- nfs storage
+# An NFS server for Mattermost's data directory, so several app servers can share
+# one copy of the uploaded files (and so backups have one place to run). This
+# server only serves the share: mount it on the app servers yourself. The report
+# this run writes gives the mount command and the fstab line to use.
+nfs_export_dir: /srv/mattermost/data
+# Mattermost app servers allowed to mount the share (addresses or CIDRs).
+nfs_allowed_clients: []
+# Servers allowed to mount it read-only, e.g. a backup server.
+nfs_readonly_clients: []
+nfs_port: 2049
+# Who owns the share. With nfs_squash all, every client write lands as this user,
+# so the mattermost user on the app servers doesn't need the same uid as here.
+nfs_owner_user: mattermost
+nfs_owner_group: mattermost
+# Pin the ids when the app servers mount with nfs_squash none, or when files
+# restored from elsewhere already belong to a particular uid.
+nfs_owner_uid: ""
+nfs_owner_gid: ""
+nfs_export_mode: "0750"
+# all = every client write lands as nfs_owner_user, whatever uid asked for it.
+# none = the client's own uid and gid are kept and must match this server's.
+# root on a client is squashed to nfs_owner_user either way.
+nfs_squash: all
+# sync = a write is acknowledged once it is on disk. async is faster and risks
+# losing recent uploads if this server loses power.
+nfs_write_mode: sync
+# auto = four nfsd threads per vCPU, at least 8.
+nfs_threads: auto
+# Appended to the export options as given, e.g. [no_wdelay]
+nfs_export_extra_options: []
+# What the report tells you to mount the share with on the app servers. hard keeps
+# Mattermost waiting through a server restart rather than failing writes.
+nfs_mount_options: "rw,hard,timeo=600,retrans=2,noatime,nodiratime,_netdev"
+
 # ---------------------------------------------------------------- monitoring
 prometheus_version: "3.15.1"
 prometheus_port: 9090

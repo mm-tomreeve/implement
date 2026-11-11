@@ -10,6 +10,7 @@ otel_collector_units:
   nginx: nginx
   rtcd: rtcd
   opensearch: opensearch
+  nfs: nfs-server
   prometheus: prometheus
   grafana: grafana
   loki: loki
