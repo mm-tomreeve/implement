@@ -39,6 +39,14 @@
     - selinux_manage | bool
     - ansible_facts['selinux']['status'] | default('disabled') == 'enabled'
 
+- name: Create the directory for our NFS config drop-in
+  ansible.builtin.file:
+    path: "{{ nfs_conf_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Serve NFSv4 over TCP only
   ansible.builtin.template:
     src: nfs.conf.j2
