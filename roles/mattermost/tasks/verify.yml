@@ -5,13 +5,29 @@
   changed_when: false
   failed_when: false
 
-- name: Ask Mattermost for its health
+# Mattermost serves plain HTTP unless its own config turns TLS on, so try both.
+# The certificate won't match 127.0.0.1, and this is loopback only.
+- name: Ask Mattermost for its health over HTTPS
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ mattermost_port }}/api/v4/system/ping?get_server_status=true"
+    validate_certs: false
+    return_content: true
+    timeout: 15
+  register: _v_mm_ping_https
+  failed_when: false
+
+- name: Ask Mattermost for its health over HTTP
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ mattermost_port }}/api/v4/system/ping?get_server_status=true"
     return_content: true
     timeout: 15
-  register: _v_mm_ping
+  register: _v_mm_ping_http
   failed_when: false
+  when: _v_mm_ping_https.status | default(0) != 200
+
+- name: Use whichever answered
+  ansible.builtin.set_fact:
+    _v_mm_ping: "{{ _v_mm_ping_https if _v_mm_ping_https.status | default(0) == 200 else _v_mm_ping_http }}"
 
 - name: Ask mmctl for the server version over the local socket
   ansible.builtin.command:

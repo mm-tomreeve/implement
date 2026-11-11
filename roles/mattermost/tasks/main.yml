@@ -300,11 +300,18 @@
     fw_public: true
   when: mmd_calls_integrated | bool
 
+# Plain HTTP unless Mattermost's own config turns TLS on, so try both. The certificate
+# won't match 127.0.0.1, and this is loopback only.
 - name: Wait for Mattermost to answer (first start runs migrations)
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ mattermost_port }}/api/v4/system/ping"
-    return_content: true
+  ansible.builtin.shell: |
+    for scheme in https http; do
+      code=$(curl --silent --insecure --max-time 5 --output /dev/null --write-out '%{http_code}' \
+        "$scheme://127.0.0.1:{{ mattermost_port }}/api/v4/system/ping")
+      [ "$code" = 200 ] && { echo "$scheme"; exit 0; }
+    done
+    exit 1
   register: _mm_ping
-  until: _mm_ping.status == 200
+  until: _mm_ping.rc == 0
   retries: "{{ (mattermost_start_wait_seconds | int / 5) | int }}"
   delay: 5
+  changed_when: false
