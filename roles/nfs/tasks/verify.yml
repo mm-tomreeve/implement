@@ -82,7 +82,7 @@
         detail: "{{ _v_nfs_listen.stdout_lines | default([]) | length }} listening socket(s) on {{ nfs_port }}/tcp"
       - component: nfs
         name: "{{ nfs_export_dir }} is exported"
-        ok: "{{ nfs_export_dir in _exported }}"
+        ok: "{{ (nfs_export_dir | string) in (_exported | string) }}"
         detail: "{{ _exported | replace('\n', ' ') | truncate(200) if _exported else 'exportfs -s returned nothing' }}"
       - component: nfs
         name: Every listed client is in the export
