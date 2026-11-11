@@ -434,7 +434,9 @@ def overview(spec, present):
                unit="d", w=6, steps=tiers_of("tls-expiry", spec), below=True)
         b.stat("Availability (24h)", 'avg_over_time(probe_success{job="blackbox_http"}[24h]) * 100', unit="percent", w=6,
                steps={"warning": 99.9, "critical": 99}, below=True)
-    b.stat("Targets down", 'count(up == 0) or vector(0)', w=6, steps={"critical": 1})
+    # min by (instance): a host counts once here even if several of its exporters are down.
+    b.stat("Targets down", 'count(min by (instance) (up) == 0) or vector(0)', w=6, steps={"critical": 1},
+           desc="Hosts with at least one exporter not answering. \"Up by job and server\" below shows which.")
     b.stat("Services not running", 'count(node_systemd_unit_state{state="active"} == 0) or vector(0)', w=6, steps={"critical": 1})
     b.stat("Firing critical alerts", 'count(ALERTS{severity="critical", alertstate="firing"}) or vector(0)', w=6,
            steps={"critical": 1}, desc="Grafana-managed alerts are listed in the panel below.")

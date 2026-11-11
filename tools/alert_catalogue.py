@@ -38,11 +38,15 @@ CATALOGUE = [
     {
         "id": "target-down", "module": "host", "title": "Metrics target down",
         # The log shipper has its own, gentler checks (log-ship-failing, log-host-silent).
-        "expr": 'up{job!~"blackbox.*|otelcol"}',
+        # min by (instance): one series per host, not one per exporter on it, so a host
+        # running several exporters (node, nginx, postgres, ...) pages once, not per job.
+        # "Up by job and server" on the host dashboard shows which exporter is down.
+        "expr": 'min by (instance) (up{job!~"blackbox.*|otelcol"})',
         "direction": "below", "tiers": {"critical": 1}, "for": "3m", "unit": "",
-        "summary": "{{ $labels.job }} on {{ $labels.instance }} is not answering Prometheus",
-        "action": "The server or the exporter is down, or the firewall is blocking the scrape. "
-                  "Check `systemctl status` for the service on that host, then `firewall-cmd --list-all`.",
+        "summary": "{{ $labels.instance }} is not answering Prometheus on one or more exporters",
+        "action": "The server, or one of its exporters, is down, or the firewall is blocking the scrape. "
+                  "Check the \"Up by job and server\" panel on the host dashboard for which job, then "
+                  "`systemctl status` for that service on the host, then `firewall-cmd --list-all`.",
     },
     {
         "id": "service-not-active", "module": "host", "title": "Mattermost Implement service not running",
