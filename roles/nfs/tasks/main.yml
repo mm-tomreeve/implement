@@ -1,0 +1,77 @@
+---
+- name: Install the NFS server packages
+  ansible.builtin.dnf:
+    name: "{{ nfs_packages }}"
+    state: present
+
+- name: Create the group that owns the share
+  ansible.builtin.group:
+    name: "{{ nfs_owner_group }}"
+    gid: "{{ nfs_owner_gid | default(omit, true) }}"
+    system: true
+
+- name: Create the user that owns the share
+  ansible.builtin.user:
+    name: "{{ nfs_owner_user }}"
+    uid: "{{ nfs_owner_uid | default(omit, true) }}"
+    group: "{{ nfs_owner_group }}"
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+
+- name: Work out the ids and the export options
+  ansible.builtin.include_tasks: facts.yml
+
+- name: Create the exported directory
+  ansible.builtin.file:
+    path: "{{ nfs_export_dir }}"
+    state: directory
+    owner: "{{ nfs_owner_user }}"
+    group: "{{ nfs_owner_group }}"
+    mode: "{{ nfs_export_mode }}"
+
+- name: Let NFS export a read-write share (SELinux)
+  ansible.posix.seboolean:
+    name: nfs_export_all_rw
+    state: true
+    persistent: true
+  when:
+    - selinux_manage | bool
+    - ansible_facts['selinux']['status'] | default('disabled') == 'enabled'
+
+- name: Serve NFSv4 over TCP only
+  ansible.builtin.template:
+    src: nfs.conf.j2
+    dest: "{{ nfs_conf_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart nfs-server
+
+- name: Write the export list
+  ansible.builtin.template:
+    src: exports.j2
+    dest: "{{ nfs_exports_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Re-export the NFS shares
+
+- name: Enable and start the NFS server
+  ansible.builtin.systemd:
+    name: nfs-server
+    state: started
+    enabled: true
+
+- name: Apply pending restarts and re-exports
+  ansible.builtin.meta: flush_handlers
+
+- name: Open NFS to the servers that mount the share
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ nfs_port }}", proto: tcp}]
+    fw_sources: "{{ (nfs_allowed_clients + nfs_readonly_clients) | unique }}"
+    fw_public: false
+  when: (nfs_allowed_clients + nfs_readonly_clients) | length > 0

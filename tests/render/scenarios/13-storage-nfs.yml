@@ -1,0 +1,13 @@
+---
+# Render scenario: a dedicated NFS file server for the app servers' data directory.
+render_host: files01
+render_ram: 4000
+render_cpus: 2
+deploy_name: chat-prod
+deploy_profiles: [storage]
+nfs_allowed_clients: [10.10.1.12, 10.10.1.22]
+nfs_readonly_clients: [10.10.1.30]
+deploy_monitoring_exporters: true
+monitoring_scrape_sources: [10.10.9.5]
+logging_loki_url: http://mon01.example.internal:3100
+render_expect_selected: [nfs, node_exporter, otel_collector]

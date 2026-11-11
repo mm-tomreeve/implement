@@ -68,6 +68,7 @@ watch, so you don't pick them yourself.
 | nginx-prometheus-exporter | `nginx_exporter` | Added next to Nginx |
 | elasticsearch_exporter | `opensearch_exporter` | Added next to OpenSearch |
 | blackbox_exporter | `blackbox_exporter` | On the monitoring server, when there's a site URL or a Calls server to check: checks the site, its certificate and the Calls port from outside |
+| NFS server | `nfs` | Exports a share for Mattermost's data directory, so app servers share one copy of the uploaded files |
 | OpenTelemetry Collector | `otel_collector` | Ships logs to Loki, on every server that has a Loki to send to |
 
 Three more roles do the plumbing. `common` handles OS checks, firewall rules, SELinux, fapolicyd
@@ -83,6 +84,7 @@ Roles are grouped into profiles. Give a server one profile, several, or a custom
 | `database` | postgresql | Dedicated database server, or a read replica of one |
 | `calls` | rtcd | Dedicated Calls server |
 | `search` | opensearch | Dedicated search server |
+| `storage` | nfs | NFS share for the Mattermost data directory |
 | `monitoring` | prometheus, loki, grafana | Watches the rest of the estate and keeps its logs |
 | `all-in-one` | everything | Labs and proofs of concept only |
 
@@ -318,6 +320,42 @@ up and has to be rebuilt: stop PostgreSQL on it, move `/var/lib/pgsql/data` asid
 A server without replicas needs none of this. With no slots, PostgreSQL recycles WAL at every
 checkpoint and keeps around `max_wal_size` of it (1 GB by default).
 
+### Example: shared file storage over NFS
+
+Mattermost keeps uploaded files in `mattermost_data_dir`. With more than one app server they all
+have to see the same files, so put them on an NFS share (or S3, see `mattermost_file_driver`).
+
+```yaml
+# files01 (10.10.1.16)
+deploy_profiles: [storage]
+nfs_export_dir: /srv/mattermost/data
+nfs_allowed_clients: [10.10.1.12, 10.10.1.22]
+```
+
+NFSv4 over TCP only, so port 2049 is the only one opened, and only to the servers you list. Every
+client write lands as the share's owner (`all_squash`), so the `mattermost` user on each app server
+doesn't need the same uid as on files01. Set `nfs_squash: none` if you would rather keep the
+client's own uid, in which case the uids do have to match.
+
+Then mount it on each app server. The report on files01 gives these lines filled in:
+
+```bash
+dnf install -y nfs-utils
+mkdir -p /var/opt/mattermost/data
+mount -t nfs4 -o rw,hard,timeo=600,retrans=2,noatime,nodiratime,_netdev 10.10.1.16:/srv/mattermost/data /var/opt/mattermost/data
+```
+
+```text
+# /etc/fstab on each app server
+10.10.1.16:/srv/mattermost/data  /var/opt/mattermost/data  nfs4  rw,hard,timeo=600,retrans=2,noatime,nodiratime,_netdev  0 0
+```
+
+Mount it before installing Mattermost, or stop Mattermost, move the existing files onto the share
+and mount it over the top. `hard` means a write waits for the NFS server to come back rather than
+failing, which is what you want for a file store. The monitoring server alerts on the share (RPC
+errors and stale handles on files01, and latency, timeouts and retransmissions as each app server
+sees them) once files01 is in `monitoring_estate` with `nfs` among its components.
+
 ### Example: no internet access
 
 On a machine that does have internet access:
@@ -497,6 +535,7 @@ to the others; see the firewall notes under the split-estate example.
 | Nginx | nginx-prometheus-exporter reading stub_status on 127.0.0.1:81 | 9113 |
 | OpenSearch | elasticsearch_exporter, over TLS with the search CA | 9114 |
 | rtcd | its built-in metrics | 8045 |
+| NFS | node_exporter's nfsd collector on the NFS server, and its nfs and mountstats collectors on the servers that mount the share | 9100 |
 | Prometheus, Loki and Grafana | their own metrics, on whichever server they run | 9090, 3100, 3000 |
 | The site, as users see it | blackbox_exporter fetching `/api/v4/system/ping` and checking the certificate | local |
 | Calls media port | blackbox_exporter opening a TCP connection to each rtcd server's media port (UDP and reachability from users' networks aren't tested) | local |
@@ -515,7 +554,7 @@ security, LogQL examples and troubleshooting.
 
 ### Dashboards
 
-There are seven dashboards, generated for the estate, linked to each other and coloured to match
+There are eight dashboards, generated for the estate, linked to each other and coloured to match
 the alert tiers: green, then blue for info, yellow for warning and red for critical. Mattermost's
 own community dashboards sit in a separate folder.
 
@@ -566,14 +605,20 @@ making calls.
 
 Connections by state, requests per second and dropped connections.
 
+#### NFS storage
+
+The server side on top (nfsd threads, throughput, calls per second by operation, RPC errors and the
+reply cache) and what the app servers mounting the share see underneath (operation latency, timeouts
+waiting for the server, retransmissions and throughput per mount).
+
 ![Nginx dashboard](docs/images/grafana-nginx.png)
 
 ### Alerts
 
-There are 56 metric checks, which become 117 Grafana alert rules for a full estate: 45 critical,
-41 warning and 31 info. When the servers ship their logs to Loki, 29 more checks (27 on what the
-logs say, 2 on the log pipeline itself) bring a full estate to 155 rules: 61 critical, 59 warning
-and 35 info. Each check has up to three tiers and they never overlap. A disk at 85%
+There are 61 metric checks, which become 129 Grafana alert rules for a full estate: 50 critical,
+46 warning and 33 info. When the servers ship their logs to Loki, 29 more checks (27 on what the
+logs say, 2 on the log pipeline itself) bring a full estate to 167 rules: 66 critical, 64 warning
+and 37 info. Each check has up to three tiers and they never overlap. A disk at 85%
 fires the warning only, and at 96% the critical only, so one problem raises one alert.
 
 Every rule carries these labels, which is what you route on:
@@ -581,7 +626,7 @@ Every rule carries these labels, which is what you route on:
 | Label | Values |
 |---|---|
 | `severity` | `info`, `warning`, `critical` |
-| `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `monitoring` |
+| `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `nfs`, `monitoring` |
 | `mmi_rule` | the check's id, as in the tables below |
 | `signal` | `metrics` or `logs` |
 | `deployment` | `deploy_name` from the answer file |
@@ -618,7 +663,6 @@ monitoring_alerts_disabled: [host-rebooted]      # drop a check completely
 what the overrides above use. The same tables are in [docs/alerts.md](docs/alerts.md).
 
 <!-- alerts:start (generated from tools/alert_catalogue.py; tests fail if this drifts) -->
-
 #### Servers alerts
 
 | Check | Info | Warning | Critical | For | What to do |
@@ -707,6 +751,16 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 | UDP receive buffer overflows `udp-buffer-errors` |  | > 0/s | > 50/s | 5m | Media packets are being lost before rtcd reads them. Check net.core.rmem_max and CPU on the host. |
 | rtcd media errors `rtcd-errors` | > 10 | > 50 | > 200 | 0s | Check `journalctl -u rtcd` for the error types. Network paths and ICE settings are the usual cause. |
 | Calls packet loss reported by clients `rtcd-packet-loss` | > 2% | > 5% | > 10% | 10m | Users will hear choppy audio. Check bandwidth to the rtcd server and UDP buffer overflows. |
+
+#### NFS storage alerts
+
+| Check | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|
+| NFS server RPC errors `nfs-rpc-errors` |  | > 0/s | > 1/s | 10m | Clients are being refused. auth errors usually mean a client outside the export list or a mismatched sec= setting; check `exportfs -v` and `journalctl -u nfs-server`. |
+| NFS stale file handles `nfs-stale-handles` |  | > 0 | > 100 | 5m | Clients are holding handles the server no longer knows: the export was re-created, the filesystem was remounted, or files were deleted underneath an open client. Remount the share on the client. |
+| NFS mount not responding `nfs-mount-timeouts` |  | > 0/min | > 1/min | 5m | The NFS server isn't answering. Uploads and downloads hang while this lasts. Check the server is up, that port 2049 is open to this client, and the network between them. |
+| NFS operation latency `nfs-mount-latency` | > 20 ms | > 50 ms | > 200 ms | 15m | File uploads and previews are slow for everyone on this server. Check the NFS server's disk and network, and that both ends are on the same subnet rather than crossing a firewall or a VPN. |
+| NFS retransmissions `nfs-retransmits` | > 1% | > 5% | > 10% | 15m | Replies are being lost or are too slow, so the client asks again. Look for packet loss between the client and the NFS server, and at load on the server. |
 
 #### Monitoring alerts
 

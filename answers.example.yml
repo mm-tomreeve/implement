@@ -162,6 +162,23 @@ opensearch_heap_mb: auto
 opensearch_allowed_clients: []
 opensearch_admin_password: ""
 
+# ---------------------------------------------------------------- nfs storage
+# An NFS share for Mattermost's data directory, so several app servers see the
+# same uploaded files. This server only serves it: mount it on the app servers
+# yourself. The report written at the end gives the mount command and fstab line.
+nfs_export_dir: /srv/mattermost/data
+# App servers allowed to mount it. Required: without this nothing can mount it.
+nfs_allowed_clients: []                 # e.g. ["10.10.1.12", "10.10.1.22"]
+nfs_readonly_clients: []                # e.g. a backup server
+# all  = every client write lands as the share's owner, so uids needn't match.
+# none = the mattermost user on each app server must have this server's uid.
+nfs_squash: all
+nfs_owner_user: mattermost
+nfs_owner_uid: ""                       # pin it when nfs_squash is none
+nfs_write_mode: sync                    # async is faster, and loses recent writes on a power cut
+# What the report tells you to mount with on the app servers.
+nfs_mount_options: "rw,hard,timeo=600,retrans=2,noatime,nodiratime,_netdev"
+
 # ---------------------------------------------------------------- monitoring
 # Add node_exporter (and postgres_exporter where PostgreSQL runs) so a Prometheus
 # on another server can scrape this one. Needs monitoring_scrape_sources.

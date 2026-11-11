@@ -66,7 +66,7 @@
     mmd_estate: >-
       {{ (monitoring_estate | rejectattr('name', 'equalto', ansible_facts['hostname']) | list)
          + [{'name': ansible_facts['hostname'], 'address': '127.0.0.1',
-             'components': mmd_selected | intersect(['mattermost', 'nginx', 'postgresql', 'rtcd', 'opensearch', 'prometheus', 'loki', 'grafana'])}] }}
+             'components': mmd_selected | intersect(['mattermost', 'nginx', 'postgresql', 'rtcd', 'opensearch', 'nfs', 'prometheus', 'loki', 'grafana'])}] }}
   when: "'prometheus' in mmd_selected or 'grafana' in mmd_selected"
 
 # firewalld wants addresses, and the estate may list servers by name. getent only

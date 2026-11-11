@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# NFSv4 over TCP only. Without v3 there is no rpcbind, no mountd port and no
+# statd, so the share needs one firewall port ({{ nfs_port }}/tcp) and nothing else.
+# 4.0 is off as well: from 4.1 the server calls back over the session the client
+# opened, so the clients need no inbound port of their own.
+[nfsd]
+vers3 = n
+vers4 = y
+vers4.0 = n
+vers4.1 = y
+vers4.2 = y
+udp = n
+tcp = y
+port = {{ nfs_port }}
+threads = {{ mmd_nfs_threads | trim }}

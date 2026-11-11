@@ -21,13 +21,14 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Keep these in step with inventory/group_vars/all/profiles.yml and catalogue.yml.
 # tests/test_repo_consistency.py fails if they drift.
-PROFILE_NAMES=(core app database calls search monitoring all-in-one)
+PROFILE_NAMES=(core app database calls search storage monitoring all-in-one)
 declare -A PROFILE_COMPONENTS=(
   [core]="postgresql mattermost nginx"
   [app]="mattermost nginx"
   [database]="postgresql"
   [calls]="rtcd"
   [search]="opensearch"
+  [storage]="nfs"
   [monitoring]="prometheus loki grafana"
   [all-in-one]="postgresql mattermost nginx rtcd opensearch prometheus loki grafana"
 )
@@ -37,10 +38,11 @@ declare -A PROFILE_DESCRIPTIONS=(
   [database]="Dedicated PostgreSQL server for Mattermost."
   [calls]="Dedicated Calls media server (rtcd)."
   [search]="Dedicated OpenSearch node for Enterprise search."
+  [storage]="NFS file storage for the Mattermost data directory."
   [monitoring]="Prometheus, Loki and Grafana with the Mattermost dashboards and logs."
   [all-in-one]="Everything on one box. Lab and proof-of-concept use only."
 )
-COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
+COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch nfs prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
 
 ANSWERS=""
 PROFILES=""
@@ -1153,6 +1155,23 @@ interview() {
     emit mattermost_opensearch_password "$(yaml_quote "${ospass}")"
   fi
 
+  if has_component nfs; then
+    section "NFS file storage"
+    info "This server exports a directory over NFSv4 for Mattermost's data directory, so every"
+    info "app server sees the same uploaded files. Mount it on the app servers afterwards: the"
+    info "report this run writes gives the mount command and the fstab line."
+    local nfsdir nfsclients squash
+    ask nfsdir "Directory to export" "$(prev nfs_export_dir /srv/mattermost/data)"
+    emit nfs_export_dir "$(yaml_quote "${nfsdir}")"
+    ask_addresses nfsclients "Mattermost app server addresses allowed to mount it" \
+      "Nothing can mount the share without at least one address." "$(prev nfs_allowed_clients)"
+    emit nfs_allowed_clients "$(yaml_list "${nfsclients}")"
+    info "${C_DIM}all:  every client write lands as the share's owner, so uids needn't match.${C_OFF}"
+    info "${C_DIM}none: the mattermost user on each app server must have this server's uid.${C_OFF}"
+    ask_choice squash "How should client users be mapped" "$(prev nfs_squash all)" all none
+    emit nfs_squash "$(yaml_quote "${squash}")"
+  fi
+
   # Grafana builds its alerts and dashboards from the same server list Prometheus
   # scrapes, so a Grafana server without Prometheus needs the list too.
   if has_component prometheus || has_component grafana; then
@@ -1198,7 +1217,7 @@ interview() {
       [[ ${#defaults[@]} -gt 0 ]] && info "${C_DIM}Press Enter to keep each server as it was, or type - as its name to drop it.${C_OFF}"
       # Prometheus, Loki and Grafana elsewhere get scraped too, and this server's
       # firewall opens Prometheus to the ones that query it (see wiring.yml).
-      local i short mods=(mattermost nginx postgresql rtcd opensearch prometheus loki grafana)
+      local i short mods=(mattermost nginx postgresql rtcd opensearch nfs prometheus loki grafana)
       short="$(hostname -s 2>/dev/null || uname -n)"
       while true; do
         estate_lines=() snames=() saddrs=() scomps_list=() entered=()

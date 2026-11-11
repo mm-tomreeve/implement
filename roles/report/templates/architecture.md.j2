@@ -11,7 +11,7 @@
 {% set failed = mmd_deploy_failed | default(false) | bool %}
 {% set sel = mmd_selected %}
 {% set has = namespace(mm=('mattermost' in sel), pg=('postgresql' in sel), ngx=('nginx' in sel), rtcd=('rtcd' in sel),
-                       os=('opensearch' in sel), prom=('prometheus' in sel), graf=('grafana' in sel),
+                       os=('opensearch' in sel), nfs=('nfs' in sel), prom=('prometheus' in sel), graf=('grafana' in sel),
                        ne=('node_exporter' in sel), pge=('postgres_exporter' in sel)) %}
 {% set remote = namespace(db=(not has.pg and has.mm), os=(not has.os and has.mm and mmd_opensearch_url | length > 0),
                           rtcd=(not has.rtcd and has.mm and mmd_rtcd_url | length > 0),
@@ -107,6 +107,8 @@ Before production, deal with these:
 {% if has.pg and postgresql_replication == 'replica' %}{% set _ = ext.append(['PostgreSQL primary', postgresql_primary_host ~ ':' ~ postgresql_port, 'This replica follows it (slot ' ~ postgresql_replication_slot ~ ')']) %}{% endif %}
 {% if has.mm and mattermost_db_replica_hosts %}{% set _ = ext.append(['PostgreSQL read replicas', mattermost_db_replica_hosts | join(', '), 'Mattermost sends reads here (Enterprise)']) %}{% endif %}
 {% if has.os and opensearch_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', opensearch_allowed_clients | join(', '), 'Allowed to query OpenSearch']) %}{% endif %}
+{% if has.nfs and nfs_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', nfs_allowed_clients | join(', '), 'Allowed to mount the NFS share read-write']) %}{% endif %}
+{% if has.nfs and nfs_readonly_clients %}{% set _ = ext.append(['Read-only NFS clients', nfs_readonly_clients | join(', '), 'Allowed to mount the NFS share read-only']) %}{% endif %}
 {% if has.rtcd and rtcd_api_sources %}{% set _ = ext.append(['Mattermost app servers', rtcd_api_sources | join(', '), 'Allowed to use the rtcd API']) %}{% endif %}
 {% if mmd_scrape_sources %}{% set _ = ext.append(['Prometheus servers', mmd_scrape_sources | join(', '), 'Allowed to scrape metrics here']) %}{% endif %}
 {% for job in prometheus_scrape_targets if has.prom %}{% set _ = ext.append(['Scrape job ' ~ job.job, job.targets | join(', '), 'Scraped by this Prometheus']) %}{% endfor %}
@@ -152,7 +154,7 @@ flowchart LR
 {% if remote.prom %}
   r_prom["Prometheus<br/>{{ mmd_prometheus_url | urlsplit('netloc') }}"]
 {% endif %}
-{% if (has.pg or has.os or has.rtcd) and not has.mm %}
+{% if (has.pg or has.os or has.rtcd or has.nfs) and not has.mm %}
   r_mm["Mattermost app servers"]
 {% endif %}
 {% if has.prom and prometheus_scrape_targets %}
@@ -177,6 +179,9 @@ flowchart LR
 {% if has.rtcd %}
     rtcd["Calls rtcd {{ version_of('rtcd') }}<br/>API :{{ rtcd_api_port }}, media :{{ rtcd_rtc_port }}"]
 {% endif %}
+{% if has.nfs %}
+    nfs[("NFS share<br/>{{ nfs_export_dir }} :{{ nfs_port }}")]
+{% endif %}
 {% if has.prom %}
     prom["Prometheus<br/>:{{ prometheus_port }}"]
 {% endif %}
@@ -198,6 +203,9 @@ flowchart LR
 {% endif %}
 {% if has.mm %}
   mm -->|"SQL {{ mattermost_db_port }}"| {{ 'pg' if has.pg else 'r_db' }}
+  {% if has.nfs %}
+  mm -->|"files"| nfs
+  {% endif %}
   {% if has.os or remote.os %}
   mm -->|"REST {{ opensearch_port if has.os else (mmd_opensearch_url | urlsplit('port') or 9200) }}"| {{ 'os' if has.os else 'r_os' }}
   {% endif %}
@@ -217,9 +225,12 @@ flowchart LR
 {% if remote.rtcd %}
   users -.->|"Calls media"| r_rtcd
 {% endif %}
-{% if (has.pg or has.os or has.rtcd) and not has.mm %}
+{% if (has.pg or has.os or has.rtcd or has.nfs) and not has.mm %}
   {% if has.pg %}
   r_mm -->|"SQL {{ postgresql_port }}"| pg
+  {% endif %}
+  {% if has.nfs %}
+  r_mm -->|"NFSv4 {{ nfs_port }}"| nfs
   {% endif %}
   {% if has.os %}
   r_mm -->|"REST {{ opensearch_port }}"| os
@@ -421,6 +432,38 @@ Mattermost registers with rtcd on first contact (self-registration), which is wh
 {{ rtcd_api_sources | join(', ') if rtcd_api_sources else 'localhost' }} can reach the API port.
 ICE host override: {{ rtcd_ice_host_override if rtcd_ice_host_override else 'not set' }}.
 
+{% elif c == 'nfs' %}
+Exported over NFSv4 on TCP {{ nfs_port }}, read-write to {{ nfs_allowed_clients | join(', ') if nfs_allowed_clients else 'nobody yet' }}{{ ' and read-only to ' ~ nfs_readonly_clients | join(', ') if nfs_readonly_clients else '' }}.
+NFSv3, UDP, rpcbind and statd are switched off, so {{ nfs_port }}/tcp is the only port the share needs.
+Export options: `{{ mmd_nfs_rw_options | default('not worked out') }}`.
+{% if nfs_squash == 'all' %}
+Every client write lands as `{{ nfs_owner_user }}` (uid {{ mmd_nfs_uid | default('?') }}, gid {{ mmd_nfs_gid | default('?') }}),
+so the `mattermost` user on the app servers doesn't need the same uid as here.
+{% else %}
+Client uids are kept as they are, so the `mattermost` user on each app server must have uid
+{{ mmd_nfs_uid | default('?') }} and gid {{ mmd_nfs_gid | default('?') }}, the same as here. root on a client is still squashed.
+{% endif %}
+
+Mount it on each Mattermost server:
+
+```bash
+dnf install -y nfs-utils
+mkdir -p {{ mattermost_data_dir }}
+mount -t nfs4 -o {{ nfs_mount_options }} {{ self_ip }}:{{ nfs_export_dir }} {{ mattermost_data_dir }}
+```
+
+and add it to `/etc/fstab` there so it comes back after a reboot:
+
+```text
+{{ self_ip }}:{{ nfs_export_dir }}  {{ mattermost_data_dir }}  nfs4  {{ nfs_mount_options }}  0 0
+```
+
+Mount it before Mattermost is installed. If an app server already has files in
+`{{ mattermost_data_dir }}`, stop Mattermost, copy them onto the share and mount it over the top,
+or they will be hidden rather than shared. `hard` keeps Mattermost waiting while this server
+restarts instead of failing the write, which is what a file store wants. Check a client with
+`findmnt -t nfs4` and `nfsstat -m`.
+
 {% elif c == 'opensearch' %}
 Single node, heap {{ _os_heap_mb | default('auto') }} MB, with the analysis-icu plugin.
 {% if mmd_opensearch_security %}
@@ -507,6 +550,9 @@ We checked every tarball before installing it:
 | Uploaded files | S3 bucket `{{ mattermost_s3_bucket }}` | Bucket versioning or replication, owned by the storage team. |
 {% endif %}
 | Plugins | `{{ mattermost_plugin_dir }}` | Optional. Plugins can be reinstalled, but a copy saves time. |
+{% endif %}
+{% if has.nfs %}
+| Uploaded files (the share) | `{{ nfs_export_dir }}` | Filesystem backup or snapshot of this directory, taken at the same time as the database dump so the two line up. Backing it up here covers every app server that mounts it. |
 {% endif %}
 {% if has.os %}
 | Search index | `{{ opensearch_data_dir }}` | No backup needed. Rebuild it from the database with a bulk index in the System Console. |
@@ -638,7 +684,8 @@ These are built into the toolkit. Change them in the toolkit so every server sta
 5. SELinux stays enforcing and firewalld stays on. Where fapolicyd runs, we add trust entries for our
    install directories instead of turning it off.
 6. OpenSearch uses certificates from its own CA, never the demo certificates that ship with it.
-7. Storage is out of scope. Uploaded files go to local disk, NFS or an S3 bucket you provide.
+7. Block storage and object storage are out of scope. Uploaded files go to local disk, to an NFS
+   share this toolkit can serve (the `storage` profile), or to an S3 bucket you provide.
 
 ## Operations
 

@@ -27,6 +27,13 @@
 {% if mmd_calls_integrated | bool %}
 {%   set _ = r.append({'severity': 'low', 'title': 'Calls media runs inside Mattermost.', 'advice': 'Fine for occasional small calls. For regular use, deploy the calls profile on its own server and set mattermost_rtcd_url.'}) %}
 {% endif %}
+{% if 'nfs' in mmd_selected %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'The NFS share trusts whoever reaches it.', 'advice': 'NFS with sec=sys has no authentication and no encryption: any host at ' ~ ((nfs_allowed_clients + nfs_readonly_clients) | join(', ') or 'the allowed addresses') ~ ' can read and write every uploaded file, and the traffic is in the clear. Keep it on an internal network, keep the client list to the app servers, and use Kerberos (sec=krb5p) or a storage appliance if that is not enough.'}) %}
+{%   set _ = r.append({'severity': 'info', 'title': 'File storage depends on this one server.', 'advice': 'Every app server that mounts the share stops serving files if this server or its disk is lost. Snapshot ' ~ nfs_export_dir ~ ' and keep the copy elsewhere, and treat this server as production even though it only serves files.'}) %}
+{% endif %}
+{% if 'nfs' in mmd_selected and nfs_write_mode == 'async' %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'The share is exported async.', 'advice': 'The server acknowledges writes before they are on disk, so a power cut or a crash can lose files Mattermost has already told users were uploaded. Set nfs_write_mode: sync unless you have a battery-backed cache and have accepted the risk.'}) %}
+{% endif %}
 {% if 'loki' in mmd_selected %}
 {%   set _ = r.append({'severity': 'low', 'title': 'Loki keeps ' ~ loki_retention_period ~ ' of logs in ' ~ loki_data_dir ~ '.', 'advice': 'Expect roughly 1-3 GB a day for a typical estate, more with Nginx access logs on. The disk alerts cover the volume; lower loki_retention_period or give ' ~ loki_data_dir ~ ' its own volume if it grows too fast.'}) %}
 {% endif %}

@@ -6,7 +6,7 @@ a disk at 96% raises the critical alert only, not all three.
 
 Fields:
   id          stable identifier, used for overrides and rule UIDs
-  module      host | mattermost | postgresql | nginx | opensearch | rtcd | site | monitoring
+  module      host | mattermost | postgresql | nginx | opensearch | rtcd | nfs | site | monitoring
   title       short name shown in Grafana
   expr        PromQL returning one series per thing being judged. No comparison here;
               the threshold lives in Grafana so it shows in the UI and can be overridden.
@@ -455,6 +455,57 @@ CATALOGUE = [
         "direction": "above", "tiers": {"info": 2, "warning": 5, "critical": 10}, "for": "10m", "unit": "%",
         "summary": "The worst 5% of calls on {{ $labels.instance }} lose {{ printf \"%.1f\" $values.A.Value }}% of packets",
         "action": "Users will hear choppy audio. Check bandwidth to the rtcd server and UDP buffer overflows.",
+        "quiet": True,
+    },
+
+    # ------------------------------------------------------------------ nfs storage
+    # Server side comes from node_exporter's nfsd collector, client side from its nfs
+    # and mountstats collectors, so both sides need node_exporter and nothing else.
+    # "nfs-server is down" is already covered by service-not-active.
+    {
+        "id": "nfs-rpc-errors", "module": "nfs", "title": "NFS server RPC errors",
+        "expr": "sum by (instance) (rate(node_nfsd_rpc_errors_total[5m]))",
+        "direction": "above", "tiers": {"warning": 0, "critical": 1}, "for": "10m", "unit": "/s",
+        "summary": "nfsd on {{ $labels.instance }} is rejecting {{ printf \"%.2f\" $values.A.Value }} calls a second",
+        "action": "Clients are being refused. auth errors usually mean a client outside the export list or a "
+                  "mismatched sec= setting; check `exportfs -v` and `journalctl -u nfs-server`.",
+        "quiet": True,
+    },
+    {
+        "id": "nfs-stale-handles", "module": "nfs", "title": "NFS stale file handles",
+        "expr": "increase(node_nfsd_file_handles_stale_total[15m])",
+        "direction": "above", "tiers": {"warning": 0, "critical": 100}, "for": "5m", "unit": "",
+        "summary": "nfsd on {{ $labels.instance }} returned {{ printf \"%.0f\" $values.A.Value }} stale handles in 15 minutes",
+        "action": "Clients are holding handles the server no longer knows: the export was re-created, the filesystem "
+                  "was remounted, or files were deleted underneath an open client. Remount the share on the client.",
+        "quiet": True,
+    },
+    {
+        "id": "nfs-mount-timeouts", "module": "nfs", "title": "NFS mount not responding",
+        "expr": "sum by (instance, export) (rate(node_mountstats_nfs_operations_major_timeouts_total[5m])) * 60",
+        "direction": "above", "tiers": {"warning": 0, "critical": 1}, "for": "5m", "unit": "/min",
+        "summary": "{{ $labels.instance }} timed out {{ printf \"%.1f\" $values.A.Value }} times a minute on {{ $labels.export }}",
+        "action": "The NFS server isn't answering. Uploads and downloads hang while this lasts. Check the server is up, "
+                  "that port 2049 is open to this client, and the network between them.",
+        "quiet": True,
+    },
+    {
+        "id": "nfs-mount-latency", "module": "nfs", "title": "NFS operation latency",
+        "expr": "1000 * sum by (instance, export) (rate(node_mountstats_nfs_operations_request_time_seconds_total[5m]))"
+                " / clamp_min(sum by (instance, export) (rate(node_mountstats_nfs_operations_requests_total[5m])), 1)",
+        "direction": "above", "tiers": {"info": 20, "warning": 50, "critical": 200}, "for": "15m", "unit": " ms",
+        "summary": "{{ $labels.export }} on {{ $labels.instance }} takes {{ printf \"%.0f\" $values.A.Value }} ms per operation",
+        "action": "File uploads and previews are slow for everyone on this server. Check the NFS server's disk and "
+                  "network, and that both ends are on the same subnet rather than crossing a firewall or a VPN.",
+        "quiet": True,
+    },
+    {
+        "id": "nfs-retransmits", "module": "nfs", "title": "NFS retransmissions",
+        "expr": "100 * rate(node_nfs_rpc_retransmissions_total[5m]) / clamp_min(rate(node_nfs_rpcs_total[5m]), 1)",
+        "direction": "above", "tiers": {"info": 1, "warning": 5, "critical": 10}, "for": "15m", "unit": "%",
+        "summary": "{{ $labels.instance }} is resending {{ printf \"%.1f\" $values.A.Value }}% of its NFS calls",
+        "action": "Replies are being lost or are too slow, so the client asks again. Look for packet loss between the "
+                  "client and the NFS server, and at load on the server.",
         "quiet": True,
     },
 

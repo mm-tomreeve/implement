@@ -20,6 +20,7 @@ FULL = {
         {"name": "db01", "address": "10.0.0.1", "components": ["postgresql"]},
         {"name": "calls01", "address": "10.0.0.3", "components": ["rtcd"]},
         {"name": "search01", "address": "10.0.0.4", "components": ["opensearch"]},
+        {"name": "files01", "address": "10.0.0.5", "components": ["nfs"]},
         {"name": "mon01", "address": "127.0.0.1", "components": ["prometheus", "grafana"]},
     ],
 }
@@ -119,7 +120,7 @@ class Building(unittest.TestCase):
 
     def test_dashboards_are_valid_grids(self):
         result = obs.build(FULL)
-        self.assertEqual(len(result["summary"]["dashboards"]), 7)
+        self.assertEqual(len(result["summary"]["dashboards"]), 8)
         for name, content in result["files"].items():
             data = json.loads(content)
             if not name.startswith("dashboards/"):

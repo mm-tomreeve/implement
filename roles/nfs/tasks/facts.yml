@@ -1,0 +1,33 @@
+---
+# The ids and the export options, worked out the same way during an install and
+# during a re-run of the tests, so the report says the same thing either way.
+- name: Read the ids of the user that owns the share
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ nfs_owner_user }}"
+    fail_key: false
+
+- name: Work out the export options
+  ansible.builtin.set_fact:
+    # 65534 (nobody) only shows up before the user exists, which means check mode,
+    # where nothing is written anyway.
+    mmd_nfs_uid: "{{ _nfs_entry[1] | default('65534', true) }}"
+    mmd_nfs_gid: "{{ _nfs_entry[2] | default('65534', true) }}"
+    mmd_nfs_threads: >-
+      {{ (nfs_threads if nfs_threads != 'auto'
+          else [ansible_facts['processor_vcpus'] | int * 4, 8] | max) | string }}
+    mmd_nfs_rw_clients: "{{ nfs_allowed_clients | difference(nfs_readonly_clients) }}"
+  vars:
+    _nfs_entry: "{{ ansible_facts['getent_passwd'][nfs_owner_user] | default(['', '', '']) or ['', '', ''] }}"
+
+# Every client write lands as the owner of the share when nfs_squash is all, so
+# the ids go in the export options rather than being matched on the app servers.
+- name: Name the options each kind of client gets
+  ansible.builtin.set_fact:
+    mmd_nfs_rw_options: "rw,{{ _tail }}"
+    mmd_nfs_ro_options: "ro,{{ _tail }}"
+  vars:
+    _tail: >-
+      {{ ([nfs_write_mode, 'no_subtree_check',
+           'all_squash' if nfs_squash == 'all' else 'root_squash',
+           'anonuid=' ~ mmd_nfs_uid, 'anongid=' ~ mmd_nfs_gid] + nfs_export_extra_options) | join(',') }}
