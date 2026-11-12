@@ -141,6 +141,7 @@ tls_chain_file: ""                      # only if the chain is not in tls_cert_f
 # Or point at a directory with <server name>.crt/.key or tls.crt/tls.key in it.
 tls_source_dir: ""
 nginx_hsts: false                       # turn on once you're sure TLS is staying
+nginx_tls_profile: compatible           # compatible = TLS 1.2 and 1.3, modern = TLS 1.3 only (needs recent clients)
 # Mattermost app servers behind this proxy. Leave empty when Mattermost is local.
 nginx_upstreams: []                     # e.g. ["10.10.1.11:8065", "10.10.1.12:8065"]
 

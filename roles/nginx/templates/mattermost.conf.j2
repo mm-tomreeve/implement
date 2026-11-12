@@ -2,9 +2,11 @@
 # Mattermost reverse proxy for {{ nginx_server_name }}.
 upstream mattermost_backend {
 {% for upstream in mmd_nginx_upstreams %}
-    server {{ upstream }};
+    server {{ upstream }}{{ ' max_fails=3 fail_timeout=10s' if mmd_nginx_upstreams | length > 1 else '' }};
 {% endfor %}
-    keepalive 64;
+    keepalive 32;
+    # Close idle connections before Mattermost's 60s idle timeout does.
+    keepalive_timeout 55s;
 }
 
 proxy_cache_path {{ nginx_cache_dir }} levels=1:2 keys_zone=mattermost_cache:10m max_size=3g inactive=120m use_temp_path=off;
@@ -14,23 +16,16 @@ proxy_cache_path {{ nginx_cache_dir }} levels=1:2 keys_zone=mattermost_cache:10m
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Frame-Options SAMEORIGIN;
-        proxy_buffers 256 16k;
-        proxy_buffer_size 16k;
         proxy_http_version 1.1;
 {% endmacro %}
 {% macro locations() %}
-    location ~ /api/v[0-9]+/(users/)?websocket$ {
+    location ~ /api/v[0-9]+/websocket/?$ {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        client_max_body_size 50M;
 {{ proxy_common() }}
-        client_body_timeout 60s;
-        send_timeout 300s;
-        lingering_timeout 5s;
-        proxy_connect_timeout 90s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 90s;
+        proxy_connect_timeout 10s;
+        # Longer than Mattermost's 60s WebSocket ping.
+        proxy_read_timeout 120s;
         proxy_pass http://mattermost_backend;
     }
 
@@ -38,7 +33,12 @@ proxy_cache_path {{ nginx_cache_dir }} levels=1:2 keys_zone=mattermost_cache:10m
         client_max_body_size {{ nginx_client_max_body_size }};
         proxy_set_header Connection "";
 {{ proxy_common() }}
-        proxy_read_timeout 600s;
+        proxy_connect_timeout 10s;
+        # Mattermost ends requests after 5 minutes.
+        proxy_read_timeout 300s;
+        # Fits large OAuth and SAML response headers; 16k alone fails nginx -t on 4K page hosts.
+        proxy_buffer_size 16k;
+        proxy_buffers 8 16k;
         proxy_cache mattermost_cache;
         proxy_cache_revalidate on;
         proxy_cache_min_uses 2;
@@ -84,10 +84,16 @@ server {
 
     ssl_certificate {{ tls_install_dir }}/mattermost.crt;
     ssl_certificate_key {{ tls_install_dir }}/mattermost.key;
-    ssl_protocols {{ nginx_ssl_protocols }};
-    ssl_prefer_server_ciphers off;
+{% if nginx_tls_profile == 'modern' %}
+    # Modern profile (Mozilla): TLS 1.3 only.
+    ssl_protocols TLSv1.3;
+{% else %}
+    # Compatible profile (Mozilla Intermediate): TLS 1.2 and 1.3.
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+{% endif %}
     ssl_session_timeout 1d;
-    ssl_session_cache shared:MattermostTLS:10m;
+    ssl_session_cache shared:MozSSL:10m;
     ssl_session_tickets off;
 {% if nginx_hsts | bool %}
     add_header Strict-Transport-Security "max-age=63072000" always;

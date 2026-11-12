@@ -147,9 +147,9 @@ postgresql_slot_wal_keep_pct: 20
 nginx_server_name: "{{ mattermost_site_url | urlsplit('hostname') }}"
 # Mattermost app servers behind this proxy (host:port). Blank = local Mattermost.
 nginx_upstreams: []
-nginx_client_max_body_size: 100M
+nginx_client_max_body_size: 101M   # Mattermost's 100 MiB MaxFileSize plus overhead
 nginx_hsts: false
-nginx_ssl_protocols: TLSv1.2 TLSv1.3
+nginx_tls_profile: compatible     # compatible = TLS 1.2 and 1.3, modern = TLS 1.3 only
 nginx_cache_dir: /var/cache/nginx/mattermost
 nginx_module_stream: ""          # RHEL 9 only, e.g. "1.24". Blank = default stream.
 tls_mode: later                  # provided | later

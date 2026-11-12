@@ -416,7 +416,7 @@ losing the primary: `runuser -u postgres -- pg_ctl promote -D {{ postgresql_data
 
 {% elif c == 'nginx' %}
 {% if mmd_tls_enabled %}
-TLS terminates here with the certificate in `{{ tls_install_dir }}`. Protocols: {{ nginx_ssl_protocols }}.
+TLS terminates here with the certificate in `{{ tls_install_dir }}`. Profile: {{ nginx_tls_profile }} ({{ 'TLS 1.3 only' if nginx_tls_profile == 'modern' else 'TLS 1.2 and 1.3' }}).
 
 {% for line in mmd_tls_info | default([]) %}
 - {{ line }}
