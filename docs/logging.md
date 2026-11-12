@@ -102,7 +102,7 @@ history. The disk alerts on the monitoring server cover the volume.
 ## Searching logs
 
 Open Grafana's Explore, pick the Loki datasource, or use the *Mattermost Log Aggregation*
-dashboard in the community folder. Some useful queries:
+dashboard in the *Mattermost Implement* folder. Some useful queries:
 
 ```logql
 # Mattermost errors on one server

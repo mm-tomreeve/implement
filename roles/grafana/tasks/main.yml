@@ -110,7 +110,7 @@
           options:
             path: {{ grafana_implement_dashboard_dir }}
         - name: mattermost-community
-          folder: Mattermost (community dashboards)
+          folder: {{ grafana_alert_folder }}
           type: file
           disableDeletion: true
           allowUiUpdates: false
