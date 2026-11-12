@@ -619,7 +619,7 @@ Grafana is at `http://{{ fqdn }}:{{ grafana_port }}/` (user `admin`, password in
 Grafana holds {{ obs.rules }} alert rules, built from {{ obs.checks }} checks across {{ obs.modules | join(', ') }}:
 {{ obs.by_severity.critical }} critical, {{ obs.by_severity.warning }} warning and {{ obs.by_severity.info }} info.
 The tiers don't overlap, so a disk at 96% raises the critical alert only. Every rule carries a
-`severity` label, plus `module` and `mmi_rule`. They sit in the {{ grafana_alert_folder | default('Mattermost Implement') }} folder under
+`severity` label, plus `module` and `mmi_rule`. They sit in the {{ grafana_alert_folder | default('Mattermost') }} folder under
 Alerting and are provisioned from files, so change thresholds with `monitoring_alert_overrides`
 in the answer file rather than in the UI. `docs/alerts.md` in the repo lists every
 check, its tiers and what to do when it fires.
@@ -635,7 +635,7 @@ set the notification policy to route on `severity`. A sensible starting point:
 
 Dashboards, all tagged `mattermost-implement` and linked to each other: {{ obs.dashboards | join(', ') }}.
 {% if has.mm or (mmd_estate | default([]) | selectattr('components', 'contains', 'mattermost') | list) %}
-Mattermost's own community dashboards are in a separate folder.
+Mattermost's own community dashboards are provisioned alongside them, in the same folder.
 {% endif %}
 {% endif %}
 

@@ -556,7 +556,7 @@ security, LogQL examples and troubleshooting.
 
 There are eight dashboards, generated for the estate, linked to each other and coloured to match
 the alert tiers: green, then blue for info, yellow for warning and red for critical. Mattermost's
-own community dashboards are provisioned alongside them, in the same *Mattermost Implement* folder.
+own community dashboards are provisioned alongside them, in the same *Mattermost* folder.
 
 #### Estate overview
 

@@ -290,7 +290,7 @@ def build_alerts(spec):
     doc = {
         "apiVersion": 1,
         "groups": [
-            {"orgId": 1, "name": name, "folder": spec.get("folder", "Mattermost Implement"),
+            {"orgId": 1, "name": name, "folder": spec.get("folder", "Mattermost"),
              "interval": interval, "rules": rules}
             for (name, interval), rules in sorted(groups.items())
         ],
@@ -423,7 +423,7 @@ def tiers_of(rule_id, spec):
 def overview(spec, present):
     b = Board("mmi-overview", "Mattermost estate overview", spec, ["overview"])
     servers = ", ".join("%s (%s)" % (s["name"], ", ".join(s.get("components", [])) or "host") for s in spec.get("servers", []))
-    b.text("**%s**. Servers watched: %s. Alerts live in the *Mattermost Implement* folder under Alerting; "
+    b.text("**%s**. Servers watched: %s. Alerts live in the *Mattermost* folder under Alerting; "
            "add a contact point there to get notified." % (spec.get("deployment", "Mattermost"), servers or "none"), h=3)
     if "site" in present:
         b.stat("Site reachable", 'min(probe_success{job="blackbox_http"})', w=6, steps={"critical": 1}, below=True,
