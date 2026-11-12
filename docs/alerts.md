@@ -6,7 +6,7 @@ the estate and what each one runs. From that it builds:
 - Prometheus jobs for every exporter, labelled with the server's name,
 - outside-in checks of the site (`/api/v4/system/ping`), its certificate and the Calls media port
   (a TCP connect from the monitoring server; UDP and reachability from users' networks aren't tested),
-- the alert rules below, in Grafana, in the *Mattermost Implement* folder,
+- the alert rules below, in Grafana, in the *Mattermost* folder,
 - log checks against Loki, when the estate ships its logs there ([logging.md](logging.md)),
 - dashboards per module: an estate overview, servers, Mattermost, PostgreSQL, Nginx, OpenSearch, Calls
   and NFS storage.

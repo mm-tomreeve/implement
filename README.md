@@ -556,7 +556,7 @@ security, LogQL examples and troubleshooting.
 
 There are eight dashboards, generated for the estate, linked to each other and coloured to match
 the alert tiers: green, then blue for info, yellow for warning and red for critical. Mattermost's
-own community dashboards sit in a separate folder.
+own community dashboards are provisioned alongside them, in the same *Mattermost* folder.
 
 #### Estate overview
 
@@ -596,7 +596,8 @@ GC time.
 #### Calls
 
 Active sessions, rtcd CPU and memory, file descriptors, UDP buffer overflows, media errors, and
-client packet loss and round-trip time. The session and client panels fill in once people start
+client packet loss and round-trip time, plus the Calls plugin's own RTC sessions, WebSocket events
+and RTP tracks from the Mattermost server. The session and client panels fill in once people start
 making calls.
 
 ![Calls dashboard](docs/images/grafana-calls.png)
