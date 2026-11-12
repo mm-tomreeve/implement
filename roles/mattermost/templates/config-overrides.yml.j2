@@ -9,6 +9,10 @@ ServiceSettings:
   ListenAddress: {{ ((mmd_mattermost_listen if mmd_mattermost_listen != '0.0.0.0' else '') ~ ':' ~ mattermost_port) | to_json }}
   EnableLocalMode: true
   LocalModeSocketLocation: {{ mattermost_local_socket | to_json }}
+{% if 'nginx' in mmd_selected or mattermost_proxy_sources | length > 0 %}
+  # Nginx sets X-Real-IP; X-Forwarded-For can be faked by clients.
+  TrustedProxyIPHeader: ["X-Real-IP"]
+{% endif %}
 {% if mattermost_license_file | length > 0 %}
   LicenseFileLocation: {{ mattermost_license_dest | to_json }}
 {% endif %}
