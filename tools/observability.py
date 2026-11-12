@@ -406,8 +406,8 @@ class Board:
         }
 
 
-def instance_var(spec, metric):
-    return {"name": "instance", "label": "Server", "type": "query", "datasource": {"type": "prometheus", "uid": spec.get("datasource_uid", "prometheus")},
+def instance_var(spec, metric, name="instance", label="Server"):
+    return {"name": name, "label": label, "type": "query", "datasource": {"type": "prometheus", "uid": spec.get("datasource_uid", "prometheus")},
             "query": {"query": "label_values(%s, instance)" % metric, "refId": "PrometheusVariableQueryEditor-VariableQuery"},
             "definition": "label_values(%s, instance)" % metric, "refresh": 2, "includeAll": True, "multi": True,
             "current": {"selected": True, "text": "All", "value": "$__all"}}
@@ -588,8 +588,12 @@ def opensearch_board(spec):
 
 
 def calls_board(spec):
-    b = Board("mmi-calls", "Calls (rtcd)", spec, ["rtcd"], [instance_var(spec, "rtcd_process_start_time_seconds")])
+    b = Board("mmi-calls", "Calls", spec, ["rtcd", "mattermost"],
+              [instance_var(spec, "rtcd_process_start_time_seconds", name="instance", label="rtcd server"),
+               instance_var(spec, 'up{job="calls-plugin"}', name="calls_instance", label="Mattermost server")])
     sel = 'instance=~"$instance"'
+    csel = 'instance=~"$calls_instance"'
+    b.row("rtcd")
     b.stat("Active sessions", "sum(rtcd_rtc_sessions_total{%s}) or vector(0)" % sel, w=6)
     b.stat("rtcd CPU (host share)", '100 * sum(rate(rtcd_process_cpu_seconds_total{%s}[5m])) / count(node_cpu_seconds_total{mode="idle",%s})' % (sel, sel),
            unit="percent", w=6, steps=tiers_of("rtcd-cpu", spec))
@@ -606,6 +610,16 @@ def calls_board(spec):
     b.timeseries("rtcd file descriptors used", [("100 * rtcd_process_open_fds{%s} / rtcd_process_max_fds{%s}" % (sel, sel), "{{instance}}")],
                  unit="percent", steps=tiers_of("rtcd-fds", spec))
     b.timeseries("Errors by type", [("sum by (type) (rate(rtcd_rtc_errors_total{%s}[5m]))" % sel, "{{type}}")], unit="ops")
+    b.row("Calls plugin")
+    b.text("From the Calls plugin's own metrics endpoint on the Mattermost server "
+           "(`/plugins/com.mattermost.calls/metrics`). CPU, memory and goroutines for that process "
+           "are already on the *Mattermost* dashboard; this is what's specific to calls.", h=2)
+    b.stat("Active RTC sessions", "sum(mattermost_plugin_calls_rtc_sessions_total{%s}) or vector(0)" % csel, w=6)
+    b.stat("Plugin CPU (host share)", '100 * sum(rate(mattermost_plugin_calls_process_cpu_seconds_total{%s}[5m])) / count(node_cpu_seconds_total{mode="idle",%s})' % (csel, csel),
+           unit="percent", w=6)
+    b.timeseries("RTC sessions", [("mattermost_plugin_calls_rtc_sessions_total{%s}" % csel, "{{instance}}")])
+    b.timeseries("WebSocket events", [("sum by (type) (rate(mattermost_plugin_calls_websocket_events_total{%s}[5m]))" % csel, "{{type}}")], unit="ops")
+    b.timeseries("RTP tracks", [("sum by (direction, type) (mattermost_plugin_calls_rtc_rtp_tracks_total{%s})" % csel, "{{direction}} {{type}}")])
     return b.json()
 
 
@@ -660,7 +674,7 @@ def build_dashboards(spec):
         boards["mmi-nginx.json"] = nginx_board(spec)
     if "opensearch" in present:
         boards["mmi-opensearch.json"] = opensearch_board(spec)
-    if "rtcd" in present:
+    if "rtcd" in present or "mattermost" in present:
         boards["mmi-calls.json"] = calls_board(spec)
     if "nfs" in present:
         boards["mmi-nfs.json"] = nfs_board(spec)
