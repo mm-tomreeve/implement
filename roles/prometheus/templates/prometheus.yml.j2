@@ -2,15 +2,16 @@
 # Built from the estate: every server and what it runs. Each target carries the
 # server's name as its instance label, so alerts and dashboards read naturally.
 {% set jobs = [
-     {'job': 'node',       'component': None,         'port': node_exporter_port,       'path': '/metrics'},
-     {'job': 'postgres',   'component': 'postgresql', 'port': postgres_exporter_port,   'path': '/metrics'},
-     {'job': 'nginx',      'component': 'nginx',      'port': nginx_exporter_port,      'path': '/metrics'},
-     {'job': 'opensearch', 'component': 'opensearch', 'port': opensearch_exporter_port, 'path': '/metrics'},
-     {'job': 'mattermost', 'component': 'mattermost', 'port': mattermost_metrics_port,  'path': '/metrics'},
-     {'job': 'rtcd',       'component': 'rtcd',       'port': rtcd_api_port,            'path': '/metrics'},
-     {'job': 'prometheus', 'component': 'prometheus', 'port': prometheus_port,          'path': '/metrics'},
-     {'job': 'grafana',    'component': 'grafana',    'port': grafana_port,             'path': '/metrics'},
-     {'job': 'loki',       'component': 'loki',       'port': loki_port,                'path': '/metrics'},
+     {'job': 'node',         'component': None,         'port': node_exporter_port,       'path': '/metrics'},
+     {'job': 'postgres',     'component': 'postgresql', 'port': postgres_exporter_port,   'path': '/metrics'},
+     {'job': 'nginx',        'component': 'nginx',      'port': nginx_exporter_port,      'path': '/metrics'},
+     {'job': 'opensearch',   'component': 'opensearch', 'port': opensearch_exporter_port, 'path': '/metrics'},
+     {'job': 'mattermost',   'component': 'mattermost', 'port': mattermost_metrics_port,  'path': '/metrics'},
+     {'job': 'calls-plugin', 'component': 'mattermost', 'port': mattermost_metrics_port,  'path': '/plugins/com.mattermost.calls/metrics'},
+     {'job': 'rtcd',         'component': 'rtcd',       'port': rtcd_api_port,            'path': '/metrics'},
+     {'job': 'prometheus',   'component': 'prometheus', 'port': prometheus_port,          'path': '/metrics'},
+     {'job': 'grafana',      'component': 'grafana',    'port': grafana_port,             'path': '/metrics'},
+     {'job': 'loki',         'component': 'loki',       'port': loki_port,                'path': '/metrics'},
    ] %}
 {% set estate = mmd_estate | default([]) %}
 {% set extra_names = prometheus_scrape_targets | map(attribute='job') | list %}
