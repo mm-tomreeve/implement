@@ -28,6 +28,14 @@ with open(os.path.join(ROOT, "install.sh"), encoding="utf-8") as handle:
 
 
 class Consistency(unittest.TestCase):
+    def test_version_is_the_same_everywhere(self):
+        with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as handle:
+            version = handle.read().strip()
+        with open(os.path.join(ROOT, "wizard", "index.html"), encoding="utf-8") as handle:
+            self.assertIn(">v%s<" % version, handle.read())
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as handle:
+            self.assertIn("**Version %s**" % version, handle.read())
+
     def test_wrapper_profiles_match_profiles_yml(self):
         block = re.search(r"declare -A PROFILE_COMPONENTS=\((.*?)\n\)", INSTALL_SH, re.S).group(1)
         wrapper = {m.group(1): m.group(2).split() for m in re.finditer(r'\[([\w-]+)\]="([^"]*)"', block)}

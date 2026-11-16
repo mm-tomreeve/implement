@@ -36,6 +36,7 @@ header.banner {
 }
 
 header.banner h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+header.banner .version { margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,.14); color: #fff; font-size: .78rem; font-weight: 500; vertical-align: middle; }
 header.banner p { margin: 6px 0 0; color: #c9d3e6; font-size: .92rem; max-width: 60ch; }
 
 main {
