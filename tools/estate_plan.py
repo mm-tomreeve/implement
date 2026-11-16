@@ -373,7 +373,7 @@ def write_secrets_file(path, password_file=None):
     handle = tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False, dir=folder)
     try:
         os.chmod(handle.name, 0o600)
-        handle.write("# Estate secrets for Mattermost Implement, generated once for the whole\n"
+        handle.write("# Estate secrets for Mattermost Parthenon, generated once for the whole\n"
                      "# estate. install.sh --estate-secrets gives each server only the ones it\n"
                      "# needs. Keep this wherever you keep your other vault files.\n")
         handle.write(yaml.safe_dump(generate_secrets(), default_flow_style=False, sort_keys=True))

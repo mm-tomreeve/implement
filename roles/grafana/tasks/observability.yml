@@ -7,8 +7,8 @@
 
 - name: Install the alert rules
   ansible.builtin.copy:
-    content: "{{ _obs_files['alerting/mattermost-implement.json'] }}"
-    dest: "{{ grafana_conf_dir }}/provisioning/alerting/mattermost-implement.json"
+    content: "{{ _obs_files['alerting/mattermost-parthenon.json'] }}"
+    dest: "{{ grafana_conf_dir }}/provisioning/alerting/mattermost-parthenon.json"
     owner: root
     group: "{{ grafana_user }}"
     mode: "0640"
@@ -17,7 +17,7 @@
 
 - name: Remove the alert rules when they are switched off
   ansible.builtin.file:
-    path: "{{ grafana_conf_dir }}/provisioning/alerting/mattermost-implement.json"
+    path: "{{ grafana_conf_dir }}/provisioning/alerting/mattermost-parthenon.json"
     state: absent
   when: not (monitoring_alerts_enabled | bool)
   notify: Restart grafana
@@ -25,7 +25,7 @@
 - name: Install the dashboards
   ansible.builtin.copy:
     content: "{{ item.value }}"
-    dest: "{{ grafana_implement_dashboard_dir }}/{{ item.key | basename }}"
+    dest: "{{ grafana_parthenon_dashboard_dir }}/{{ item.key | basename }}"
     owner: root
     group: "{{ grafana_user }}"
     mode: "0640"
@@ -36,8 +36,8 @@
 
 - name: Find dashboards for modules no longer in the estate
   ansible.builtin.find:
-    paths: "{{ grafana_implement_dashboard_dir }}"
-    patterns: "mmi-*.json"
+    paths: "{{ grafana_parthenon_dashboard_dir }}"
+    patterns: "mmp-*.json"
   register: _obs_existing
 
 - name: Remove them

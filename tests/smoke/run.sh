@@ -15,7 +15,7 @@ KEEP="${KEEP:-false}"
 cleanup() {
   # Keep the installer's logs, so a failed run (in CI especially) can be read afterwards.
   mkdir -p "${OUT}"
-  "${ENGINE}" exec "${NAME}" tar -C /var/log -c mattermost-implement 2>/dev/null | tar -C "${OUT}" -x 2>/dev/null || true
+  "${ENGINE}" exec "${NAME}" tar -C /var/log -c mattermost-parthenon 2>/dev/null | tar -C "${OUT}" -x 2>/dev/null || true
   if [[ "${KEEP}" == true ]]; then echo "==> KEEP=true, container ${NAME} left running"; return; fi
   "${ENGINE}" rm -f "${NAME}" >/dev/null 2>&1 || true
 }
@@ -50,7 +50,7 @@ in_box 'cd /opt/mmd && ./install.sh --verify-only --non-interactive'
 echo "==> Copying the report"
 mkdir -p "${OUT}"
 # latest.* are symlinks, so read them through the container rather than docker cp.
-in_box 'cat /var/lib/mattermost-implement/reports/latest.md' > "${OUT}/ARCHITECTURE-smoke.md"
-in_box 'cat /var/lib/mattermost-implement/results/latest.json' > "${OUT}/results.json"
+in_box 'cat /var/lib/mattermost-parthenon/reports/latest.md' > "${OUT}/ARCHITECTURE-smoke.md"
+in_box 'cat /var/lib/mattermost-parthenon/results/latest.json' > "${OUT}/results.json"
 test -s "${OUT}/ARCHITECTURE-smoke.md"
 echo "==> Report: ${OUT}/ARCHITECTURE-smoke.md"

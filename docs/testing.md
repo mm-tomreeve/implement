@@ -58,7 +58,7 @@ n/a in the report.
 | loki | Logs are arriving, and every estate server sent some in the last 15 minutes | warning |
 | otel_collector | Service active, Loki reachable from this server, no lines failed to send | warning |
 
-Results go to `/var/lib/mattermost-implement/results/<run>.json` (`latest.json` points at the newest)
+Results go to `/var/lib/mattermost-parthenon/results/<run>.json` (`latest.json` points at the newest)
 and into the report. The report is written before the run fails, so a failed run still leaves
 you a document that says what went wrong.
 
@@ -126,8 +126,8 @@ never fire. Rules that only have data once there is traffic (push errors, call p
 show as n/a. It also lists any alerts firing in Grafana. Every server ships its logs to Loki on mon01
 (`logging_loki_url` in `common.yml`), so the log alert queries run against Loki too. Most log
 checks only match once a failure happens, so for those it checks the query runs. Then, last, it
-pushes each log check's example lines into Loki as host `mmi-selftest` and checks the real query
-finds them. Alerts for `mmi-selftest` fire for a while afterwards; that's expected.
+pushes each log check's example lines into Loki as host `mmp-selftest` and checks the real query
+finds them. Alerts for `mmp-selftest` fire for a while afterwards; that's expected.
 
 With `KEEP=true`, mon01's Grafana is published on http://localhost:13000.
 

@@ -57,7 +57,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       [Unit]
       Description=OpenTelemetry Collector (ships logs to Loki)
       After=network-online.target

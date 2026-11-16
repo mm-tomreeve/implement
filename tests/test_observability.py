@@ -100,11 +100,11 @@ class Building(unittest.TestCase):
         spec = dict(FULL, overrides={"disk-used": {"tiers": {"warning": 85, "info": None}, "for": "30m"}},
                     disabled=["host-rebooted"])
         rules = rules_of(spec)
-        disk = {r["labels"]["severity"]: r for r in rules if r["labels"]["mmi_rule"] == "disk-used"}
+        disk = {r["labels"]["severity"]: r for r in rules if r["labels"]["mmp_rule"] == "disk-used"}
         self.assertEqual(set(disk), {"warning", "critical"})
         self.assertEqual(disk["warning"]["data"][1]["model"]["conditions"][0]["evaluator"]["params"], [85, 95])
         self.assertEqual(disk["warning"]["for"], "30m")
-        self.assertFalse([r for r in rules if r["labels"]["mmi_rule"] == "host-rebooted"])
+        self.assertFalse([r for r in rules if r["labels"]["mmp_rule"] == "host-rebooted"])
 
     def test_rule_shape(self):
         rules = rules_of(FULL)
@@ -133,7 +133,7 @@ class Building(unittest.TestCase):
 
     def test_summary_counts_match(self):
         result = obs.build(FULL)
-        doc = json.loads(result["files"]["alerting/mattermost-implement.json"])
+        doc = json.loads(result["files"]["alerting/mattermost-parthenon.json"])
         total = sum(len(g["rules"]) for g in doc["groups"])
         self.assertEqual(total, result["summary"]["rules"])
         self.assertEqual(total, sum(result["summary"]["by_severity"].values()))
@@ -205,14 +205,14 @@ class LogChecks(unittest.TestCase):
                 self.assertFalse(log_line_matches(r, line), "%s should not match %s" % (r["id"], line))
 
     def test_no_log_rules_without_loki(self):
-        ids = {r["labels"]["mmi_rule"] for r in rules_of(FULL)}
+        ids = {r["labels"]["mmp_rule"] for r in rules_of(FULL)}
         self.assertFalse(ids & {r["id"] for r in LOG_CATALOGUE})
         self.assertNotIn("log-ship-failing", ids)
         self.assertEqual(obs.logs_on(dict(FULL, loki="False")), False)
 
     def test_log_rules_follow_the_estate(self):
         rules = rules_of(FULL_LOGS)
-        ids = {r["labels"]["mmi_rule"] for r in rules}
+        ids = {r["labels"]["mmp_rule"] for r in rules}
         self.assertTrue({"mm-log-fatal", "pg-log-io", "unit-crash-loop", "log-host-silent", "log-ship-failing"} <= ids)
         db_only = {"loki": True, "servers": [{"name": "db01", "address": "x", "components": ["postgresql"]}]}
         modules = {r["labels"]["module"] for r in rules_of(db_only) if r["labels"]["signal"] == "logs"}
@@ -229,7 +229,7 @@ class LogChecks(unittest.TestCase):
                 self.assertEqual(uid, "prometheus", r["uid"])
 
     def test_new_errors_wait_for_a_week_of_history(self):
-        rule = [r for r in rules_of(FULL_LOGS) if r["labels"]["mmi_rule"] == "mm-log-new-error"][0]
+        rule = [r for r in rules_of(FULL_LOGS) if r["labels"]["mmp_rule"] == "mm-log-new-error"][0]
         refs = [d["refId"] for d in rule["data"]]
         self.assertEqual(refs, ["A", "B", "M", "C"])
         self.assertIn("unless", rule["data"][0]["model"]["expr"])
@@ -239,7 +239,7 @@ class LogChecks(unittest.TestCase):
     def test_trend_rules_run_less_often(self):
         doc, _ = obs.build_alerts(FULL_LOGS)
         groups = {g["name"]: g for g in doc["groups"]}
-        trend = {r["labels"]["mmi_rule"] for r in groups[obs.TREND_GROUP]["rules"]}
+        trend = {r["labels"]["mmp_rule"] for r in groups[obs.TREND_GROUP]["rules"]}
         self.assertEqual(trend, {"mm-log-error-spike", "mm-log-new-error", "pg-log-error-spike"})
         self.assertEqual(groups[obs.TREND_GROUP]["interval"], obs.TREND_INTERVAL)
 

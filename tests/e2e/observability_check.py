@@ -9,9 +9,9 @@ happens), so for those this checks the LogQL parses and runs.
 
   observability_check.py              the checks above
   observability_check.py --selftest   also push every log rule's example lines into Loki
-                                      (as host mmi-selftest) and check each rule's query
+                                      (as host mmp-selftest) and check each rule's query
                                       finds them. Run it last: the real rules see those
-                                      lines too, so alerts for mmi-selftest fire for a while.
+                                      lines too, so alerts for mmp-selftest fire for a while.
 """
 
 import json
@@ -57,14 +57,14 @@ def selftest(summary):
         values = streams.setdefault(rule["selftest_service"], [])
         for j, line in enumerate(rule["examples"]):
             values.append([str(now + i * 1000 + j), line])
-    body = {"streams": [{"stream": {"service_name": service, "host_name": "mmi-selftest", "deployment": "selftest"},
+    body = {"streams": [{"stream": {"service_name": service, "host_name": "mmp-selftest", "deployment": "selftest"},
                          "values": sorted(values)} for service, values in streams.items()]}
     req = urllib.request.Request(LOKI + "/loki/api/v1/push", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
     urllib.request.urlopen(req, timeout=30).close()
     time.sleep(5)  # let the ingester make them queryable
     failures = 0
-    print("\nLog rule self-test: example lines pushed as host mmi-selftest")
+    print("\nLog rule self-test: example lines pushed as host mmp-selftest")
     for rule in tested:
         count, result = run_query(rule, rule["selftest_expr"])
         found = sum(float(s["value"][1]) for s in result) if count > 0 else 0
@@ -77,7 +77,7 @@ def selftest(summary):
 
 
 def main(argv):
-    summary = json.load(open("/var/lib/mattermost-implement/observability.json"))
+    summary = json.load(open("/var/lib/mattermost-parthenon/observability.json"))
     failures = 0
     print("%-5s %-26s %-10s %s" % ("", "rule", "source", "series"))
     for rule in summary["rule_queries"]:
@@ -97,7 +97,7 @@ def main(argv):
     print("\nScrape targets: %d, down: %s" % (len(targets), ", ".join(down) or "none"))
     failures += len(down)
 
-    secrets = open("/etc/mattermost-implement/secrets.yml").read()
+    secrets = open("/etc/mattermost-parthenon/secrets.yml").read()
     password = re.search(r"grafana_admin_password:\s*(\S+)", secrets).group(1).strip("'\"")
     # Pending counts too: a rule still inside its "for" window would fire minutes later.
     alerts = get(GRAFANA + "/api/prometheus/grafana/api/v1/alerts", "admin:" + password)["data"]["alerts"]

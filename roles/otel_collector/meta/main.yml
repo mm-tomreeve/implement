@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: otel_collector
-  author: mattermost-implement
+  author: mattermost-parthenon
   description: OpenTelemetry Collector (contrib) shipping this server's logs to Loki
   license: MIT
   min_ansible_version: "2.14"

@@ -41,7 +41,7 @@
     group: "{{ opensearch_exporter_user }}"
     mode: "0640"
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       {% if mmd_opensearch_security | bool %}
       ES_USERNAME=admin
       ES_PASSWORD={{ mmd_secrets.opensearch_admin_password }}

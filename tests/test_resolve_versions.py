@@ -170,7 +170,7 @@ class Inventory(unittest.TestCase):
 
     def test_missing_folder(self):
         with self.assertRaises(rv.ResolveError):
-            rv.inventory("/nonexistent/mmi", "amd64")
+            rv.inventory("/nonexistent/mmp", "amd64")
 
 
 class Helpers(unittest.TestCase):
