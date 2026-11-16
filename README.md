@@ -88,6 +88,9 @@ An installed Mattermost stays on its version until you pass `--upgrade`. See
 is sent anywhere. The only outside request is the diagram library, which loads from jsDelivr, so
 the diagram needs a connection and the rest doesn't.
 
+It is light by default. The moon/sun button in the banner switches to a dark theme, and the
+wizard remembers your choice in that browser.
+
 Give it the licence and seat count and it recommends a topology, draws it, works out the install
 order and writes an **estate plan**: one encoded line describing every server. It also produces the
 tables other teams ask for: inbound and outbound firewall rules for the network team, sizing for the

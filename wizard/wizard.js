@@ -1335,5 +1335,21 @@
   updateSearchNote();
   updateCallsNote();
   updateMonitoringNote();
+  // Optional dark mode: off by default, remembered per browser.
+  const themeBtn = el("theme-toggle");
+  function syncThemeButton() {
+    const dark = document.documentElement.dataset.theme === "dark";
+    themeBtn.setAttribute("aria-pressed", String(dark));
+    themeBtn.setAttribute("aria-label", dark ? "Light mode" : "Dark mode");
+  }
+  themeBtn.addEventListener("click", () => {
+    const dark = document.documentElement.dataset.theme !== "dark";
+    if (dark) document.documentElement.dataset.theme = "dark";
+    else delete document.documentElement.dataset.theme;
+    try { localStorage.setItem("wizard-theme", dark ? "dark" : "light"); } catch (e) { /* storage blocked */ }
+    syncThemeButton();
+  });
+  syncThemeButton();
+
   showStep(1);
 })();
