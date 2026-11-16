@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: nginx
-  author: mattermost-implement
+  author: mattermost-parthenon
   description: Nginx reverse proxy for Mattermost, with TLS from supplied certificates
   license: MIT
   min_ansible_version: "2.14"

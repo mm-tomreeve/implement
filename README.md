@@ -1,6 +1,8 @@
-# Mattermost Implement
+# Mattermost Parthenon
 
-Mattermost Implement installs Mattermost and the services around it on RHEL 9 or 10, from the
+> **Parthenon** /ˈpɑːθənɒn/ (n.) A temple built to house something important.
+
+Mattermost Parthenon installs Mattermost and the services around it on RHEL 9 or 10, from the
 official tarballs. You run it on the server you're building. It asks what that server should run,
 installs it, tests it, and writes an architecture document for it. On a monitoring server it also
 builds Prometheus, Grafana dashboards and a full set of tiered alerts for the whole estate.
@@ -30,8 +32,8 @@ storage.
 On the target server, as root:
 
 ```bash
-git clone https://github.com/mm-tomreeve/implement.git /opt/mattermost-implement
-cd /opt/mattermost-implement
+git clone https://github.com/mm-tomreeve/implement.git /opt/mattermost-parthenon
+cd /opt/mattermost-parthenon
 ./install.sh
 ```
 
@@ -69,7 +71,7 @@ server, and it tells you which.
 2. Asks before checking it can reach the vendors' download sites, and falls back to a local folder
    if it can't.
 3. Installs `ansible-core` and the `ansible.posix` collection.
-4. Works out what this server should run, and saves it to `/etc/mattermost-implement/answers.yml`.
+4. Works out what this server should run, and saves it to `/etc/mattermost-parthenon/answers.yml`.
 5. Shows the plan, with any warnings about putting too much on one box, and waits for a yes.
 6. Deploys, runs the post-deploy tests and writes the architecture document.
 
@@ -128,7 +130,7 @@ and the report repeats it under Risks.
 
 Just run `./install.sh`. It asks for the profile, the site URL, which Mattermost build you want,
 where uploaded files go, TLS, and whatever the chosen components need. Passwords left blank are
-generated and kept in `/etc/mattermost-implement/secrets.yml` (root only).
+generated and kept in `/etc/mattermost-parthenon/secrets.yml` (root only).
 
 On any server that isn't the monitoring server it then asks two questions: should Prometheus on
 the monitoring server watch this one, and should its logs go to Loki there. A yes installs the
@@ -140,7 +142,7 @@ A server running Loki without Prometheus also asks which servers send it logs.
 ### Running it again
 
 On a server that has been installed before, the installer asks what to do with the saved answers
-in `/etc/mattermost-implement/answers.yml`:
+in `/etc/mattermost-parthenon/answers.yml`:
 
 | Choice | Does |
 |---|---|
@@ -156,7 +158,7 @@ hand, are copied into the new file. The old file is kept next to it as a `.bak`.
 
 `./install.sh --edit` goes straight to changing the saved answers, and
 `./install.sh --edit --answers FILE` starts from that file instead. Either way the result is saved
-to `/etc/mattermost-implement/answers.yml`.
+to `/etc/mattermost-parthenon/answers.yml`.
 
 ### From an answer file
 
@@ -213,7 +215,7 @@ Paste that line when `install.sh` asks for it, or save it as a file:
 Each server works out which node in the plan it is, from its hostname or one of its addresses, and
 derives its own answers: profiles, `mattermost_db_host`, the `*_allowed_clients` lists,
 `monitoring_estate`, scrape sources, the Loki URL. That is the hand-copying in the split-estate
-example below, done for you. The result goes to `/etc/mattermost-implement/answers.yml`, the same
+example below, done for you. The result goes to `/etc/mattermost-parthenon/answers.yml`, the same
 file an interactive run writes, and behaves like `--answers` from there: nothing is asked, so a
 setting the server needs and the plan can't know stops the plan with a message naming it.
 
@@ -600,7 +602,7 @@ An answer file settles all this without questions:
 ### How downloads are checked
 
 Every tarball is checked before it's unpacked. If a check fails the install stops, and the file
-stays in `/var/cache/mattermost-implement` for you to look at.
+stays in `/var/cache/mattermost-parthenon` for you to look at.
 
 | Download | Checked against |
 |---|---|
@@ -659,7 +661,7 @@ Mattermost is handled more carefully, because its database migrations only go fo
   `mattermost_allow_upgrade: true`) to move to the newest release. Changing a pinned
   `mattermost_version` is an upgrade by itself. rtcd on `latest` is held the same way.
 - Before an upgrade, Mattermost is stopped and its database dumped with `pg_dump -Fc` to
-  `/var/lib/mattermost-implement/backups`, next to a copy of `config.json`. On an app server with a
+  `/var/lib/mattermost-parthenon/backups`, next to a copy of `config.json`. On an app server with a
   remote database this installs the PostgreSQL client from the `postgresql_version` stream, which
   must be the database server's major version or newer. If the dump fails, Mattermost restarts on
   the old version and the run stops. Uploaded files aren't copied, so back those up yourself.
@@ -679,7 +681,7 @@ CA, never the public demo ones. PostgreSQL uses SCRAM-SHA-256, with TLS on a sel
 certificate once remote clients or replicas are allowed. Replicas log in as a separate
 `replicator` user, which pg_hba.conf only lets in for replication. Each replica makes its own
 certificate rather than keeping the copy of the primary's key. Generated passwords live in
-`/etc/mattermost-implement/secrets.yml`, root only.
+`/etc/mattermost-parthenon/secrets.yml`, root only.
 
 ### Post-deploy tests
 
@@ -698,12 +700,12 @@ get a document that says what went wrong. [docs/testing.md](docs/testing.md) lis
 
 ### The architecture document
 
-Each run writes `/var/lib/mattermost-implement/reports/latest.md`. It has Mermaid diagrams of the
+Each run writes `/var/lib/mattermost-parthenon/reports/latest.md`. It has Mermaid diagrams of the
 components, traffic and request flow, and the server's spec. It gives every component's version,
 checksum, paths and ports, plus the firewall matrix, security notes and backup guidance. It also
 records the monitoring estate and alert counts, every test result, risks and design decisions,
 and an operations runbook. Test results are also kept as JSON in
-`/var/lib/mattermost-implement/results/`.
+`/var/lib/mattermost-parthenon/results/`.
 
 ## Monitoring, alerts and dashboards
 
@@ -816,7 +818,7 @@ Every rule carries these labels, which is what you route on:
 |---|---|
 | `severity` | `info`, `warning`, `critical` |
 | `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `nfs`, `monitoring` |
-| `mmi_rule` | the check's id, as in the tables below |
+| `mmp_rule` | the check's id, as in the tables below |
 | `signal` | `metrics` or `logs` |
 | `deployment` | `deploy_name` from the answer file |
 
@@ -857,7 +859,7 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 | Check | Info | Warning | Critical | For | What to do |
 |---|---|---|---|---|---|
 | Metrics target down `target-down` |  |  | < 1 | 3m | The server, or one of its exporters, is down, or the firewall is blocking the scrape. Check the "Up by job and server" panel on the host dashboard for which job, then `systemctl status` for that service on the host, then `firewall-cmd --list-all`. |
-| Mattermost Implement service not running `service-not-active` |  |  | < 1 | 2m | Run `systemctl status {{ $labels.name }}` and `journalctl -u {{ $labels.name }} -n 100` on the host. |
+| Mattermost Parthenon service not running `service-not-active` |  |  | < 1 | 2m | Run `systemctl status {{ $labels.name }}` and `journalctl -u {{ $labels.name }} -n 100` on the host. |
 | Disk usage `disk-used` | > 70% | > 80% | > 95% | 10m | Find what is growing with `du -xh --max-depth=2 {{ $labels.mountpoint }} \| sort -h \| tail`. Usual suspects: Mattermost data, PostgreSQL WAL, OpenSearch indices, logs in /var/log. |
 | Disk predicted full within 24 hours `disk-fills-24h` |  | < 0 GiB |  | 30m | Growth over the last 6 hours points to a full disk tomorrow. Find the cause before the usage alerts start. |
 | Disk predicted full within 4 hours `disk-fills-4h` |  |  | < 0 GiB | 10m | Act now: free space or extend the volume. A full disk stops PostgreSQL and Mattermost. |
@@ -1031,7 +1033,7 @@ contact point. Grafana 13 starts with an empty one:
 ![Contact points: only Grafana's empty default](docs/images/grafana-contact-points.png)
 
 1. Log in to Grafana at `http://<monitoring server>:3000` as `admin`. The password is in
-   `/etc/mattermost-implement/secrets.yml` on the monitoring server. Change it after you first
+   `/etc/mattermost-parthenon/secrets.yml` on the monitoring server. Change it after you first
    log in.
 2. Under Alerting > Contact points, add one for each place alerts should go.
    For email, configure SMTP in the `[smtp]` section of `/etc/grafana/grafana.ini` first and
@@ -1066,7 +1068,7 @@ contact point. Grafana 13 starts with an empty one:
 | With a read replica, plan how you'd fail over | Replication doesn't fail over by itself. Promote the replica with `pg_ctl promote` (the replica's report has the full command), then point `mattermost_db_host` at it and re-run the app servers. |
 | Schedule backups and test a restore | `pg_dump` plus a file backup of the data directory, taken together and kept off the server. The report has the commands. |
 | Set `rtcd_ice_host_override` behind NAT or a load balancer, and open UDP 8443 from clients | Otherwise calls connect but carry no audio. |
-| Copy each server's `/etc/mattermost-implement/secrets.yml` somewhere safe | It holds the generated passwords. |
+| Copy each server's `/etc/mattermost-parthenon/secrets.yml` somewhere safe | It holds the generated passwords. |
 | Tune thresholds after a week | Use `monitoring_alert_overrides` for anything noisy. |
 | On arm64 app servers, install plugins from the Marketplace | The arm64 tarball ships without Calls and the other bundled plugins. |
 

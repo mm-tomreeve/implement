@@ -107,7 +107,7 @@
 - name: Set the JVM heap
   ansible.builtin.copy:
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       -Xms{{ _os_heap_mb }}m
       -Xmx{{ _os_heap_mb }}m
     dest: "{{ opensearch_conf_dir }}/jvm.options.d/heap.options"

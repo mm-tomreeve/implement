@@ -29,7 +29,7 @@ The report reads a lot of settings, so anything it shows has to be in group_vars
 defaults.
 
 Secrets are never role defaults. `roles/common/tasks/secrets.yml` takes them from the answer
-file, from `/etc/mattermost-implement/secrets.yml`, or generates them, and exposes them as
+file, from `/etc/mattermost-parthenon/secrets.yml`, or generates them, and exposes them as
 `mmd_secrets`.
 
 ## Adding a profile

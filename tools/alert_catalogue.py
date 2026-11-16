@@ -1,4 +1,4 @@
-"""The alert catalogue for Mattermost Implement.
+"""The alert catalogue for Mattermost Parthenon.
 
 One entry per thing worth knowing about. tools/observability.py turns each entry
 into one Grafana alert rule per tier (info, warning, critical). Tiers never overlap:
@@ -49,7 +49,7 @@ CATALOGUE = [
                   "`systemctl status` for that service on the host, then `firewall-cmd --list-all`.",
     },
     {
-        "id": "service-not-active", "module": "host", "title": "Mattermost Implement service not running",
+        "id": "service-not-active", "module": "host", "title": "Mattermost Parthenon service not running",
         "expr": 'node_systemd_unit_state{state="active"}',
         "direction": "below", "tiers": {"critical": 1}, "for": "2m", "unit": "",
         "summary": "{{ $labels.name }} is not active on {{ $labels.instance }}",

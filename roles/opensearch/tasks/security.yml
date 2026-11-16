@@ -11,7 +11,7 @@
 - name: Create the root CA
   ansible.builtin.command:
     argv: [openssl, req, -x509, -newkey, rsa:3072, -nodes, -days, "{{ opensearch_cert_days }}",
-           -subj, "{{ opensearch_cert_org }}/CN=mattermost-implement search CA",
+           -subj, "{{ opensearch_cert_org }}/CN=mattermost-parthenon search CA",
            -keyout, "{{ opensearch_cert_dir }}/root-ca-key.pem", -out, "{{ opensearch_cert_dir }}/root-ca.pem"]
     creates: "{{ opensearch_cert_dir }}/root-ca.pem"
 

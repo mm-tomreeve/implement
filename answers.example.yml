@@ -6,10 +6,10 @@
 #
 # Anything you leave out takes the default from inventory/group_vars/all/defaults.yml.
 # Running install.sh without --answers asks these questions interactively and saves
-# the result to /etc/mattermost-implement/answers.yml.
+# the result to /etc/mattermost-parthenon/answers.yml.
 #
 # Passwords left blank are generated on first run and kept in
-# /etc/mattermost-implement/secrets.yml (root only). On a split deployment, copy the
+# /etc/mattermost-parthenon/secrets.yml (root only). On a split deployment, copy the
 # database password from the database server's secrets.yml into the app server's
 # answer file.
 
@@ -60,7 +60,7 @@ mattermost_allow_upgrade: false
 # Before an upgrade Mattermost is stopped and its database dumped here (pg_dump -Fc),
 # with a copy of config.json. Uploaded files are not copied: back them up yourself.
 mattermost_upgrade_backup: true
-mattermost_backup_dir: /var/lib/mattermost-implement/backups
+mattermost_backup_dir: /var/lib/mattermost-parthenon/backups
 mattermost_license_file: ""             # path on this server, e.g. /root/mattermost.mattermost-license
 
 # File storage. We consume storage, we don't build it: local disk, an NFS mount

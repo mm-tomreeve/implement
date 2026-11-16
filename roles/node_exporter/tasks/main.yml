@@ -21,7 +21,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       [Unit]
       Description=Prometheus node_exporter
       After=network-online.target

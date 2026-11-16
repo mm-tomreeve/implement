@@ -9,11 +9,11 @@ admin:
   reserved: true
   backend_roles:
     - "admin"
-  description: "Cluster administrator (mattermost-implement)"
+  description: "Cluster administrator (mattermost-parthenon)"
 
 mattermost:
   hash: "{{ _os_hash_store.mattermost.hash }}"
   reserved: false
   backend_roles:
     - "admin"
-  description: "Mattermost server connection (mattermost-implement)"
+  description: "Mattermost server connection (mattermost-parthenon)"

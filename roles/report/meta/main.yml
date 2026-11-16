@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: report
-  author: mattermost-implement
+  author: mattermost-parthenon
   description: Writes the architecture document for this server in Markdown
   license: MIT
   min_ansible_version: "2.14"

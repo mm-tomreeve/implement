@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: mattermost
-  author: mattermost-implement
+  author: mattermost-parthenon
   description: Mattermost server from the official tarball
   license: MIT
   min_ansible_version: "2.14"

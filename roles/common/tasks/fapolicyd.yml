@@ -11,9 +11,9 @@
 - name: Trust the new install directories
   when: _fapolicyd_state.stdout == 'active'
   block:
-    - name: Add paths to the mattermost-implement trust file
+    - name: Add paths to the mattermost-parthenon trust file
       ansible.builtin.command:
-        argv: [fapolicyd-cli, --file, add, "{{ item }}", --trust-file, mattermost-implement]
+        argv: [fapolicyd-cli, --file, add, "{{ item }}", --trust-file, mattermost-parthenon]
       loop: "{{ fapolicyd_paths }}"
       register: _fapolicyd_add
       changed_when: _fapolicyd_add.rc == 0
@@ -21,7 +21,7 @@
 
     - name: Refresh hashes for paths already trusted
       ansible.builtin.command:
-        argv: [fapolicyd-cli, --file, update, "{{ item }}", --trust-file, mattermost-implement]
+        argv: [fapolicyd-cli, --file, update, "{{ item }}", --trust-file, mattermost-parthenon]
       loop: "{{ fapolicyd_paths }}"
       changed_when: true
 

@@ -1,6 +1,6 @@
 # Alerts and dashboards
 
-When a server runs the `monitoring` profile, Mattermost Implement asks which other servers are in
+When a server runs the `monitoring` profile, Mattermost Parthenon asks which other servers are in
 the estate and what each one runs. From that it builds:
 
 - Prometheus jobs for every exporter, labelled with the server's name,
@@ -23,7 +23,7 @@ carries these labels:
 |---|---|
 | `severity` | `info`, `warning`, `critical` |
 | `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `nfs`, `monitoring` |
-| `mmi_rule` | the check's id, as in the tables below |
+| `mmp_rule` | the check's id, as in the tables below |
 | `signal` | `metrics` (Prometheus) or `logs` (Loki) |
 | `deployment` | `deploy_name` from the answer file |
 
@@ -118,7 +118,7 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 | Check | Info | Warning | Critical | For | What to do |
 |---|---|---|---|---|---|
 | Metrics target down `target-down` |  |  | < 1 | 3m | The server, or one of its exporters, is down, or the firewall is blocking the scrape. Check the "Up by job and server" panel on the host dashboard for which job, then `systemctl status` for that service on the host, then `firewall-cmd --list-all`. |
-| Mattermost Implement service not running `service-not-active` |  |  | < 1 | 2m | Run `systemctl status {{ $labels.name }}` and `journalctl -u {{ $labels.name }} -n 100` on the host. |
+| Mattermost Parthenon service not running `service-not-active` |  |  | < 1 | 2m | Run `systemctl status {{ $labels.name }}` and `journalctl -u {{ $labels.name }} -n 100` on the host. |
 | Disk usage `disk-used` | > 70% | > 80% | > 95% | 10m | Find what is growing with `du -xh --max-depth=2 {{ $labels.mountpoint }} \| sort -h \| tail`. Usual suspects: Mattermost data, PostgreSQL WAL, OpenSearch indices, logs in /var/log. |
 | Disk predicted full within 24 hours `disk-fills-24h` |  | < 0 GiB |  | 30m | Growth over the last 6 hours points to a full disk tomorrow. Find the cause before the usage alerts start. |
 | Disk predicted full within 4 hours `disk-fills-4h` |  |  | < 0 GiB | 10m | Act now: free space or extend the volume. A full disk stops PostgreSQL and Mattermost. |

@@ -15,17 +15,17 @@ GRAFANA = "http://172.30.10.15:3000"
 password = re.search(r"grafana_admin_password:\s*(\S+)", open("/repo/tests/e2e/answers/common.yml").read()).group(1)
 
 DASHBOARDS = [
-    ("grafana-overview", "/d/mmi-overview?orgId=1&from=now-1h&to=now&kiosk", 1600, 1500),
-    ("grafana-servers", "/d/mmi-host?orgId=1&from=now-1h&to=now&kiosk", 1600, 1700),
-    ("grafana-mattermost", "/d/mmi-mattermost?orgId=1&from=now-1h&to=now&kiosk", 1600, 1500),
-    ("grafana-postgresql", "/d/mmi-postgresql?orgId=1&from=now-1h&to=now&kiosk", 1600, 1350),
-    ("grafana-opensearch", "/d/mmi-opensearch?orgId=1&from=now-1h&to=now&kiosk", 1600, 1000),
-    ("grafana-calls", "/d/mmi-calls?orgId=1&from=now-1h&to=now&kiosk", 1600, 1300),
-    ("grafana-nginx", "/d/mmi-nginx?orgId=1&from=now-1h&to=now&kiosk", 1600, 800),
+    ("grafana-overview", "/d/mmp-overview?orgId=1&from=now-1h&to=now&kiosk", 1600, 1500),
+    ("grafana-servers", "/d/mmp-host?orgId=1&from=now-1h&to=now&kiosk", 1600, 1700),
+    ("grafana-mattermost", "/d/mmp-mattermost?orgId=1&from=now-1h&to=now&kiosk", 1600, 1500),
+    ("grafana-postgresql", "/d/mmp-postgresql?orgId=1&from=now-1h&to=now&kiosk", 1600, 1350),
+    ("grafana-opensearch", "/d/mmp-opensearch?orgId=1&from=now-1h&to=now&kiosk", 1600, 1000),
+    ("grafana-calls", "/d/mmp-calls?orgId=1&from=now-1h&to=now&kiosk", 1600, 1300),
+    ("grafana-nginx", "/d/mmp-nginx?orgId=1&from=now-1h&to=now&kiosk", 1600, 800),
 ]
 PAGES = [
-    ("grafana-alert-rules", "/alerting/list?view=list&search=namespace:%22Mattermost%20Implement%22", 1600, 1200),
-    ("grafana-alert-rule-detail", "/alerting/grafana/mmi-disk-used-warn/view?tab=details", 1600, 1100),
+    ("grafana-alert-rules", "/alerting/list?view=list&search=namespace:%22Mattermost%22", 1600, 1200),
+    ("grafana-alert-rule-detail", "/alerting/grafana/mmp-disk-used-warn/view?tab=details", 1600, 1100),
     ("grafana-contact-points", "/alerting/notifications", 1600, 700),
     ("grafana-notification-policies", "/alerting/routes", 1600, 700),
 ]

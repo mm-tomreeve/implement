@@ -4,7 +4,7 @@
 Reads a JSON spec on stdin describing the estate (which servers run which
 components), applies tools/alert_catalogue.py and prints JSON:
 
-  {"files": {"alerting/mattermost-implement.json": "...", "dashboards/mmi-host.json": "..."},
+  {"files": {"alerting/mattermost-parthenon.json": "...", "dashboards/mmp-host.json": "..."},
    "summary": {...}}
 
 The grafana role writes those files under /etc/grafana/provisioning and the
@@ -37,7 +37,7 @@ MODULE_NAMES = {
     "monitoring": "Monitoring",
 }
 # Log lines the e2e self-test pushes carry this host name, so its queries see only them.
-SELFTEST_HOST = "mmi-selftest"
+SELFTEST_HOST = "mmp-selftest"
 DURATION = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 # Log rules that look back a week are costlier, so their group runs less often.
 TREND_GROUP = "Log trends"
@@ -231,7 +231,7 @@ def query(ref, expr, rule, spec):
 
 
 def rule_json(rule, tier, evaluator, spec):
-    uid = ("mmi-%s-%s" % (rule["id"], tier[:4]))[:40]
+    uid = ("mmp-%s-%s" % (rule["id"], tier[:4]))[:40]
     threshold = evaluator["params"]
     shown = (" %s %s" % ({"gt": ">", "lt": "<"}.get(evaluator["type"], "between"),
                          " and ".join("%g" % p for p in threshold)))
@@ -264,7 +264,7 @@ def rule_json(rule, tier, evaluator, spec):
         "labels": {
             "severity": tier,
             "module": rule["module"],
-            "mmi_rule": rule["id"],
+            "mmp_rule": rule["id"],
             "signal": "logs" if rule["datasource"] == "loki" else "metrics",
             "deployment": spec.get("deployment", "mattermost"),
         },
@@ -396,12 +396,12 @@ class Board:
     def json(self):
         self.newline()
         return {
-            "uid": self.uid, "title": self.title, "tags": ["mattermost-implement"] + self.tags,
+            "uid": self.uid, "title": self.title, "tags": ["mattermost-parthenon"] + self.tags,
             "timezone": "browser", "schemaVersion": 39, "version": 1, "editable": True,
             "refresh": "1m", "time": {"from": "now-6h", "to": "now"},
             "templating": {"list": self.variables}, "annotations": {"list": []},
-            "links": [{"type": "dashboards", "tags": ["mattermost-implement"], "asDropdown": True,
-                       "title": "Mattermost Implement", "includeVars": False, "keepTime": True}],
+            "links": [{"type": "dashboards", "tags": ["mattermost-parthenon"], "asDropdown": True,
+                       "title": "Mattermost Parthenon", "includeVars": False, "keepTime": True}],
             "panels": self.panels,
         }
 
@@ -421,7 +421,7 @@ def tiers_of(rule_id, spec):
 
 
 def overview(spec, present):
-    b = Board("mmi-overview", "Mattermost estate overview", spec, ["overview"])
+    b = Board("mmp-overview", "Mattermost estate overview", spec, ["overview"])
     servers = ", ".join("%s (%s)" % (s["name"], ", ".join(s.get("components", [])) or "host") for s in spec.get("servers", []))
     b.text("**%s**. Servers watched: %s. Alerts live in the *Mattermost* folder under Alerting; "
            "add a contact point there to get notified." % (spec.get("deployment", "Mattermost"), servers or "none"), h=3)
@@ -461,7 +461,7 @@ def overview(spec, present):
 
 
 def host_board(spec):
-    b = Board("mmi-host", "Servers", spec, ["host"], [instance_var(spec, "node_uname_info")])
+    b = Board("mmp-host", "Servers", spec, ["host"], [instance_var(spec, "node_uname_info")])
     sel = 'instance=~"$instance"'
     fs = '%s,%s' % (FS, sel)
     b.timeseries("CPU busy", [('100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle",%s}[5m])))' % sel, "{{instance}}")],
@@ -491,7 +491,7 @@ def host_board(spec):
 
 def postgres_board(spec):
     db = (spec.get("params") or {}).get("db_name", "mattermost")
-    b = Board("mmi-postgresql", "PostgreSQL", spec, ["postgresql"], [instance_var(spec, "pg_up")])
+    b = Board("mmp-postgresql", "PostgreSQL", spec, ["postgresql"], [instance_var(spec, "pg_up")])
     sel = 'instance=~"$instance"'
     dsel = 'datname="%s",%s' % (db, sel)
     b.stat("Up", "min(pg_up{%s})" % sel, w=6, steps={"critical": 1}, below=True,
@@ -523,7 +523,7 @@ def postgres_board(spec):
 
 
 def mattermost_board(spec):
-    b = Board("mmi-mattermost", "Mattermost application", spec, ["mattermost"], [instance_var(spec, "mattermost_system_server_start_time")])
+    b = Board("mmp-mattermost", "Mattermost application", spec, ["mattermost"], [instance_var(spec, "mattermost_system_server_start_time")])
     sel = 'instance=~"$instance"'
     b.text("Mattermost publishes these metrics when an Enterprise licence is installed and metrics are on. "
            "The community dashboards (Performance Monitoring v2 and Collapsed Reply Threads) sit alongside this one.", h=2)
@@ -552,7 +552,7 @@ def mattermost_board(spec):
 
 
 def nginx_board(spec):
-    b = Board("mmi-nginx", "Nginx", spec, ["nginx"], [instance_var(spec, "nginx_up")])
+    b = Board("mmp-nginx", "Nginx", spec, ["nginx"], [instance_var(spec, "nginx_up")])
     sel = 'instance=~"$instance"'
     b.stat("Up", "min(nginx_up{%s})" % sel, w=6, steps={"critical": 1}, below=True,
            mappings=[{"type": "value", "options": {"0": {"text": "DOWN"}, "1": {"text": "UP"}}}])
@@ -568,7 +568,7 @@ def nginx_board(spec):
 
 
 def opensearch_board(spec):
-    b = Board("mmi-opensearch", "OpenSearch", spec, ["opensearch"], [instance_var(spec, "elasticsearch_clusterinfo_up")])
+    b = Board("mmp-opensearch", "OpenSearch", spec, ["opensearch"], [instance_var(spec, "elasticsearch_clusterinfo_up")])
     sel = 'instance=~"$instance"'
     b.stat("Cluster status", 'max(elasticsearch_cluster_health_status{color="green",%s}) * 1 + max(elasticsearch_cluster_health_status{color="yellow",%s}) * 2 + max(elasticsearch_cluster_health_status{color="red",%s}) * 3' % (sel, sel, sel),
            w=6, steps={"info": 2, "critical": 3},
@@ -588,7 +588,7 @@ def opensearch_board(spec):
 
 
 def calls_board(spec):
-    b = Board("mmi-calls", "Calls", spec, ["rtcd", "mattermost"],
+    b = Board("mmp-calls", "Calls", spec, ["rtcd", "mattermost"],
               [instance_var(spec, "rtcd_process_start_time_seconds", name="instance", label="rtcd server"),
                instance_var(spec, 'up{job="calls-plugin"}', name="calls_instance", label="Mattermost server")])
     sel = 'instance=~"$instance"'
@@ -624,7 +624,7 @@ def calls_board(spec):
 
 
 def nfs_board(spec):
-    b = Board("mmi-nfs", "NFS storage", spec, ["nfs"], [instance_var(spec, "node_uname_info")])
+    b = Board("mmp-nfs", "NFS storage", spec, ["nfs"], [instance_var(spec, "node_uname_info")])
     sel = 'instance=~"$instance"'
     b.text("The top half is the NFS server (nfsd). The bottom half is what the servers mounting the share see, "
            "so pick an app server in the Server list to look at its side of the same traffic.", h=2)
@@ -665,19 +665,19 @@ def nfs_board(spec):
 
 def build_dashboards(spec):
     present = modules_present(spec)
-    boards = {"mmi-overview.json": overview(spec, present), "mmi-host.json": host_board(spec)}
+    boards = {"mmp-overview.json": overview(spec, present), "mmp-host.json": host_board(spec)}
     if "postgresql" in present:
-        boards["mmi-postgresql.json"] = postgres_board(spec)
+        boards["mmp-postgresql.json"] = postgres_board(spec)
     if "mattermost" in present:
-        boards["mmi-mattermost.json"] = mattermost_board(spec)
+        boards["mmp-mattermost.json"] = mattermost_board(spec)
     if "nginx" in present:
-        boards["mmi-nginx.json"] = nginx_board(spec)
+        boards["mmp-nginx.json"] = nginx_board(spec)
     if "opensearch" in present:
-        boards["mmi-opensearch.json"] = opensearch_board(spec)
+        boards["mmp-opensearch.json"] = opensearch_board(spec)
     if "rtcd" in present or "mattermost" in present:
-        boards["mmi-calls.json"] = calls_board(spec)
+        boards["mmp-calls.json"] = calls_board(spec)
     if "nfs" in present:
-        boards["mmi-nfs.json"] = nfs_board(spec)
+        boards["mmp-nfs.json"] = nfs_board(spec)
     return boards
 
 
@@ -685,7 +685,7 @@ def build_dashboards(spec):
 
 def build(spec):
     alerts, count = build_alerts(spec)
-    files = {"alerting/mattermost-implement.json": json.dumps(alerts, indent=2, sort_keys=True) + "\n"}
+    files = {"alerting/mattermost-parthenon.json": json.dumps(alerts, indent=2, sort_keys=True) + "\n"}
     for name, board in build_dashboards(spec).items():
         files["dashboards/" + name] = json.dumps(board, indent=2, sort_keys=True) + "\n"
     rules = effective_rules(spec)

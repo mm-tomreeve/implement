@@ -13,9 +13,9 @@
 set -Eeuo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR=/etc/mattermost-implement
-STATE_DIR=/var/lib/mattermost-implement
-LOG_DIR=/var/log/mattermost-implement
+CONFIG_DIR=/etc/mattermost-parthenon
+STATE_DIR=/var/lib/mattermost-parthenon
+LOG_DIR=/var/log/mattermost-parthenon
 SAVED_ANSWERS="${CONFIG_DIR}/answers.yml"
 MIN_ANSIBLE_CORE=2.14
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -145,9 +145,9 @@ section() {
 banner() {
   local line pad
   echo
-  for line in "" "  Mattermost Implement" "  $1" ""; do
+  for line in "" "  Mattermost Parthenon" "  $1" ""; do
     pad=$((WIDTH - 1 - ${#line})); (( pad < 0 )) && pad=0
-    if [[ "${line}" == "  Mattermost Implement" ]]; then
+    if [[ "${line}" == "  Mattermost Parthenon" ]]; then
       printf '%s%s%s%s%s%s\n' "${C_BAR}" "${G_BAR}" "${C_BANNER}${C_BOLD}" "${line}" "$(repeat ' ' "${pad}")" "${C_OFF}"
     else
       printf '%s%s%s%s%s%s\n' "${C_BAR}" "${G_BAR}" "${C_BANNER}" "${line}" "$(repeat ' ' "${pad}")" "${C_OFF}"
@@ -160,7 +160,9 @@ trap 'echo; log_line "Stopped with Ctrl-C."; exit 130' INT
 
 usage() {
   cat <<EOF
-Mattermost Implement: install Mattermost components on this RHEL server.
+Mattermost Parthenon: install Mattermost components on this RHEL server.
+
+  Parthenon /ˈpɑːθənɒn/ (n.) A temple built to house something important.
 
 Usage: sudo ./install.sh [options]
 
@@ -483,17 +485,17 @@ choose_installer_source() {
 setup_local_repo() {
   [[ -d "${LOCAL_REPO}" ]] || die "--local-repo ${LOCAL_REPO} is not a directory"
   say "Adding temporary dnf repos from ${LOCAL_REPO}"
-  local repo_file=/etc/yum.repos.d/mattermost-implement-local.repo
+  local repo_file=/etc/yum.repos.d/mattermost-parthenon-local.repo
   : > "${repo_file}"
   local sub
   for sub in BaseOS AppStream; do
     if [[ -d "${LOCAL_REPO}/${sub}/repodata" ]]; then
-      printf '[mmd-local-%s]\nname=mattermost-implement local %s\nbaseurl=file://%s/%s\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n\n' \
+      printf '[mmd-local-%s]\nname=mattermost-parthenon local %s\nbaseurl=file://%s/%s\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n\n' \
         "${sub}" "${sub}" "${LOCAL_REPO}" "${sub}" >> "${repo_file}"
     fi
   done
   if [[ ! -s "${repo_file}" && -d "${LOCAL_REPO}/repodata" ]]; then
-    printf '[mmd-local]\nname=mattermost-implement local\nbaseurl=file://%s\nenabled=1\ngpgcheck=0\n' "${LOCAL_REPO}" > "${repo_file}"
+    printf '[mmd-local]\nname=mattermost-parthenon local\nbaseurl=file://%s\nenabled=1\ngpgcheck=0\n' "${LOCAL_REPO}" > "${repo_file}"
   fi
   [[ -s "${repo_file}" ]] || die "No repodata found under ${LOCAL_REPO}"
   info "Wrote ${repo_file}. Remove it when you no longer need it."
@@ -1021,7 +1023,7 @@ interview() {
   choose_components
 
   {
-    echo "# Mattermost Implement answer file, written by install.sh on $(date -u '+%Y-%m-%d %H:%M UTC') for ${fqdn}."
+    echo "# Mattermost Parthenon answer file, written by install.sh on $(date -u '+%Y-%m-%d %H:%M UTC') for ${fqdn}."
     echo "# Re-run with: sudo ./install.sh --answers ${SAVED_ANSWERS}"
     echo "# Change some answers with: sudo ./install.sh --edit"
     echo "# answers.example.yml in the repo explains every setting."

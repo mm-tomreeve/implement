@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mattermost Implement &middot; architecture wizard</title>
+<title>Mattermost Parthenon &middot; architecture wizard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -11,7 +11,8 @@
 </head>
 <body>
 <header class="banner">
-  <h1>Mattermost Implement &middot; architecture wizard</h1>
+  <h1>Mattermost Parthenon &middot; architecture wizard</h1>
+  <p><strong>Parthenon</strong> /ˈpɑːθənɒn/ (n.) A temple built to house something important.</p>
 </header>
 
 <main>
@@ -247,7 +248,7 @@
 
     <details class="section">
       <summary>Firewall requirements <span class="count" id="count-firewall"></span></summary>
-      <p class="hint">For the network team. <strong class="product">Mattermost Implement</strong> opens these on each server. Anything
+      <p class="hint">For the network team. <strong class="product">Mattermost Parthenon</strong> opens these on each server. Anything
          between your own network segments is theirs to open.</p>
       <div class="copy-row">
         <div class="table-wrap"><table class="nodes" id="firewall-table">
@@ -259,7 +260,7 @@
       <div class="note" id="calls-note" style="display:none"></div>
 
       <h3 style="margin-top:22px;">Outbound</h3>
-      <p class="hint">Connections these servers have to be able to make. <strong class="product">Mattermost Implement</strong> cannot
+      <p class="hint">Connections these servers have to be able to make. <strong class="product">Mattermost Parthenon</strong> cannot
          open these for you, because they leave your network.</p>
       <div class="copy-row">
         <div class="table-wrap"><table class="nodes" id="outbound-table">
@@ -624,7 +625,7 @@
       { "component": null, "to": "api.github.com, github.com and objects.githubusercontent.com", "port": 443, "proto": "tcp",
         "purpose": "rtcd, Loki, the OpenTelemetry Collector and the Prometheus exporters" }
     ],
-    "offline_note": "Point <strong class=\"product\">Mattermost Implement</strong> at an offline bundle or an internal mirror with --artifact-source and none of the install rows are needed. The runtime rows still are."
+    "offline_note": "Point <strong class=\"product\">Mattermost Parthenon</strong> at an offline bundle or an internal mirror with --artifact-source and none of the install rows are needed. The runtime rows still are."
   }
 }
 </script>

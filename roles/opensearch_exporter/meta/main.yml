@@ -1,8 +1,8 @@
 ---
 galaxy_info:
   role_name: opensearch_exporter
-  author: mattermost-implement
-  description: opensearch_exporter for Mattermost Implement monitoring
+  author: mattermost-parthenon
+  description: opensearch_exporter for Mattermost Parthenon monitoring
   license: MIT
   min_ansible_version: "2.14"
   platforms:

@@ -1,4 +1,4 @@
-// Mattermost Implement architecture wizard. Runs entirely client-side: nothing
+// Mattermost Parthenon architecture wizard. Runs entirely client-side: nothing
 // here is ever sent anywhere. The estate-plan schema this emits is documented in
 // estate.example.yml and consumed by tools/estate_plan.py on each server.
 (() => {
