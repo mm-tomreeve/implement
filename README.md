@@ -1,5 +1,7 @@
 # Mattermost Parthenon
 
+> **Parthenon** /ˈpɑːθənɒn/ (n.) A temple built to house something important.
+
 Mattermost Parthenon installs Mattermost and the services around it on RHEL 9 or 10, from the
 official tarballs. You run it on the server you're building. It asks what that server should run,
 installs it, tests it, and writes an architecture document for it. On a monitoring server it also

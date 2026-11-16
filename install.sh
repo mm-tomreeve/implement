@@ -162,6 +162,8 @@ usage() {
   cat <<EOF
 Mattermost Parthenon: install Mattermost components on this RHEL server.
 
+  Parthenon /ˈpɑːθənɒn/ (n.) A temple built to house something important.
+
 Usage: sudo ./install.sh [options]
 
 What to install
