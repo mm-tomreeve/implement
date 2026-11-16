@@ -100,13 +100,17 @@ search, Calls, monitoring, TLS and file storage.
 
 ![Step 1: the deployment](docs/images/wizard-1-deployment.png)
 
-High availability is a checkbox and only offered on Enterprise, because clustering, Enterprise
-search and dedicated Calls servers are all Enterprise features. The badge beside it says whether
-Mattermost marks high availability as required at that size, which it does from 2,000 users up. The
-choice is still yours. Turning it on asks for the number of app servers and read replicas, and
-stops offering local disk for uploads, since more than one app server can't keep files on its own
-disk. It doesn't configure clustering. You turn cluster mode on yourself and open TCP and UDP 8074
-between the app servers. The firewall table and the checklist both say so.
+High availability is a checkbox, offered only on Enterprise, because clustering, Enterprise search
+and dedicated Calls servers are all Enterprise features. The badge beside it shows whether Mattermost
+marks high availability as required at your size (it does from 2,000 users up). The choice is still
+yours.
+
+Turning it on asks for the number of app servers and read replicas, and stops offering local disk
+for uploads, since several app servers can't share one server's disk. The plan then clusters the app
+servers for you. Each one gets the others in `mattermost_cluster_peers`, so Mattermost's cluster mode
+is switched on and TCP and UDP 8074 is opened between them. The firewall table lists those flows. You
+still need the Enterprise licence on every app server and a load balancer in front. See
+[Example: two app servers](#example-two-app-servers).
 
 ### 2. The recommendation
 
@@ -355,6 +359,29 @@ tls_mode: provided
 tls_cert_file: /root/certs/chat.acme.example.crt
 tls_key_file: /root/certs/chat.acme.example.key
 ```
+
+### Example: two app servers
+
+Both app servers point at the same database and sit behind a load balancer. Each lists the other:
+
+```yaml
+# app01 (10.10.1.12)
+deploy_profiles: [app]
+deploy_name: chat-prod
+mattermost_site_url: https://chat.example.com
+mattermost_license_file: /root/mattermost.mattermost-license
+mattermost_db_host: 10.10.1.11
+mattermost_db_password: "<db_password from db01's secrets.yml>"
+mattermost_proxy_sources: [10.10.1.5]      # the load balancer
+mattermost_cluster_peers: [10.10.1.13]     # app02
+mattermost_file_driver: amazons3           # shared storage; local disk won't do
+```
+
+app02 is the same with `mattermost_cluster_peers: [10.10.1.12]`. That writes `ClusterSettings`
+(`Enable`, `ClusterName` from `deploy_name`, `GossipPort`) and opens 8074 on TCP and UDP to the peer
+only. Mattermost finds its peers through the database. Give both the same `deploy_name`, version and
+licence, and add each app server to `postgresql_allowed_clients` on the database server. Verify warns
+until the other node is installed.
 
 ### Example: a split estate
 
@@ -1139,8 +1166,8 @@ contact point. Grafana 13 starts with an empty one:
 | Job | Why |
 |---|---|
 | Add TLS if you installed with `tls_mode: later` | Mattermost is on plain HTTP until you do. Put the certificate and key on the app server, set `tls_mode: provided` and re-run. |
-| Upload the Enterprise licence, or set `mattermost_license_file` | Until then Mattermost runs as a free instance, with Enterprise search, HA and the metrics endpoint switched off. If you apply it in the System Console rather than by file, set `mattermost_metrics_enable: true` so Prometheus is pointed at port 8067. |
-| With more than one app server, turn cluster mode on yourself | This toolkit doesn't configure clustering. Set `ClusterSettings.Enable`, `ClusterName` and `GossipPort`, open TCP and UDP 8074 between the app servers, keep every node on the same version and the same `config.json`, and apply the licence to each. |
+| Upload the Enterprise licence, or set `mattermost_license_file` | Until then Mattermost runs as a free instance, with Enterprise search, HA and the metrics endpoint switched off, and `mattermost_cluster_peers` is refused. If you apply it in the System Console rather than by file, set `mattermost_metrics_enable: true` so Prometheus is pointed at port 8067. |
+| With more than one app server, list the others in `mattermost_cluster_peers` | On each app server, so `ClusterSettings` is written and TCP and UDP 8074 is opened to the peers. Needs the licence file. Keep every node on the same version, and install them all before expecting the cluster check in verify to pass. |
 | Open the outbound connections | Push notifications, SMTP, AD/LDAP and the plugin marketplace all leave your network, and `install.sh` can't open those. The architecture document lists them per server. |
 | Run a bulk index once licensed | System Console > Environment > Elasticsearch. Search uses the database until you do. |
 | Set up SMTP and push notifications in the System Console | Invitations, password resets and mobile notifications depend on them. |

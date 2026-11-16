@@ -33,6 +33,7 @@ n/a in the report.
 | mattermost | Calls plugin points at rtcd, and rtcd answers | critical |
 | mattermost | OpenSearch answers from the app server | critical |
 | mattermost | mmctl local mode works | warning |
+| mattermost | Every app server has joined the cluster (only with `mattermost_cluster_peers`; the others may not be installed yet) | warning |
 | mattermost | No errors in the last 500 log lines | warning |
 | mattermost | Metrics endpoint answers (needs a licence) | info |
 | nginx | `nginx -t` passes and the service is active | critical |

@@ -236,11 +236,7 @@
     const band = state.band;
     el("rationale").textContent = band.label + " users, sized from " + band.reference + ", " +
       (nodes.length === 1 ? "one server" : nodes.length + " servers");
-    const ha = haRequired(band, state.s.seats)
-      ? "Mattermost marks high availability as required at this size. The Availability group on the "
-        + "previous page is where you decide."
-      : "";
-    const text = [band.note, ha].filter(Boolean).join(" ");
+    const text = band.note || "";
     el("scale-note").style.display = text ? "" : "none";
     el("scale-note").textContent = text;
     renderEstateSummary();
@@ -767,9 +763,9 @@
     } else {
       rows.push(apps > 1
         ? [apps + " app servers",
-           "You supply the load balancer and turn on cluster mode. Neither is installed here. "
-           + "Open TCP and UDP 8074 between them for cluster gossip, keep every node on the same "
-           + "Mattermost version and the same config.json, and apply the licence to each."]
+           "You supply the load balancer. Clustering is switched on for you: each app server lists the "
+           + "others as its cluster peers and opens TCP and UDP 8074 to them. Keep every node on the same "
+           + "Mattermost version, and apply the licence to each."]
         : ["One app server", "Restarts and upgrades are outages."]);
     }
 
@@ -930,8 +926,8 @@
     if (plan.nodes.some(n => n.primary)) out.push("Copy the db_password and replication_password from the primary's secrets.yml into the replica's answers.");
     if (plan.nodes.filter(n => n.role === "app" || n.role === "core").length > 1) {
       out.push("Put a load balancer in front of the app servers and health-check /api/v4/system/ping on each.");
-      out.push("Turn on cluster mode yourself (ClusterSettings.Enable, ClusterName, GossipPort 8074) and open TCP and UDP 8074 between the app servers. This toolkit doesn't configure clustering.");
-      out.push("Apply the Enterprise licence on every app server and keep them on the same Mattermost version and the same config.json.");
+      out.push("Apply the Enterprise licence on every app server and set mattermost_license_file. Clustering is on from the estate plan (mattermost_cluster_peers) and the install stops without it.");
+      out.push("Install every app server, then check the cluster: verify warns until each peer has joined. Keep them on the same Mattermost version.");
     }
     if (hasRole("calls")) out.push("If clients reach the Calls server through NAT or a different address, fill in rtcd_ice_host_override on that server.");
     out.push("None of that is in the estate plan on purpose. Secrets and certificate files never leave your servers.");
@@ -1178,8 +1174,8 @@
       return;
     }
     const replicas = Math.max(0, parseInt(el("f-db-replicas").value, 10) || 0);
-    note.textContent = "You supply the load balancer and turn on cluster mode; neither is installed here. "
-      + "Cluster gossip needs TCP and UDP 8074 open between the app servers, and it is in the firewall table. "
+    note.textContent = "You supply the load balancer; it isn't installed here. Clustering is switched on for you, "
+      + "with TCP and UDP 8074 open between the app servers (it is in the firewall table). "
       + (replicas > 0 ? "Replica failover is manual." : "No replica, so the database is still a single point of failure.");
   }
 

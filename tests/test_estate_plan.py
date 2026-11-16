@@ -172,6 +172,20 @@ class DeriveSplitEstate(unittest.TestCase):
         self.assertTrue(any("root-ca.pem" in f for f in followups))
         self.assertTrue(any("certificate and key" in f for f in followups))
 
+    def test_app_servers_list_each_other_as_cluster_peers(self):
+        plan = dict(SPLIT_ESTATE)
+        plan["nodes"] = list(SPLIT_ESTATE["nodes"]) + [
+            {"name": "app02", "address": "10.10.1.16", "profiles": ["app"]}]
+        a1, f1 = ep.derive_answers(plan, "app01")
+        a2, _ = ep.derive_answers(plan, "app02")
+        self.assertEqual(a1["mattermost_cluster_peers"], ["10.10.1.16"])
+        self.assertEqual(a2["mattermost_cluster_peers"], ["10.10.1.12"])
+        self.assertTrue(any("mattermost_license_file" in f for f in f1))
+
+    def test_single_app_server_has_no_peers(self):
+        answers, _ = ep.derive_answers(SPLIT_ESTATE, "app01")
+        self.assertNotIn("mattermost_cluster_peers", answers)
+
     def test_calls01(self):
         answers, _followups = ep.derive_answers(SPLIT_ESTATE, "calls01")
         self.assertEqual(answers, {

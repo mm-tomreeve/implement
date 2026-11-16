@@ -279,6 +279,18 @@
     fw_public: "{{ mattermost_proxy_sources | length == 0 }}"
   when: mmd_mattermost_listen != '127.0.0.1'
 
+- name: Open the cluster port to the other app servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports:
+      - {port: "{{ mattermost_cluster_port }}", proto: tcp}
+      - {port: "{{ mattermost_cluster_port }}", proto: udp}
+    fw_sources: "{{ mattermost_cluster_peers }}"
+    fw_public: false
+  when: mattermost_cluster_peers | length > 0
+
 - name: Open the metrics port to Prometheus servers
   ansible.builtin.include_role:
     name: common

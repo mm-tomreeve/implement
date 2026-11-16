@@ -49,14 +49,11 @@ mmd_catalogue:
         proto: tcp
         purpose: Prometheus metrics (needs an Enterprise licence)
         allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
-      # Documented, never opened: this toolkit doesn't configure clustering, and
-      # a single app server has nobody to gossip with. documented_only keeps the
-      # pre-install port check off it, because nothing here binds it.
+      # Only bound and opened when mattermost_cluster_peers is set.
       - port: "{{ mattermost_cluster_port }}"
         proto: tcp/udp
-        documented_only: true
-        purpose: Cluster gossip between app servers, once you turn clustering on yourself
-        allowed: the other Mattermost app servers (not opened by this toolkit)
+        purpose: Cluster gossip between app servers (needs an Enterprise licence)
+        allowed: "{{ mattermost_cluster_peers | join(', ') if mattermost_cluster_peers else 'not used' }}"
       - port: "{{ mattermost_calls_port }}"
         proto: udp/tcp
         purpose: Built-in Calls media (only when no rtcd is configured)
@@ -324,6 +321,14 @@ mmd_dependency_checks:
   - component: mattermost
     ok: "{{ mattermost_file_driver == 'local' or (mattermost_s3_endpoint | length > 0 and mattermost_s3_bucket | length > 0) }}"
     message: mattermost_file_driver is amazons3 but mattermost_s3_endpoint or mattermost_s3_bucket is empty.
+  - component: mattermost
+    ok: "{{ mattermost_cluster_peers | length == 0 or mattermost_edition == 'enterprise' }}"
+    message: mattermost_cluster_peers is set, but clustering is Enterprise only and mattermost_edition is team.
+  - component: mattermost
+    ok: "{{ mattermost_cluster_peers | length == 0 or mattermost_license_file | length > 0 }}"
+    message: >-
+      mattermost_cluster_peers is set, but clustering needs an Enterprise licence. Set mattermost_license_file,
+      or leave the peers empty for a single app server.
   - component: nginx
     ok: "{{ 'mattermost' in mmd_selected or nginx_upstreams | length > 0 }}"
     message: Nginx has nothing to proxy. Add mattermost to this server or list nginx_upstreams.

@@ -508,6 +508,14 @@ def derive_answers(plan, node_name, estate_secrets=None):
             out["mattermost_version_channel"] = plan["mattermost_version_channel"]
             if plan["mattermost_version_channel"] == "pinned":
                 out["mattermost_version"] = str(plan["mattermost_version"])
+        # More than one app server: each lists the others, which turns clustering on and
+        # opens the gossip port to them. It needs the licence, which a plan never carries.
+        peers = [n["address"] for n in app_nodes if n["name"] != node_name]
+        if peers:
+            out["mattermost_cluster_peers"] = peers
+            followups.append("This plan has %d app servers, so clustering is on. It needs the Enterprise licence "
+                              "on every one: put it on this server and set mattermost_license_file, or the "
+                              "install stops." % (len(peers) + 1))
         if plan.get("file_storage") == "amazons3":
             out["mattermost_file_driver"] = "amazons3"
             followups.append("Fill in the S3 bucket, region and keys (mattermost_s3_*). They aren't in the plan.")

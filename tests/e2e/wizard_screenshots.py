@@ -36,6 +36,7 @@ with sync_playwright() as p:
     fw = pg.locator("#step-4 details", has_text="Firewall requirements")
     fw.locator("summary").first.click(); pg.wait_for_timeout(400)
     bb = fw.bounding_box()
-    pg.screenshot(path=RAW+"wizard-5-firewall.png", full_page=True, clip={"x":bb["x"],"y":bb["y"],"width":bb["width"],"height":min(bb["height"],820)})
+    sy = pg.evaluate("window.scrollY")  # bounding_box is viewport-relative, clip is page-relative
+    pg.screenshot(path=RAW+"wizard-5-firewall.png", full_page=True, clip={"x":bb["x"],"y":bb["y"]+sy,"width":bb["width"],"height":min(bb["height"],820)})
     open(RAW + 'estate.yml','w').write(pg.input_value('#yaml-out'))
     b.close()
