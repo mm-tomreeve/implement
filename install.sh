@@ -67,19 +67,26 @@ PREV_FILE=""
 
 # ------------------------------------------------------------------ output
 
-# Mattermost brand colours: Denim #1E325C, Sapphire #1C58D9, Sunglow #FFBC1F.
-# Truecolor where the terminal says it can, the nearest 256-colour match otherwise,
-# and nothing at all for pipes, dumb terminals or NO_COLOR.
-C_BOLD=""; C_DIM=""; C_RED=""; C_GRN=""; C_OFF=""; C_BLUE=""; C_YEL=""; C_BANNER=""; C_BAR=""
+# Mattermost brand colours: Denim #1E325C, Sunglow #FFBC1F.
+#
+# Nothing you have to read is coloured. Terminals come in every shade, and a
+# colour that reads well on one is unreadable on another: Sapphire manages
+# 2.7:1 on a dark background and Sunglow 1.7:1 on a light one, against a 4.5:1
+# bar. So text keeps the terminal's own foreground, and colour is left for the
+# short marks beside it, where the glyph and its position carry the meaning
+# anyway. Red and green stay for failed and passed, which everyone reads the
+# same way.
+#
+# Truecolor where the terminal says it can, the nearest 256-colour match
+# otherwise, and nothing at all for pipes, dumb terminals or NO_COLOR.
+C_BOLD=""; C_DIM=""; C_RED=""; C_GRN=""; C_OFF=""; C_YEL=""; C_BANNER=""; C_BAR=""
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then
   C_BOLD=$'\e[1m'; C_DIM=$'\e[2m'; C_RED=$'\e[31m'; C_GRN=$'\e[32m'; C_OFF=$'\e[0m'
   if [[ "${COLORTERM:-}" == truecolor || "${COLORTERM:-}" == 24bit ]]; then
-    C_BLUE=$'\e[38;2;28;88;217m'                       # Sapphire text
-    C_YEL=$'\e[38;2;255;188;31m'                       # Sunglow text
+    C_YEL=$'\e[38;2;255;188;31m'                       # Sunglow
     C_BANNER=$'\e[48;2;30;50;92m\e[38;2;255;255;255m'  # white on Denim
     C_BAR=$'\e[48;2;30;50;92m\e[38;2;255;188;31m'      # Sunglow on Denim
   else
-    C_BLUE=$'\e[38;5;26m'
     C_YEL=$'\e[38;5;214m'
     C_BANNER=$'\e[48;5;17m\e[38;5;231m'
     C_BAR=$'\e[48;5;17m\e[38;5;214m'
@@ -100,7 +107,7 @@ log_line() {
   [[ -n "${LOG_FILE:-}" ]] || return 0
   printf '%s install.sh | %s\n' "$(date '+%F %T')" "$*" | sed $'s/\e\\[[0-9;]*m//g' >> "${LOG_FILE}" 2>/dev/null || true
 }
-say()  { log_line "$*"; printf '%s\n' "${C_BLUE}${C_BOLD}${G_ARROW}${C_OFF} ${C_BOLD}$*${C_OFF}"; }
+say()  { log_line "$*"; printf '%s\n' "${C_YEL}${C_BOLD}${G_ARROW}${C_OFF} ${C_BOLD}$*${C_OFF}"; }
 info() { printf '    %s\n' "$*"; }
 warn() { log_line "WARNING: $*"; printf '%s\n' "${C_YEL}${C_BOLD}WARNING:${C_OFF} $*" >&2; }
 die()  { log_line "ERROR: $*"; printf '%s\n' "${C_RED}${C_BOLD}ERROR:${C_OFF} $*" >&2; exit 1; }
@@ -115,8 +122,8 @@ repeat() { local i out=""; for ((i = 0; i < $2; i++)); do out+="$1"; done; print
 # A section heading in the interview: a Sapphire rule with the title in it.
 section() {
   local title=" $1 " lead=3
-  printf '\n%s%s%s%s%s%s\n' "${C_BLUE}${C_BOLD}" "$(repeat "${G_RULE}" "${lead}")" "${C_YEL}" "${title}" \
-    "${C_BLUE}" "$(repeat "${G_RULE}" $((WIDTH - lead - ${#title})))${C_OFF}"
+  printf '\n%s%s%s%s%s%s\n' "${C_YEL}" "$(repeat "${G_RULE}" "${lead}")" "${C_OFF}${C_BOLD}" "${title}" \
+    "${C_OFF}${C_YEL}" "$(repeat "${G_RULE}" $((WIDTH - lead - ${#title})))${C_OFF}"
 }
 
 # The Denim banner with a Sunglow bar down the left edge.
@@ -282,7 +289,7 @@ GALAXY_OK=false
 list_sources() {
   local h
   for h in "${SOURCE_HOSTS[@]}"; do
-    printf '      %s %s\n' "${C_BLUE}$(printf '%-38s' "${h}")${C_OFF}" "${C_DIM}${SOURCE_PURPOSE[${h}]}${C_OFF}"
+    printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' "${h}")${C_OFF}" "${C_DIM}${SOURCE_PURPOSE[${h}]}${C_OFF}"
   done
 }
 
@@ -322,7 +329,7 @@ show_inventory() {
     | python3 -I -c '
 import json, sys
 raw = sys.stdin.read()
-bold, dim, blue, yel, red, grn, off, src = sys.argv[1:9]
+bold, dim, yel, red, grn, off, src = sys.argv[1:8]
 try:
     inv = json.loads(raw)
 except ValueError:
@@ -334,7 +341,7 @@ if not arts:
     print("    %sExpected a bundle from tools/build-offline-bundle.sh, or files named as the vendors publish them,%s" % (dim, off))
     print("    %se.g. mattermost-11.7.14-linux-%s.tar.gz with its .sig next to it.%s" % (dim, inv["arch"], off))
     sys.exit(1)
-print("    Found in %s%s%s (%s, %s):" % (blue, src, off, "bundle with manifest" if inv["kind"] == "bundle" else "folder", inv["arch"]))
+print("    Found in %s%s%s (%s, %s):" % (bold, src, off, "bundle with manifest" if inv["kind"] == "bundle" else "folder", inv["arch"]))
 for a in arts:
     extra = " ".join(x for x in [a["edition"], "/".join(a["channels"])] if x)
     checks = []
@@ -346,7 +353,7 @@ for a in arts:
 ex = inv["extras"]
 print("      %s%-20s%s %s" % (bold, "ansible collections", off, (grn + "present" + off) if ex["collections"] else (dim + "not included" + off)))
 print("      %s%-20s%s %s" % (bold, "prerequisite RPMs", off, (grn + "present" + off) if ex["rpms"] else (dim + "not included" + off)))
-' "${C_BOLD}" "${C_DIM}" "${C_BLUE}" "${C_YEL}" "${C_RED}" "${C_GRN}" "${C_OFF}" "${src}"
+' "${C_BOLD}" "${C_DIM}" "${C_YEL}" "${C_RED}" "${C_GRN}" "${C_OFF}" "${src}"
 }
 
 prompt_for_source() {
@@ -793,9 +800,9 @@ choose_components() {
   section "What should this server run?"
   for i in "${!PROFILE_NAMES[@]}"; do
     name="${PROFILE_NAMES[$i]}"
-    printf '      %s %s %s\n' "${C_YEL}$((i + 1)))${C_OFF}" "${C_BLUE}${C_BOLD}$(printf '%-11s' "${name}")${C_OFF}" "${PROFILE_DESCRIPTIONS[${name}]}"
+    printf '      %s %s %s\n' "${C_YEL}$((i + 1)))${C_OFF}" "${C_BOLD}$(printf '%-11s' "${name}")${C_OFF}" "${PROFILE_DESCRIPTIONS[${name}]}"
   done
-  printf '      %s %s %s\n' "${C_YEL}c)${C_OFF}" "${C_BLUE}${C_BOLD}$(printf '%-11s' custom)${C_OFF}" "pick individual components"
+  printf '      %s %s %s\n' "${C_YEL}c)${C_OFF}" "${C_BOLD}$(printf '%-11s' custom)${C_OFF}" "pick individual components"
   echo
   info "${C_DIM}Several profiles can share a server, e.g. 1,3. We recommend one role per server for production.${C_OFF}"
   while true; do
@@ -1484,13 +1491,13 @@ show_plan() {
     die "The plan failed. Fix the answer file and try again. Full output: ${LOG_DIR}/plan-${RUN_ID}.out"
   fi
   section "The plan"
-  python3 -I - "${plan_file}" "${OS_PRETTY}" "${C_BOLD}" "${C_DIM}" "${C_BLUE}" "${C_YEL}" "${C_RED}" "${C_OFF}" <<'PY'
+  python3 -I - "${plan_file}" "${OS_PRETTY}" "${C_BOLD}" "${C_DIM}" "${C_YEL}" "${C_RED}" "${C_OFF}" <<'PY'
 import json, sys, textwrap
 plan = json.load(open(sys.argv[1]))
-os_name, bold, dim, blue, yel, red, off = sys.argv[2:9]
+os_name, bold, dim, yel, red, off = sys.argv[2:8]
 
 def row(label, value):
-    print(f"    {blue}{bold}{label:<12}{off}{value}")
+    print(f"    {bold}{label:<12}{off}{value}")
 
 row("Server", os_name)
 row("Components", ", ".join(plan["components"]))
