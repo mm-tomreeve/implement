@@ -47,8 +47,16 @@ mmd_catalogue:
         allowed: "{{ 'localhost only' if mmd_mattermost_listen == '127.0.0.1' else (mattermost_proxy_sources | join(', ') if mattermost_proxy_sources else 'any') }}"
       - port: "{{ mattermost_metrics_port }}"
         proto: tcp
-        purpose: Prometheus metrics (Enterprise)
+        purpose: Prometheus metrics (needs an Enterprise licence)
         allowed: "{{ mmd_scrape_sources | join(', ') if mmd_scrape_sources else 'localhost only' }}"
+      # Documented, never opened: this toolkit doesn't configure clustering, and
+      # a single app server has nobody to gossip with. documented_only keeps the
+      # pre-install port check off it, because nothing here binds it.
+      - port: "{{ mattermost_cluster_port }}"
+        proto: tcp/udp
+        documented_only: true
+        purpose: Cluster gossip between app servers, once you turn clustering on yourself
+        allowed: the other Mattermost app servers (not opened by this toolkit)
       - port: "{{ mattermost_calls_port }}"
         proto: udp/tcp
         purpose: Built-in Calls media (only when no rtcd is configured)

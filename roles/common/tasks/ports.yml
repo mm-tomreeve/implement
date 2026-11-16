@@ -9,7 +9,7 @@
     _ports_wanted: >-
       {%- set out = [] -%}
       {%- for c in mmd_selected -%}
-      {%-   for p in mmd_catalogue[c].ports if p.allowed != 'not used' -%}
+      {%-   for p in mmd_catalogue[c].ports if p.allowed != 'not used' and not p.documented_only | default(false) -%}
       {%-     set _ = out.append({'component': c, 'service': mmd_catalogue[c].service ~ '.service',
                                   'port': p.port | int, 'protos': p.proto.split('/')}) -%}
       {%-   endfor -%}

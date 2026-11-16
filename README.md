@@ -878,7 +878,9 @@ contact point. Grafana 13 starts with an empty one:
 | Job | Why |
 |---|---|
 | Add TLS if you installed with `tls_mode: later` | Mattermost is on plain HTTP until you do. Put the certificate and key on the app server, set `tls_mode: provided` and re-run. |
-| Upload the Enterprise licence, or set `mattermost_license_file` | Until then Mattermost runs as a free instance, with Enterprise search and HA switched off. |
+| Upload the Enterprise licence, or set `mattermost_license_file` | Until then Mattermost runs as a free instance, with Enterprise search, HA and the metrics endpoint switched off. If you apply it in the System Console rather than by file, set `mattermost_metrics_enable: true` so Prometheus is pointed at port 8067. |
+| With more than one app server, turn cluster mode on yourself | This toolkit doesn't configure clustering. Set `ClusterSettings.Enable`, `ClusterName` and `GossipPort`, open TCP and UDP 8074 between the app servers, keep every node on the same version and the same `config.json`, and apply the licence to each. |
+| Open the outbound connections | Push notifications, SMTP, AD/LDAP and the plugin marketplace all leave your network, and `install.sh` can't open those. The architecture document lists them per server. |
 | Run a bulk index once licensed | System Console > Environment > Elasticsearch. Search uses the database until you do. |
 | Set up SMTP and push notifications in the System Console | Invitations, password resets and mobile notifications depend on them. |
 | With a read replica, plan how you'd fail over | Replication doesn't fail over by itself. Promote the replica with `pg_ctl promote` (the replica's report has the full command), then point `mattermost_db_host` at it and re-run the app servers. |

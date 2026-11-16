@@ -61,9 +61,17 @@ mattermost_listen_address: auto
 # Remote reverse proxies allowed to reach port 8065 (CIDRs or IPs).
 mattermost_proxy_sources: []
 mattermost_metrics_port: 8067
+# Cluster gossip between app servers. This toolkit does not turn clustering on,
+# so nothing here opens this port. It is documented, and named in the architecture
+# document, because a multi-app-server estate needs it open once you do.
+mattermost_cluster_port: 8074
 mattermost_license_file: ""
 # Turn on OpenSearch indexing and searching. Needs an Enterprise licence.
 mattermost_search_enable: "{{ mattermost_license_file | length > 0 }}"
+# Mattermost's own Prometheus metrics on mattermost_metrics_port. They need an
+# Enterprise licence, so auto = the Enterprise build with a licence file given.
+# Set it to true if you apply the licence in the System Console instead.
+mattermost_metrics_enable: auto
 # Extra settings deep-merged into config.json last.
 mattermost_config_overrides: {}
 # Open 8443 udp/tcp for the built-in Calls media server when no rtcd is used.

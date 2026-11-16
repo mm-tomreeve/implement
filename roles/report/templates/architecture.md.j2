@@ -376,7 +376,8 @@ Disk use where data lives:
 {% for k, v in cat.paths.items() %}
 | {{ path_labels[k] | default(k | capitalize) }} | `{{ v | replace('<version>', art.version) if art.version is defined else v }}` |
 {% endfor %}
-| Listens on | {{ cat.ports | rejectattr('allowed', 'equalto', 'not used') | map(attribute='port') | zip(cat.ports | rejectattr('allowed', 'equalto', 'not used') | map(attribute='proto')) | map('join', '/') | join(', ') | default('nothing', true) }} |
+{% set listening = cat.ports | rejectattr('allowed', 'equalto', 'not used') | rejectattr('documented_only', 'defined') | list %}
+| Listens on | {{ listening | map(attribute='port') | zip(listening | map(attribute='proto')) | map('join', '/') | join(', ') | default('nothing', true) }} |
 
 {% if c == 'mattermost' %}
 Mattermost reads `{{ mattermost_config_dir }}/config.json` (via `MM_CONFIG`), not the copy inside the
