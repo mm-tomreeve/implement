@@ -1,0 +1,12 @@
+---
+- name: Remove loki
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: loki
+    tb_unit: loki
+    tb_user: "{{ loki_user }}"
+    tb_conf_dirs: ["{{ loki_conf_dir }}"]
+    tb_data_dirs: ["{{ loki_data_dir }}"]
+    tb_ports: [{port: "{{ loki_port }}", proto: tcp}]

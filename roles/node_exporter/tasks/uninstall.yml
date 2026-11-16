@@ -1,0 +1,12 @@
+---
+- name: Remove node_exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: node_exporter
+    tb_unit: node_exporter
+    tb_user: "{{ node_exporter_user }}"
+    tb_conf_dirs: []
+    tb_data_dirs: []
+    tb_ports: [{port: "{{ node_exporter_port }}", proto: tcp}]

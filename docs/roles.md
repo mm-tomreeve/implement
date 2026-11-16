@@ -45,16 +45,42 @@ Add it to `mmd_profiles` in `inventory/group_vars/all/profiles.yml` and to the t
 3. If it ships as a tarball, teach `tools/resolve_versions.py` where to find it and its
    checksum, add it to `COMPONENT_ARTIFACTS` and `SCAN_PATTERNS`, and to
    `artifacts_tarball_components` in `roles/artifacts/defaults/main.yml`.
-4. Create `roles/<name>/` with `tasks/main.yml`, `tasks/verify.yml` and `meta/main.yml`. For
-   a simple single-binary service, `common/tasks/tarball_install.yml` does the unpack, symlink
-   and fapolicyd work for you.
+4. Create `roles/<name>/` with `tasks/main.yml`, `tasks/verify.yml`, `tasks/uninstall.yml` and
+   `meta/main.yml`. For a simple single-binary service, `common/tasks/tarball_install.yml` does
+   the unpack, symlink and fapolicyd work for you, and `common/tasks/uninstall_tarball.yml` is
+   its reverse.
 5. Use `common/tasks/firewall.yml` to open ports. Pass `fw_sources` for named clients or
-   `fw_public: true` for user-facing ports. With neither, nothing opens.
+   `fw_public: true` for user-facing ports. With neither, nothing opens. Close the same ports in
+   `uninstall.yml` with `common/tasks/unfirewall.yml`.
 6. In `verify.yml`, probe with `failed_when: false`, then hand a list of checks to
    `common/tasks/record_results.yml`. Each check has a component, name, severity
    (`critical`, `warning` or `info`), either `ok` or an explicit `status`, and a short detail.
 7. Add any dependency or colocation rules, and any risks to `roles/report/templates/risks.yml.j2`.
 8. Run `make lint test`.
+
+## Removing components
+
+`./install.sh --uninstall` runs `playbooks/uninstall.yml`, which includes each selected role's
+`tasks/uninstall.yml`, last installed first. It works from `deployment.json`, the record of the
+last install, so it needs neither the plan nor a working answer file.
+
+Every `uninstall.yml` does the same four things:
+
+- stops and disables the unit and deletes the unit file (`common/tasks/uninstall_unit.yml`)
+- closes the ports the role opened, whether to everyone or to named sources
+  (`common/tasks/unfirewall.yml`)
+- deletes the install directories, the `/opt/<name>` link and the config the toolkit wrote,
+  and stops fapolicyd trusting them
+- removes the packages, for PostgreSQL and Nginx, and resets their module streams on RHEL 9
+
+Data goes only when `uninstall_purge` is true (`--purge`): the PostgreSQL cluster, Mattermost's
+`config.json`, uploaded files and plugins, the OpenSearch indices, Prometheus, Loki and Grafana
+data, the NFS export directory and the service users. A role never drops a database on a
+server it does not own, so Mattermost's database is PostgreSQL's to remove.
+
+Two things are left alone on purpose. The SELinux booleans `httpd_can_network_connect` and
+`nfs_export_all_rw` may have been on before the toolkit arrived, and `nfs-utils` is also the NFS
+client. The baseline packages (firewalld, chrony and the rest) stay for the same reason.
 
 ## Upgrades
 

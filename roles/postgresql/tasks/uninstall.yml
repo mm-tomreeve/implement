@@ -1,0 +1,51 @@
+---
+# Packages, service and port rules always go. The cluster itself (the Mattermost
+# database and every other database in it) stays on disk unless uninstall_purge is set.
+- name: Stop PostgreSQL
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_unit
+  vars:
+    rm_unit: postgresql
+
+- name: Close the PostgreSQL port
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfirewall
+  vars:
+    fw_ports: [{port: "{{ postgresql_port }}", proto: tcp}]
+
+- name: Forget the SELinux label on a non-standard port
+  ansible.builtin.command: semanage port -d -t postgresql_port_t -p tcp {{ postgresql_port }}
+  register: _pg_seport
+  changed_when: _pg_seport.rc == 0
+  failed_when: false
+  when:
+    - selinux_manage | bool
+    - postgresql_port | int != 5432
+
+- name: Remove the PostgreSQL packages
+  ansible.builtin.dnf:
+    name: "{{ postgresql_packages }}"
+    state: absent
+
+- name: Reset the PostgreSQL module stream (RHEL 9)
+  ansible.builtin.command: dnf -y module reset postgresql
+  register: _pg_module
+  changed_when: "'Nothing to do' not in _pg_module.stdout"
+  failed_when: false
+  when: ansible_facts['distribution_major_version'] == '9'
+
+- name: Remove the replica password file
+  ansible.builtin.file:
+    path: "{{ postgresql_passfile }}"
+    state: absent
+
+- name: Purge the cluster and its logs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ postgresql_data_dir }}"
+    - "{{ postgresql_log_dir }}"
+  when: uninstall_purge | default(false) | bool

@@ -1,0 +1,12 @@
+---
+- name: Remove prometheus
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: prometheus
+    tb_unit: prometheus
+    tb_user: "{{ prometheus_user }}"
+    tb_conf_dirs: ["{{ prometheus_conf_dir }}"]
+    tb_data_dirs: ["{{ prometheus_data_dir }}"]
+    tb_ports: [{port: "{{ prometheus_port }}", proto: tcp}]

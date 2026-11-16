@@ -1,0 +1,35 @@
+---
+- name: Stop Nginx
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_unit
+  vars:
+    rm_unit: nginx
+
+- name: Close HTTP and HTTPS
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfirewall
+  vars:
+    fw_ports: [{port: 80, proto: tcp}, {port: 443, proto: tcp}]
+
+- name: Remove the Mattermost site, its certificate copies and the proxy cache
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ nginx_conf_file }}"
+    - "{{ tls_install_dir }}"
+    - "{{ nginx_cache_dir }}"
+
+- name: Remove Nginx
+  ansible.builtin.dnf:
+    name: nginx
+    state: absent
+
+- name: Reset the Nginx module stream (RHEL 9)
+  ansible.builtin.command: dnf -y module reset nginx
+  register: _nginx_module
+  changed_when: "'Nothing to do' not in _nginx_module.stdout"
+  failed_when: false
+  when: ansible_facts['distribution_major_version'] == '9'

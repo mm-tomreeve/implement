@@ -1,0 +1,43 @@
+---
+# Shared helper. The reverse of firewall.yml: close ports this toolkit opened,
+# whether to everyone or to listed sources only.
+#   fw_ports: [{port: 443, proto: tcp}]
+- name: Check whether firewalld is running
+  ansible.builtin.command: systemctl is-active firewalld  # noqa: command-instead-of-module
+  register: _fw_state
+  changed_when: false
+  failed_when: false
+  when: firewall_manage | bool
+
+- name: Close and forget the ports
+  when:
+    - firewall_manage | bool
+    - _fw_state.stdout | default('') == 'active'
+  block:
+    - name: List the zone's rich rules
+      ansible.builtin.command: firewall-cmd --permanent --zone={{ firewall_zone }} --list-rich-rules
+      register: _fw_rich
+      changed_when: false
+
+    - name: Close ports opened to everyone
+      ansible.posix.firewalld:
+        port: "{{ item.port }}/{{ item.proto }}"
+        zone: "{{ firewall_zone }}"
+        permanent: true
+        immediate: true
+        state: disabled
+      loop: "{{ fw_ports }}"
+      loop_control:
+        label: "{{ item.port }}/{{ item.proto }}"
+
+    - name: Close ports opened to listed sources
+      ansible.posix.firewalld:
+        rich_rule: "{{ item }}"
+        zone: "{{ firewall_zone }}"
+        permanent: true
+        immediate: true
+        state: disabled
+      loop: >-
+        {{ _fw_rich.stdout_lines
+           | select('search', 'port port="(' ~ (fw_ports | map(attribute='port') | map('string') | join('|')) ~ ')"')
+           | list }}

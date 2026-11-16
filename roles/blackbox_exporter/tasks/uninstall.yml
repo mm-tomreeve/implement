@@ -1,0 +1,12 @@
+---
+- name: Remove blackbox_exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: blackbox_exporter
+    tb_unit: blackbox_exporter
+    tb_user: "{{ blackbox_exporter_user }}"
+    tb_conf_dirs: ["{{ blackbox_exporter_conf_dir }}"]
+    tb_data_dirs: []
+    tb_ports: []

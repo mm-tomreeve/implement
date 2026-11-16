@@ -1,0 +1,12 @@
+---
+- name: Remove otel_collector
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: otel_collector
+    tb_unit: otelcol
+    tb_user: "{{ otel_collector_user }}"
+    tb_conf_dirs: ["{{ otel_collector_conf_dir }}"]
+    tb_data_dirs: ["{{ otel_collector_data_dir }}"]
+    tb_ports: [{port: "{{ otel_collector_metrics_port }}", proto: tcp}]

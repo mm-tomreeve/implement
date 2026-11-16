@@ -1,0 +1,35 @@
+---
+# nfs-utils stays, because the same package is the NFS client on a server that mounts
+# something. The export directory, and the files in it, stay unless uninstall_purge is set.
+- name: Remove the export list and the NFS config drop-in
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ nfs_exports_file }}"
+    - "{{ nfs_conf_file }}"
+
+- name: Stop exporting the shares
+  ansible.builtin.command: exportfs -ua
+  changed_when: true
+  failed_when: false
+
+- name: Stop and disable the NFS server
+  ansible.builtin.systemd:
+    name: nfs-server
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Close the NFS port
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfirewall
+  vars:
+    fw_ports: [{port: "{{ nfs_port }}", proto: tcp}]
+
+- name: Purge the shared files
+  ansible.builtin.file:
+    path: "{{ nfs_export_dir }}"
+    state: absent
+  when: uninstall_purge | default(false) | bool

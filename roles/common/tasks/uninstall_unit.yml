@@ -1,0 +1,20 @@
+---
+# Shared helper. Stop a service and take its unit file away.
+#   rm_unit: prometheus      (the systemd unit name, without .service)
+- name: "{{ rm_unit }} | stop and disable"
+  ansible.builtin.systemd:
+    name: "{{ rm_unit }}"
+    state: stopped
+    enabled: false
+  # The unit may already be gone, which is the state we want.
+  failed_when: false
+
+- name: "{{ rm_unit }} | remove the unit file"
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ rm_unit }}.service"
+    state: absent
+
+- name: "{{ rm_unit }} | reload systemd"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not (mmd_in_container | default(false) | bool)

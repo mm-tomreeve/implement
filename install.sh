@@ -10,6 +10,7 @@
 #   sudo ./install.sh --estate estate.yml     from an architecture wizard plan (see estate.example.yml)
 #   sudo ./install.sh --offline-dir /srv/mm-bundle-20261028
 #   sudo ./install.sh --verify-only           re-run the tests and refresh the report
+#   sudo ./install.sh --uninstall             take components off this server again
 set -Eeuo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +61,8 @@ ESTATE_FILE=""
 ESTATE_ADDR_ARGS=()
 ESTATE_OUT=""
 ESTATE_ERRFILE=""
+UNINSTALL_STUB=""
+UNINSTALL_PLAN=""
 PROFILES=""
 COMPONENTS=""
 OFFLINE_SOURCE=""
@@ -70,6 +73,7 @@ ASSUME_YES=false
 CHECK_MODE=false
 ALLOW_UPGRADE=false
 MODE=install
+PURGE=false
 ONLINE=false
 EDIT_ANSWERS=false
 
@@ -198,6 +202,17 @@ How to run
   --plan-only             Show what would be installed, then stop
   --verify-only           Re-run the post-deploy tests and refresh the report
   --report-only           Rebuild the report from the last test results
+
+Taking components off
+  --uninstall             Remove components from this server: stop and disable the
+                          services, close their ports, delete the installs, units and
+                          generated config, and dnf remove PostgreSQL and Nginx. With no
+                          --profile or --components it removes everything the last install
+                          put here. The database, uploaded files, search indices, metrics
+                          and logs are kept.
+  --purge                 With --uninstall: delete that data too, plus the service users
+                          and, once nothing is left, the secrets and saved answers. This
+                          cannot be undone.
   -h, --help              Show this help
 
 Logs go to ${LOG_DIR}. Answers are saved to ${SAVED_ANSWERS}.
@@ -229,6 +244,8 @@ parse_args() {
       --plan-only) MODE=plan; shift ;;
       --verify-only) MODE=verify; shift ;;
       --report-only) MODE=report; shift ;;
+      --uninstall) MODE=uninstall; shift ;;
+      --purge) PURGE=true; shift ;;
       -h|--help) usage; exit 0 ;;
       *) usage; die "Unknown option: $1" ;;
     esac
@@ -1599,6 +1616,18 @@ run_preflight() {
 }
 
 resolve_answers() {
+  if [[ "${MODE}" == uninstall ]]; then
+    # Removal needs no questions. The saved answers still matter, since they hold any
+    # port you changed, and the firewall rules to close follow those ports.
+    [[ -n "${ANSWERS}" ]] && return 0
+    if [[ -r "${SAVED_ANSWERS}" ]]; then
+      ANSWERS="${SAVED_ANSWERS}"
+    else
+      ANSWERS="$(mktemp)"; UNINSTALL_STUB="${ANSWERS}"
+      printf -- '---\ndeploy_name: mattermost\n' > "${ANSWERS}"
+    fi
+    return 0
+  fi
   if [[ -n "${ESTATE}" ]]; then
     resolve_estate
     return
@@ -1699,10 +1728,14 @@ out = {
 }
 if args.get("source"):
     out["artifact_source"] = args["source"]
+# Removal takes its own names, so an answer file's deploy_* lists never widen it.
+prefix = "uninstall" if args.get("uninstall") == "true" else "deploy"
 if args.get("profiles"):
-    out["deploy_profiles"] = [p.strip() for p in args["profiles"].split(",") if p.strip()]
+    out[prefix + "_profiles"] = [p.strip() for p in args["profiles"].split(",") if p.strip()]
 if args.get("components"):
-    out["deploy_components"] = [c.strip() for c in args["components"].split(",") if c.strip()]
+    out[prefix + "_components"] = [c.strip() for c in args["components"].split(",") if c.strip()]
+if args.get("purge") == "true":
+    out["uninstall_purge"] = True
 if args.get("plan_file"):
     out["plan_output_file"] = args["plan_file"]
 if args.get("upgrade") == "true":
@@ -1717,7 +1750,8 @@ run_playbook() {
   local extra
   extra="$(extra_vars_json "online=${ONLINE}" "version=${TOOL_VERSION}" "run_id=${RUN_ID}" \
     "answers=${ANSWERS}" "source=${OFFLINE_SOURCE}" "profiles=${PROFILES}" "components=${COMPONENTS}" \
-    "upgrade=${ALLOW_UPGRADE}" "$@")"
+    "upgrade=${ALLOW_UPGRADE}" "uninstall=$([[ "${MODE}" == uninstall ]] && echo true || echo false)" \
+    "purge=${PURGE}" "$@")"
   local args=(-e "@${ANSWERS}" -e "${extra}")
   [[ "${CHECK_MODE}" == true && "${playbook}" == site.yml ]] && args+=(--check --diff)
   (
@@ -1780,6 +1814,112 @@ confirm() {
   ask_yn "Deploy this plan?" n || { say "Stopped. Nothing was changed."; exit 0; }
 }
 
+# What an uninstall would do, worked out by the playbook without changing anything.
+show_uninstall_plan() {
+  UNINSTALL_PLAN="$(mktemp)"
+  say "Working out what to remove"
+  if ! run_playbook uninstall.yml "plan_file=${UNINSTALL_PLAN}" > "${LOG_DIR}/uninstall-plan-${RUN_ID}.out" 2>&1; then
+    rm -f "${UNINSTALL_PLAN}"
+    grep -E '"msg"|fatal|ERROR' "${LOG_DIR}/uninstall-plan-${RUN_ID}.out" | tail -n 5 >&2 || true
+    die "Could not work out what to remove. Full output: ${LOG_DIR}/uninstall-plan-${RUN_ID}.out"
+  fi
+  section "To be removed"
+  python3 -I - "${UNINSTALL_PLAN}" "${C_BOLD}" "${C_DIM}" "${C_YEL}" "${C_RED}" "${C_OFF}" <<'PY'
+import json, sys
+plan = json.load(open(sys.argv[1]))
+bold, dim, yel, red, off = sys.argv[2:7]
+
+def row(label, value):
+    print(f"    {bold}{label:<12}{off}{value}")
+
+row("Remove", ", ".join(plan["remove"]))
+row("Keep", ", ".join(plan["remaining"]) or "nothing, this server will be empty")
+if plan["purge"]:
+    row("Data", f"{red}{bold}deleted too (--purge){off}")
+else:
+    row("Data", f"kept {dim}(the database, uploaded files, search indices, metrics and logs){off}")
+for n in plan["notes"]:
+    print(f"    {yel}{bold}NOTE   {off}{bold}{n}{off}")
+print()
+PY
+}
+
+# What is left on the server after the removal, as a comma-separated list.
+uninstall_remaining() {
+  python3 -I - "${UNINSTALL_PLAN}" <<'PY'
+import json, sys
+print(",".join(json.load(open(sys.argv[1]))["remaining"]))
+PY
+}
+
+# Taking things off a server is the one step here that cannot be walked back, so it
+# never goes ahead unattended without --yes.
+confirm_uninstall() {
+  [[ "${ASSUME_YES}" == true ]] && return 0
+  [[ "${NON_INTERACTIVE}" != true ]] || die "Removing components needs --yes when there is nobody to ask."
+  if [[ "${PURGE}" == true ]]; then
+    local typed host
+    host="$(host_name)"
+    warn "--purge deletes the data listed above, and it cannot be recovered."
+    ask typed "Type this server's name (${host}) to go ahead"
+    [[ "${typed}" == "${host}" ]] || { say "Stopped. Nothing was changed."; exit 0; }
+    return 0
+  fi
+  ask_yn "Remove these components?" n || { say "Stopped. Nothing was changed."; exit 0; }
+}
+
+# After some components go and others stay, point the answer file at what is left, so
+# the next run does not put them back.
+update_answers_after_uninstall() {
+  local remaining
+  remaining="$(uninstall_remaining)"
+  [[ -n "${remaining}" ]] || return 0
+  if [[ -z "${UNINSTALL_STUB}" ]] && grep -qE '^deploy_(profiles|components):' "${ANSWERS}"; then
+    cp -p "${ANSWERS}" "${ANSWERS}.${RUN_ID}.bak"
+    python3 -I - "${ANSWERS}" "${remaining}" <<'PY'
+import re, sys
+path, remaining = sys.argv[1], sys.argv[2].split(",")
+text = open(path).read()
+text = re.sub(r"(?m)^deploy_profiles:.*$", "deploy_profiles: []", text)
+line = "deploy_components: [" + ", ".join(remaining) + "]"
+if re.search(r"(?m)^deploy_components:", text):
+    text = re.sub(r"(?m)^deploy_components:.*$", line, text)
+else:
+    # Answer files may leave the key out. Without it the profiles line would be all that selected anything.
+    text = text.rstrip("\n") + "\n" + line + "\n"
+open(path, "w").write(text)
+PY
+    info "Updated deploy_profiles and deploy_components in ${ANSWERS} (the earlier file is ${ANSWERS}.${RUN_ID}.bak)"
+  else
+    warn "Could not update the answers. Make sure they select only: ${remaining//,/, }"
+  fi
+}
+
+uninstall_message() {
+  local rc="$1" remaining
+  echo
+  if [[ "${rc}" -ne 0 ]]; then
+    say "${C_RED}Removal stopped with problems.${C_OFF} Ansible log: ${LOG_FILE}"
+    return
+  fi
+  say "${C_GRN}Removed.${C_OFF}"
+  remaining="$(uninstall_remaining)"
+  if [[ "${PURGE}" != true ]]; then
+    info "Kept: databases, uploaded files, search indices, metrics, logs, secrets and saved answers."
+    info "Run again with --purge to delete them."
+  fi
+  info "Not undone: the SELinux booleans httpd_can_network_connect and nfs_export_all_rw, and the"
+  info "baseline packages (firewalld, chrony and the rest), since other things may depend on them."
+  if [[ -n "${remaining}" ]]; then
+    info "Still here: ${remaining//,/, }. Run ./install.sh to refresh their configuration."
+  fi
+  info "Other servers in the estate still point at what was removed: change the Prometheus"
+  info "scrape targets, Loki address, database host or search address in their answers."
+  info "Ansible log: ${LOG_FILE}"
+  rm -f "${UNINSTALL_PLAN}"
+  [[ -z "${UNINSTALL_STUB}" ]] || rm -f "${UNINSTALL_STUB}"
+}
+
 finish_message() {
   local rc="$1" report="${STATE_DIR}/reports/latest.md"
   echo
@@ -1835,6 +1975,14 @@ main() {
       say "Rebuilding the architecture document"
       run_playbook report.yml || rc=$?
       finish_message "${rc}"
+      ;;
+    uninstall)
+      show_uninstall_plan
+      confirm_uninstall
+      say "Removing. The full log is in ${LOG_FILE}."
+      run_playbook uninstall.yml || rc=$?
+      [[ "${rc}" -ne 0 ]] || update_answers_after_uninstall
+      uninstall_message "${rc}"
       ;;
     install)
       show_plan
