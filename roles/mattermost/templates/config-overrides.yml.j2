@@ -34,6 +34,12 @@ SqlSettings:
     - {{ dsn_for(host, replica_sslmode) | to_json }}
 {% endfor %}
 {% endif %}
+{% if mattermost_cluster_peers | length > 0 %}
+ClusterSettings:
+  Enable: true
+  ClusterName: {{ mattermost_cluster_name | to_json }}
+  GossipPort: {{ mattermost_cluster_port | int }}
+{% endif %}
 FileSettings:
   DriverName: {{ mattermost_file_driver | to_json }}
 {% if mattermost_file_driver == 'local' %}

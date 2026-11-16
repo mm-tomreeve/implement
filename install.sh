@@ -1115,10 +1115,14 @@ interview() {
     fi
     if ! has_component nginx; then
       local proxies
-      ask proxies "Reverse proxy addresses allowed to reach port 8065 (comma-separated, $(blank) = any)" \
+      ask proxies "Load balancer or reverse proxy addresses allowed to reach port 8065 (comma-separated, $(blank) = any)" \
         "$(prev mattermost_proxy_sources)"
       emit mattermost_proxy_sources "$(yaml_list "${proxies}")"
     fi
+    local peers
+    ask peers "Other Mattermost app servers to cluster with, needs a licence (comma-separated, $(blank) = single app server)" \
+      "$(prev mattermost_cluster_peers)"
+    emit mattermost_cluster_peers "$(yaml_list "${peers}")"
     if ! has_component rtcd; then
       local rurl
       ask rurl "rtcd URL if Calls runs on another server, e.g. http://rtcd01:8045 ($(blank) = built in)" \

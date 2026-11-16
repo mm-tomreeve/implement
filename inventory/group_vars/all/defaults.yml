@@ -61,10 +61,14 @@ mattermost_listen_address: auto
 # Remote reverse proxies allowed to reach port 8065 (CIDRs or IPs).
 mattermost_proxy_sources: []
 mattermost_metrics_port: 8067
-# Cluster gossip between app servers. This toolkit does not turn clustering on,
-# so nothing here opens this port. It is documented, and named in the architecture
-# document, because a multi-app-server estate needs it open once you do.
+# The other Mattermost app servers (addresses or CIDRs). Setting any turns clustering on
+# (Enterprise, needs a licence file) and opens mattermost_cluster_port to them only.
+# Leave empty for a single app server.
+mattermost_cluster_peers: []
+# Cluster gossip between app servers, TCP and UDP. Opened to the peers only.
 mattermost_cluster_port: 8074
+# Must match on every node. Defaults to the deployment name.
+mattermost_cluster_name: "{{ deploy_name }}"
 mattermost_license_file: ""
 # Turn on OpenSearch indexing and searching. Needs an Enterprise licence.
 mattermost_search_enable: "{{ mattermost_license_file | length > 0 }}"

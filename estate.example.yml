@@ -7,7 +7,8 @@
 #
 # Each server finds itself in the nodes list by hostname or address, then derives
 # its own answers.yml: profiles, mattermost_db_host, the *_allowed_clients lists,
-# monitoring_estate, scrape sources, the Loki URL. That is the cross-copying in
+# monitoring_estate, scrape sources, the Loki URL, and with several app servers
+# mattermost_cluster_peers (each lists the others). That is the cross-copying in
 # README's "Example: a split estate", done for you.
 #
 # Four things are deliberately missing, because a plan is made in a browser and

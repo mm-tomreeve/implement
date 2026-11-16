@@ -528,7 +528,7 @@
         { "port": 8067, "proto": "tcp", "from": "monitoring", "when": "mm_metrics",
           "purpose": "Mattermost's own metrics. Needs an Enterprise licence." },
         { "port": 8074, "proto": "tcp and udp", "from": "app_peers", "when": "clustering",
-          "purpose": "Cluster gossip between app servers. Needed once you turn clustering on, which this toolkit does not do for you." },
+          "purpose": "Cluster gossip between the app servers. Opened to the other app servers only, when there is more than one." },
         { "port": 8443, "proto": "tcp and udp", "from": "internet", "when": "calls_integrated",
           "purpose": "Calls media, built into this server. Clients connect straight to it, so it cannot go through the proxy." }
       ]

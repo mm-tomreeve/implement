@@ -105,6 +105,7 @@ Before production, deal with these:
 {% if has.pg and postgresql_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', postgresql_allowed_clients | join(', '), 'Allowed to connect to PostgreSQL']) %}{% endif %}
 {% if has.pg and postgresql_replication == 'primary' %}{% set _ = ext.append(['PostgreSQL read replicas', postgresql_replica_hosts | join(', '), 'Copy and follow this database']) %}{% endif %}
 {% if has.pg and postgresql_replication == 'replica' %}{% set _ = ext.append(['PostgreSQL primary', postgresql_primary_host ~ ':' ~ postgresql_port, 'This replica follows it (slot ' ~ postgresql_replication_slot ~ ')']) %}{% endif %}
+{% if has.mm and mattermost_cluster_peers %}{% set _ = ext.append(['Other app servers', mattermost_cluster_peers | join(', '), 'Cluster peers, port ' ~ mattermost_cluster_port ~ ' TCP and UDP']) %}{% endif %}
 {% if has.mm and mattermost_db_replica_hosts %}{% set _ = ext.append(['PostgreSQL read replicas', mattermost_db_replica_hosts | join(', '), 'Mattermost sends reads here (Enterprise)']) %}{% endif %}
 {% if has.os and opensearch_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', opensearch_allowed_clients | join(', '), 'Allowed to query OpenSearch']) %}{% endif %}
 {% if has.nfs and nfs_allowed_clients %}{% set _ = ext.append(['Mattermost app servers', nfs_allowed_clients | join(', '), 'Allowed to mount the NFS share read-write']) %}{% endif %}
@@ -505,11 +506,17 @@ Bound to 127.0.0.1 with the security plugin off, which is fine while only the lo
 
 "localhost only" means the service binds to 127.0.0.1 and no firewall port is open.
 {% if has.mm %}
-Port {{ mattermost_cluster_port }} is listed for completeness and is not opened: this toolkit does
-not configure Mattermost clustering. If you run more than one app server behind a load balancer and
-turn cluster mode on yourself, open {{ mattermost_cluster_port }} TCP and UDP between the app servers,
-keep every node on the same Mattermost version and the same `config.json`, and apply the licence to
-each one. Mattermost also asks for 65536 open files and 8192 processes per clustered node; the unit
+{% if mattermost_cluster_peers | length > 0 %}
+Clustering is on: `ClusterSettings` is written with cluster name `{{ mattermost_cluster_name }}`, and
+port {{ mattermost_cluster_port }} TCP and UDP is open to {{ mattermost_cluster_peers | join(', ') }} only. Run this toolkit on
+each app server with the other nodes as its `mattermost_cluster_peers`, keep every node on the same
+Mattermost version and the same `config.json`, and apply the licence to each one.
+{% else %}
+Port {{ mattermost_cluster_port }} is listed for completeness and is not opened: no
+`mattermost_cluster_peers` are set, so this app server runs standalone. With more than one app
+server behind a load balancer, list the other app servers in `mattermost_cluster_peers` on each node.
+{% endif %}
+Mattermost also asks for 65536 open files and 8192 processes per clustered node; the unit
 here sets `LimitNOFILE=49152`, which is Mattermost's own figure for a single server.
 {% endif %}
 Live firewalld configuration for zone `{{ firewall_zone }}` at the time of the run:

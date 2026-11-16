@@ -71,6 +71,15 @@
   failed_when: false
   when: mmd_mattermost_metrics | bool
 
+# mmctl has no cluster command, so ask the API over the local socket (no token needed).
+- name: Ask which app servers are in the cluster
+  ansible.builtin.command:
+    argv: [curl, --silent, --fail, --max-time, "10", --unix-socket, "{{ mattermost_local_socket }}", http://localhost/api/v4/cluster/status]
+  register: _v_mm_cluster
+  changed_when: false
+  failed_when: false
+  when: mattermost_cluster_peers | length > 0
+
 - name: Check rtcd is reachable from Mattermost
   ansible.builtin.uri:
     url: "{{ mmd_rtcd_url | regex_replace('/+$', '') }}/version"
@@ -108,6 +117,8 @@
     _cfg: "{{ (_v_mm_config.content | b64decode | from_json) if _v_mm_config.content is defined else {} }}"
     _expected_version: "{{ mmd_artifacts.mattermost.version | default('unknown') }}"
     _licensed: "{{ mattermost_license_file | length > 0 }}"
+    _cluster_nodes: >-
+      {{ (_v_mm_cluster.stdout | default('[]') | from_json) if _v_mm_cluster.rc | default(1) == 0 else [] }}
     checks:
       - component: mattermost
         name: Service is active
@@ -157,6 +168,16 @@
           {{ 'Team Edition has no metrics' if not (mmd_mattermost_metrics | bool)
              else ('HTTP 200' if _v_mm_metrics.status | default(0) == 200
                    else 'not answering; metrics need an Enterprise licence' ~ ('' if _licensed else ' and none is installed yet')) }}
+      - component: mattermost
+        name: Every app server has joined the cluster
+        severity: warning
+        status: >-
+          {{ 'skip' if mattermost_cluster_peers | length == 0
+             else ('pass' if _cluster_nodes | length >= mattermost_cluster_peers | length + 1 else 'warn') }}
+        detail: >-
+          {{ 'single app server' if mattermost_cluster_peers | length == 0
+             else (_cluster_nodes | length ~ ' of ' ~ (mattermost_cluster_peers | length + 1)
+                   ~ ' nodes reported; the others may not be installed yet') }}
       - component: mattermost
         name: Calls plugin points at rtcd
         status: >-

@@ -102,6 +102,12 @@ mattermost_opensearch_ca_file: ""       # copy of root-ca.pem from the search se
 # Leave empty when Nginx is on this server.
 mattermost_proxy_sources: []
 
+# The other Mattermost app servers, when you run more than one (Enterprise, needs
+# mattermost_license_file). Turns on ClusterSettings and opens 8074 TCP and UDP to them.
+# Set it on every app server, listing the others. Leave empty for a single app server.
+mattermost_cluster_peers: []            # e.g. ["10.10.1.13"]
+# mattermost_cluster_name: chat-prod    # defaults to deploy_name; must match on every node
+
 # Arbitrary config.json settings, merged in last. Keys are case-sensitive.
 mattermost_config_overrides: {}
 #  TeamSettings:
