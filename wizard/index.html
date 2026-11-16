@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mattermost Implement &middot; architecture wizard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="wizard.css">
+</head>
+<body>
+<header class="banner">
+  <h1>Mattermost Implement &middot; architecture wizard</h1>
+</header>
+
+<main>
+  <div class="steps">
+    <div class="step" data-step="1">1. Your deployment</div>
+    <div class="step" data-step="2">2. Recommendation</div>
+    <div class="step" data-step="3">3. Hostnames / IPs</div>
+    <div class="step" data-step="4">4. Estate plan</div>
+  </div>
+
+  <!-- Step 1: basics -->
+  <section class="card" id="step-1">
+    <h2>Tell us about the deployment</h2>
+
+    <details class="import-box">
+      <summary>Already have a plan? Load it to change it</summary>
+      <div class="field" style="margin-top:12px;">
+        <label for="f-import">Paste the encoded line, or the plain YAML
+          <span class="sub">Everything below is filled in from it.</span></label>
+        <textarea id="f-import" rows="4" placeholder="MME1:H4sIA..."></textarea>
+      </div>
+      <button class="secondary small" id="do-import">Load this plan</button>
+      <div class="error-message" id="import-error" style="display:none"></div>
+    </details>
+
+    <div class="grid2">
+      <div class="field" id="field-name">
+        <label for="f-name">Deployment name</label>
+        <input type="text" id="f-name" value="chat-prod">
+      </div>
+      <div class="field" id="field-site">
+        <label for="f-site">Site URL</label>
+        <input type="url" id="f-site" placeholder="https://chat.example.com">
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="f-tier">Licence</label>
+        <select id="f-tier" class="medium">
+          <option value="enterprise" selected>Enterprise</option>
+          <option value="professional">Professional</option>
+          <option value="team">Team Edition (free)</option>
+        </select>
+      </div>
+      <div class="field" id="field-seats">
+        <label for="f-seats">Number of seats
+          <span class="sub">Or peak concurrent users, if you know it.</span></label>
+        <input type="number" id="f-seats" class="short" min="1" value="500">
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Availability</h3>
+      <label class="inline"><input type="checkbox" id="f-ha"> High availability
+        <span class="badge recommended" id="ha-badge">Recommended</span></label>
+      <div id="ha-options" style="display:none; margin-top:14px;">
+        <div class="grid2">
+          <div class="field" style="margin-bottom:0;">
+            <label for="f-app-servers">App servers</label>
+            <input type="number" id="f-app-servers" class="short" min="2" max="10" value="2">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="f-db-replicas">Database read replicas</label>
+            <input type="number" id="f-db-replicas" class="short" min="0" max="5" value="1">
+          </div>
+        </div>
+      </div>
+      <p class="hint" id="ha-note" style="margin:12px 0 0;"></p>
+    </div>
+
+    <div class="group">
+      <h3>Search</h3>
+      <div class="choices">
+        <label><input type="radio" name="search" value="database" checked> In the database</label>
+        <label><input type="radio" name="search" value="opensearch" id="f-search-opensearch">
+          OpenSearch, on its own server</label>
+      </div>
+      <p class="hint" id="search-note" style="margin:10px 0 0;"></p>
+    </div>
+
+    <div class="group">
+      <h3>Calls</h3>
+      <div class="choices">
+        <label><input type="radio" name="calls" value="none" checked> Not using Calls</label>
+        <label><input type="radio" name="calls" value="integrated">
+          <span id="calls-integrated-label">Up to 50 people in calls, built into the app servers</span></label>
+        <label><input type="radio" name="calls" value="rtcd" id="f-calls-rtcd">
+          <span id="calls-rtcd-label">More than 50, on dedicated Calls servers</span></label>
+      </div>
+      <div class="field" id="field-calls-servers" style="display:none; margin:14px 0 0;">
+        <label for="f-calls-servers">Calls servers</label>
+        <input type="number" id="f-calls-servers" class="short" min="1" max="10" value="1">
+      </div>
+      <p class="hint" id="calls-mode-note" style="margin:10px 0 0; display:none;"></p>
+    </div>
+
+    <div class="group">
+      <h3>Monitoring</h3>
+      <div class="radio-row">
+        <label><input type="radio" name="observability" value="managed" checked>
+          Build it with this toolkit (Prometheus, Loki, Grafana)</label>
+        <label><input type="radio" name="observability" value="external">
+          We already have our own</label>
+      </div>
+      <div id="monitoring-layout-row" style="margin-top:14px;">
+        <label style="font-size:.85rem; font-weight:600; margin-bottom:8px;">Where Grafana runs</label>
+        <div class="choices">
+          <label><input type="radio" name="grafana" value="split" checked> On its own server</label>
+          <label><input type="radio" name="grafana" value="combined">
+            On the same server as Prometheus and Loki</label>
+        </div>
+      </div>
+      <p class="hint" id="monitoring-note" style="margin:12px 0 0;"></p>
+      <div id="observability-external" style="display:none; margin-top:14px;">
+        <div class="field" id="field-scrape">
+          <label for="f-scrape">Your Prometheus address or addresses
+            <span class="sub">Comma-separated.</span></label>
+          <input type="text" id="f-scrape" placeholder="10.0.0.9">
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label for="f-loki">Your Loki URL <span class="optional">(optional)</span></label>
+          <input type="text" id="f-loki" class="medium" placeholder="http://10.0.0.9:3100">
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="f-tls">TLS certificate</label>
+        <select id="f-tls" class="medium">
+          <option value="later" selected>I'll add it later</option>
+          <option value="provided">I have one ready to copy over</option>
+        </select>
+      </div>
+      <div class="field" id="field-storage">
+        <label for="f-storage">Uploaded file storage</label>
+        <select id="f-storage" class="medium">
+          <option value="local" selected>Local disk</option>
+          <option value="nfs">Shared NFS</option>
+          <option value="amazons3">Amazon S3</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="error-message" id="step1-error" style="display:none"></div>
+    <div class="actions">
+      <span></span>
+      <button class="primary" id="to-step-2">Recommend an architecture &rarr;</button>
+    </div>
+  </section>
+
+  <!-- Step 2: recommendation -->
+  <section class="card" id="step-2" style="display:none">
+    <h2>Recommended architecture</h2>
+    <p class="hint" id="rationale"></p>
+    <div class="note" id="scale-note" style="display:none"></div>
+
+    <div id="estate-summary"></div>
+
+    <details class="import-box" style="margin-top:4px;">
+      <summary>Add a server by hand</summary>
+      <div class="field" style="margin:12px 0 0;">
+        <label for="f-add-role">Role</label>
+        <select id="f-add-role" class="medium"></select>
+      </div>
+      <button class="secondary small" id="add-node" style="margin-top:10px;">Add it</button>
+    </details>
+
+    <h3 style="margin-top:22px;">Diagram</h3>
+    <div class="diagram"><pre class="mermaid" id="mermaid-out"></pre></div>
+
+    <h3 style="margin-top:22px;">Suggested install order</h3>
+    <ol class="install-order" id="install-order"></ol>
+
+    <div class="error-message" id="step2-error" style="display:none"></div>
+    <div class="actions">
+      <button class="secondary" id="back-to-1">&larr; Back</button>
+      <button class="primary" id="to-step-3">Enter hostnames / IPs &rarr;</button>
+    </div>
+  </section>
+
+  <!-- Step 3: addresses -->
+  <section class="card" id="step-3" style="display:none">
+    <h2>Hostnames and addresses</h2>
+    <p class="hint">Each server needs the address the others will reach it on. A hostname works if
+       every server can resolve it.</p>
+    <div id="address-list"></div>
+    <div class="error-message" id="step3-error" style="display:none"></div>
+    <div class="actions">
+      <button class="secondary" id="back-to-2">&larr; Back</button>
+      <button class="primary" id="to-step-4">Generate the estate plan &rarr;</button>
+    </div>
+  </section>
+
+  <!-- Step 4: output -->
+  <section class="card" id="step-4" style="display:none">
+    <h2>Estate plan</h2>
+
+    <div class="run-steps">
+      <ol>
+        <li>Copy the plan.</li>
+        <li>On each server, in the install order below, run
+            <code>sudo ./install.sh --estate my-estate.yml</code>, or paste the plan when it asks.</li>
+      </ol>
+    </div>
+
+    <div class="copy-row">
+      <div>
+        <label for="blob-out">The plan, encoded</label>
+        <code class="blob" id="blob-out"></code>
+      </div>
+      <div class="row-actions">
+        <button class="primary small" id="copy-blob">Copy</button>
+        <button class="secondary small" id="download-blob">Download</button>
+      </div>
+    </div>
+
+    <h3>Install order</h3>
+    <ol class="install-order" id="install-order-4"></ol>
+
+    <details class="section" open>
+      <summary>Design decisions <span class="count" id="count-decisions"></span></summary>
+      <p class="hint">What this shape gives you, and what it doesn't.</p>
+      <div class="copy-row">
+        <div class="table-wrap"><table class="nodes" id="decisions-table">
+          <thead><tr><th>Decision</th><th>What it means</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <button class="secondary small" id="copy-decisions">Copy as Markdown</button>
+      </div>
+    </details>
+
+    <details class="section">
+      <summary>Firewall requirements <span class="count" id="count-firewall"></span></summary>
+      <p class="hint">For the network team. <strong class="product">Mattermost Implement</strong> opens these on each server. Anything
+         between your own network segments is theirs to open.</p>
+      <div class="copy-row">
+        <div class="table-wrap"><table class="nodes" id="firewall-table">
+          <thead><tr><th>Source</th><th>Destination</th><th>Port</th><th>Protocol</th><th>What it carries</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <button class="secondary small" id="copy-firewall">Copy as Markdown</button>
+      </div>
+      <div class="note" id="calls-note" style="display:none"></div>
+
+      <h3 style="margin-top:22px;">Outbound</h3>
+      <p class="hint">Connections these servers have to be able to make. <strong class="product">Mattermost Implement</strong> cannot
+         open these for you, because they leave your network.</p>
+      <div class="copy-row">
+        <div class="table-wrap"><table class="nodes" id="outbound-table">
+          <thead><tr><th>Source</th><th>Destination</th><th>Port</th><th>Protocol</th><th>What it carries</th><th>When</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <button class="secondary small" id="copy-outbound">Copy as Markdown</button>
+      </div>
+      <p class="hint" id="outbound-note"></p>
+    </details>
+
+    <details class="section">
+      <summary>Infrastructure requirements <span class="count" id="count-infra"></span></summary>
+      <p class="hint">For the server team. Mattermost's published figures for this size, per server.</p>
+      <div class="copy-row">
+        <div class="table-wrap"><table class="nodes" id="infra-table">
+          <thead><tr><th>Server</th><th>Runs</th><th>vCPU</th><th>RAM</th><th>Disk</th><th>Notes</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <button class="secondary small" id="copy-infra">Copy as Markdown</button>
+      </div>
+      <p class="hint" id="sizing-source"></p>
+      <p class="hint" id="storage-formula"></p>
+      <p class="hint">RHEL 9 or 10 on x86_64 or arm64, and outbound access to the vendor download sites
+         or an offline bundle.</p>
+    </details>
+
+    <details class="section">
+      <summary>Still needed on each server <span class="count" id="count-followups"></span></summary>
+      <ul class="followups" id="followups"></ul>
+    </details>
+
+    <details class="section">
+      <summary>The plan as YAML</summary>
+      <div class="copy-row">
+        <div><textarea id="yaml-out" rows="14" readonly></textarea></div>
+        <div class="row-actions">
+          <button class="secondary small" id="copy-yaml">Copy</button>
+          <button class="secondary small" id="download-yaml">Download</button>
+        </div>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button class="secondary" id="back-to-3">&larr; Back</button>
+      <button class="secondary" id="start-over">Start over</button>
+    </div>
+  </section>
+
+  <footer>Nothing you enter here leaves your browser. No passwords, keys or certificates are ever part of an estate plan.</footer>
+</main>
+
+<!--
+  The wizard's reference data. index.html can't fetch() a sibling file under file://,
+  so it lives here rather than in its own .json. tests/test_wizard_data.py checks every
+  number in it against the repo it describes: profile_components against
+  inventory/group_vars/all/profiles.yml, min_ram_mb/min_cpus against catalogue.yml, and
+  the port numbers against defaults.yml.
+-->
+<script type="application/json" id="wizard-data">
+{
+  "version": 1,
+  "ha_required_from_seats": 2000,
+  "source": "One band per tier in Mattermost's reference architectures: https://docs.mattermost.com/deployment-guide/scale/scaling-for-enterprise. Mattermost states those tiers in concurrent users, which is lower than the number of accounts. This wizard asks for seats, so a seat count lands you in a band at or above the one your real concurrency needs. If you know your peak concurrent users, enter that number instead and the sizing matches Mattermost's figures exactly.",
+  "bands": [
+    {
+      "max_seats": 200,
+      "label": "Up to 200",
+      "reference": "Mattermost's 200-user reference architecture",
+      "ha_required": false,
+      "search_nodes": 0,
+      "nodes": [
+        { "role": "database", "count": 1 },
+        { "role": "app", "count": 1 }
+      ],
+      "sizing": {
+        "core": { "vcpu": 4, "ram_gb": 20, "disk_gb": 100 },
+        "app": { "vcpu": 2, "ram_gb": 4, "disk_gb": 50 },
+        "database": { "vcpu": 2, "ram_gb": 16, "disk_gb": 100 },
+        "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 50 },
+        "calls": { "vcpu": 2, "ram_gb": 4, "disk_gb": 20 },
+        "storage": { "vcpu": 2, "ram_gb": 4, "disk_gb": null },
+        "monitoring": { "vcpu": 2, "ram_gb": 8, "disk_gb": 100 },
+        "metrics": { "vcpu": 2, "ram_gb": 8, "disk_gb": 100 },
+        "dashboards": { "vcpu": 2, "ram_gb": 4, "disk_gb": 20 }
+      }
+    },
+    {
+      "max_seats": 2000,
+      "label": "Up to 2,000",
+      "reference": "Mattermost's 2,000-user reference architecture",
+      "ha_required": true,
+      "search_nodes": 2,
+      "nodes": [
+        { "role": "database", "count": 1 },
+        { "role": "database", "count": 1, "replica": true },
+        { "role": "app", "count": 2 }
+      ],
+      "sizing": {
+        "core": { "vcpu": 4, "ram_gb": 20, "disk_gb": 200 },
+        "app": { "vcpu": 2, "ram_gb": 4, "disk_gb": 50 },
+        "database": { "vcpu": 2, "ram_gb": 16, "disk_gb": 200 },
+        "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 100 },
+        "calls": { "vcpu": 4, "ram_gb": 8, "disk_gb": 20 },
+        "storage": { "vcpu": 2, "ram_gb": 8, "disk_gb": null },
+        "monitoring": { "vcpu": 4, "ram_gb": 16, "disk_gb": 150 },
+        "metrics": { "vcpu": 4, "ram_gb": 16, "disk_gb": 150 },
+        "dashboards": { "vcpu": 2, "ram_gb": 4, "disk_gb": 20 }
+      }
+    },
+    {
+      "max_seats": 15000,
+      "label": "Up to 15,000",
+      "reference": "Mattermost's 15,000-user reference architecture",
+      "ha_required": true,
+      "search_nodes": 2,
+      "nodes": [
+        { "role": "database", "count": 1 },
+        { "role": "database", "count": 1, "replica": true },
+        { "role": "app", "count": 2 }
+      ],
+      "sizing": {
+        "core": { "vcpu": 8, "ram_gb": 40, "disk_gb": 500 },
+        "app": { "vcpu": 4, "ram_gb": 8, "disk_gb": 50 },
+        "database": { "vcpu": 4, "ram_gb": 32, "disk_gb": 500 },
+        "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 250 },
+        "calls": { "vcpu": 4, "ram_gb": 8, "disk_gb": 20 },
+        "storage": { "vcpu": 4, "ram_gb": 8, "disk_gb": null },
+        "monitoring": { "vcpu": 4, "ram_gb": 16, "disk_gb": 250 },
+        "metrics": { "vcpu": 4, "ram_gb": 16, "disk_gb": 250 },
+        "dashboards": { "vcpu": 2, "ram_gb": 8, "disk_gb": 20 }
+      }
+    },
+    {
+      "max_seats": 30000,
+      "label": "Up to 30,000",
+      "reference": "Mattermost's 30,000-user reference architecture",
+      "ha_required": true,
+      "search_nodes": 4,
+      "nodes": [
+        { "role": "database", "count": 1 },
+        { "role": "database", "count": 1, "replica": true },
+        { "role": "app", "count": 2 }
+      ],
+      "sizing": {
+        "core": { "vcpu": 16, "ram_gb": 80, "disk_gb": 1000 },
+        "app": { "vcpu": 8, "ram_gb": 16, "disk_gb": 100 },
+        "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
+        "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 500 },
+        "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "storage": { "vcpu": 4, "ram_gb": 16, "disk_gb": null },
+        "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
+        "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
+        "dashboards": { "vcpu": 2, "ram_gb": 8, "disk_gb": 20 }
+      }
+    },
+    {
+      "max_seats": 50000,
+      "label": "Up to 50,000",
+      "reference": "Mattermost's 50,000-user reference architecture",
+      "ha_required": true,
+      "search_nodes": 4,
+      "nodes": [
+        { "role": "database", "count": 1 },
+        { "role": "database", "count": 4, "replica": true },
+        { "role": "app", "count": 5 }
+      ],
+      "sizing": {
+        "core": { "vcpu": 16, "ram_gb": 80, "disk_gb": 1000 },
+        "app": { "vcpu": 8, "ram_gb": 16, "disk_gb": 100 },
+        "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
+        "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 500 },
+        "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "storage": { "vcpu": 4, "ram_gb": 16, "disk_gb": null },
+        "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
+        "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
+        "dashboards": { "vcpu": 2, "ram_gb": 8, "disk_gb": 20 }
+      }
+    },
+    {
+      "max_seats": null,
+      "label": "Over 50,000",
+      "reference": "Mattermost's 50,000-user reference architecture, extended",
+      "ha_required": true,
+      "search_nodes": 4,
+      "nodes": [
+        { "role": "database", "count": 1 },
+        { "role": "database", "count": 4, "replica": true },
+        { "role": "app", "count": 5 }
+      ],
+      "note": "Mattermost publishes tiers up to 200,000 users. Above 100,000 it adds Redis as an external cache, and at the largest sizes several Nginx proxies sharing the traffic. This toolkit installs neither, so treat this band as a floor and talk to Mattermost.",
+      "sizing": {
+        "core": { "vcpu": 16, "ram_gb": 80, "disk_gb": 2000 },
+        "app": { "vcpu": 8, "ram_gb": 16, "disk_gb": 100 },
+        "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 2000 },
+        "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
+        "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "storage": { "vcpu": 8, "ram_gb": 16, "disk_gb": null },
+        "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 1000 },
+        "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 1000 },
+        "dashboards": { "vcpu": 4, "ram_gb": 8, "disk_gb": 20 }
+      }
+    }
+  ],
+  "sizing_source": "vCPU and memory are Mattermost's published figures for that tier. Two things differ, because this toolkit builds different servers: Mattermost gives the proxy a server of its own, where Nginx runs on the app servers here, and Mattermost's search tier is a cluster where this toolkit installs a single node. Disk is this toolkit's estimate, because Mattermost gives a growth formula rather than figures. Treat all of it as a starting point and confirm it with a pilot.",
+  "storage_formula": "Mattermost's method for disk: start at 600 to 800 MB for the operating system and database, add your estimate of storage per user per month multiplied by twelve and by the number of users, then apply a 1 to 2x safety factor. Review it at least quarterly.",
+  "sizing_notes": {
+    "app": "Mattermost's figure for an application node. Nginx and the exporters sit alongside it here; Mattermost's reference gives the proxy a server of its own.",
+    "core": "Database, app and proxy on one box, so it carries both. Mattermost notes that a combined server needs more than either part alone.",
+    "database": "Mattermost's figure for the writer. Each read replica is the same size again.",
+    "search": "Mattermost's figure for one search node. Its reference clusters two to four of them at this size; this toolkit installs one.",
+    "calls": "Sized by concurrent call participants, not seats. Mattermost benchmarks rtcd on 4 vCPU / 8 GB and 8 vCPU / 16 GB.",
+    "storage": "Disk is the whole job: size it for total uploads across the estate.",
+    "monitoring": "15 days of metrics and 14 days of logs, at roughly 1 to 3 GB of logs a day.",
+    "metrics": "15 days of metrics and 14 days of logs, at roughly 1 to 3 GB of logs a day.",
+    "dashboards": "Grafana holds dashboards and users, nothing that grows."
+  },
+  "profile_components": {
+    "core": ["postgresql", "mattermost", "nginx"],
+    "app": ["mattermost", "nginx"],
+    "database": ["postgresql"],
+    "calls": ["rtcd"],
+    "search": ["opensearch"],
+    "storage": ["nfs"],
+    "monitoring": ["prometheus", "loki", "grafana"],
+    "metrics": ["prometheus", "loki"],
+    "dashboards": ["grafana"],
+    "all-in-one": ["postgresql", "mattermost", "nginx", "rtcd", "opensearch", "prometheus", "loki", "grafana"]
+  },
+  "auto_components": {
+    "alongside": {
+      "postgresql": "postgres_exporter",
+      "nginx": "nginx_exporter",
+      "opensearch": "opensearch_exporter"
+    },
+    "every_monitored_server": ["node_exporter", "otel_collector"],
+    "monitoring_server": ["blackbox_exporter"]
+  },
+  "components": {
+    "postgresql": {
+      "title": "PostgreSQL",
+      "listens": [
+        { "port": 5432, "proto": "tcp", "from": "app", "purpose": "SQL from the Mattermost app servers" },
+        { "port": 5432, "proto": "tcp", "from": "db_replica", "purpose": "Streaming replication to the read replica", "when": "has_replica" }
+      ]
+    },
+    "mattermost": {
+      "title": "Mattermost",
+      "listens": [
+        { "port": 8067, "proto": "tcp", "from": "monitoring", "when": "mm_metrics",
+          "purpose": "Mattermost's own metrics. Needs an Enterprise licence." },
+        { "port": 8074, "proto": "tcp and udp", "from": "app_peers", "when": "clustering",
+          "purpose": "Cluster gossip between app servers. Needed once you turn clustering on, which this toolkit does not do for you." },
+        { "port": 8443, "proto": "tcp and udp", "from": "internet", "when": "calls_integrated",
+          "purpose": "Calls media, built into this server. Clients connect straight to it, so it cannot go through the proxy." }
+      ]
+    },
+    "nginx": {
+      "title": "Nginx",
+      "listens": [
+        { "port": 443, "proto": "tcp", "from": "internet", "purpose": "Mattermost web, API and WebSocket over HTTPS" },
+        { "port": 80, "proto": "tcp", "from": "internet", "purpose": "Redirects to HTTPS once a certificate is in place" }
+      ]
+    },
+    "rtcd": {
+      "title": "rtcd",
+      "listens": [
+        { "port": 8045, "proto": "tcp", "from": "app", "purpose": "rtcd API: call setup, not the media itself" },
+        { "port": 8443, "proto": "tcp and udp", "from": "internet", "purpose": "Calls media (WebRTC). Clients connect straight to this server, not through the app server." }
+      ]
+    },
+    "opensearch": {
+      "title": "OpenSearch",
+      "listens": [
+        { "port": 9200, "proto": "tcp", "from": "app", "purpose": "OpenSearch REST API for Enterprise search" }
+      ]
+    },
+    "nfs": {
+      "title": "NFS",
+      "listens": [
+        { "port": 2049, "proto": "tcp", "from": "app", "purpose": "NFSv4 share for the Mattermost data directory" }
+      ]
+    },
+    "prometheus": {
+      "title": "Prometheus",
+      "listens": [
+        { "port": 9090, "proto": "tcp", "from": "admins", "purpose": "Prometheus UI and API" }
+      ]
+    },
+    "grafana": {
+      "title": "Grafana",
+      "listens": [
+        { "port": 3000, "proto": "tcp", "from": "admins", "purpose": "Grafana web UI (it has its own login)" }
+      ]
+    },
+    "loki": {
+      "title": "Loki",
+      "listens": [
+        { "port": 3100, "proto": "tcp", "from": "estate", "purpose": "Logs pushed from every server in the estate" }
+      ]
+    },
+    "node_exporter": {
+      "title": "node_exporter",
+      "listens": [
+        { "port": 9100, "proto": "tcp", "from": "monitoring", "purpose": "Host metrics (CPU, memory, disk, network)" }
+      ]
+    },
+    "postgres_exporter": {
+      "title": "postgres_exporter",
+      "listens": [
+        { "port": 9187, "proto": "tcp", "from": "monitoring", "purpose": "PostgreSQL metrics" }
+      ]
+    },
+    "nginx_exporter": {
+      "title": "nginx_exporter",
+      "listens": [
+        { "port": 9113, "proto": "tcp", "from": "monitoring", "purpose": "Nginx connection and request metrics" }
+      ]
+    },
+    "opensearch_exporter": {
+      "title": "opensearch_exporter",
+      "listens": [
+        { "port": 9114, "proto": "tcp", "from": "monitoring", "purpose": "OpenSearch cluster and JVM metrics" }
+      ]
+    },
+    "blackbox_exporter": {
+      "title": "blackbox_exporter",
+      "listens": []
+    },
+    "otel_collector": {
+      "title": "OpenTelemetry Collector",
+      "listens": [
+        { "port": 8888, "proto": "tcp", "from": "monitoring", "purpose": "The log collector's own metrics" }
+      ]
+    }
+  },
+  "outbound": {
+    "source": "Mattermost's own list is at https://docs.mattermost.com/deployment-guide/server/prepare-network. The install rows are this toolkit's.",
+    "runtime": [
+      { "component": "mattermost", "to": "push.mattermost.com", "port": 443, "proto": "tcp",
+        "purpose": "Mobile push notifications, unless you run your own push proxy" },
+      { "component": "mattermost", "to": "Your SMTP relay", "port": "25, 465 or 587", "proto": "tcp",
+        "purpose": "Invitations, password resets and email notifications" },
+      { "component": "mattermost", "to": "Your AD or LDAP server", "port": "389 or 636", "proto": "tcp",
+        "when_label": "If you use AD/LDAP", "purpose": "User sync and login, on Professional and above" },
+      { "component": "mattermost", "to": "Your S3 endpoint", "port": 443, "proto": "tcp", "when": "s3",
+        "purpose": "File uploads and attachments" },
+      { "component": "mattermost", "to": "api.integrations.mattermost.com", "port": 443, "proto": "tcp",
+        "when_label": "Unless you install plugins by hand", "purpose": "Plugin marketplace" },
+      { "component": "calls", "to": "stun.global.calls.mattermost.com", "port": 3478, "proto": "udp",
+        "when_label": "Until you set an ICE host override", "purpose": "Public IP discovery for Calls" }
+    ],
+    "install": [
+      { "component": null, "to": "Your dnf repositories: the Red Hat CDN, Satellite, or a local mirror", "port": 443, "proto": "tcp",
+        "purpose": "BaseOS and AppStream packages" },
+      { "component": "mattermost", "to": "releases.mattermost.com", "port": 443, "proto": "tcp",
+        "purpose": "The Mattermost tarball and its signature" },
+      { "component": "opensearch", "to": "artifacts.opensearch.org", "port": 443, "proto": "tcp",
+        "purpose": "The OpenSearch tarball and its signature" },
+      { "component": "grafana", "to": "dl.grafana.com", "port": 443, "proto": "tcp",
+        "purpose": "The Grafana tarball" },
+      { "component": null, "to": "api.github.com, github.com and objects.githubusercontent.com", "port": 443, "proto": "tcp",
+        "purpose": "rtcd, Loki, the OpenTelemetry Collector and the Prometheus exporters" }
+    ],
+    "offline_note": "Point <strong class=\"product\">Mattermost Implement</strong> at an offline bundle or an internal mirror with --artifact-source and none of the install rows are needed. The runtime rows still are."
+  }
+}
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script src="wizard.js"></script>
+</body>
+</html>

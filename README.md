@@ -984,6 +984,9 @@ tools/resolve_versions.py      finds versions, URLs and checksums, online or off
 tools/build-offline-bundle.sh  builds an offline bundle
 tools/alert_catalogue.py       every check and its thresholds
 tools/observability.py         turns the estate into alert rules and dashboards
+tools/estate_plan.py           decodes an estate plan and derives one server's answers
+estate.example.yml             the estate plan format, commented
+wizard/                        the architecture wizard (open index.html in a browser)
 tests/                         unit, render, smoke and end-to-end tests
 docs/                          alerts, offline installs, roles and testing
 ```
