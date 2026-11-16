@@ -1,4 +1,19 @@
 ---
+# Anyone who can reach the API port with self-registration on can start calls on
+# this server. Mattermost allows it on a private network with access control, and
+# a rule open to the whole internet is not that.
+- name: Refuse self-registration on an API port open to everyone
+  ansible.builtin.assert:
+    that: not (rtcd_api_sources | select('in', ['0.0.0.0/0', '::/0']) | list)
+    fail_msg: >-
+      rtcd_api_sources opens port {{ rtcd_api_port }} to every address while
+      rtcd_allow_self_registration is on, so anyone who can reach this server could
+      start calls on it. Narrow rtcd_api_sources to the Mattermost app servers, or
+      set rtcd_allow_self_registration to false and register Mattermost through
+      rtcd's admin API.
+    quiet: true
+  when: rtcd_allow_self_registration | bool
+
 - name: Create the rtcd user
   ansible.builtin.user:
     name: "{{ rtcd_user }}"

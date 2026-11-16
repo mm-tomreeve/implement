@@ -188,6 +188,12 @@ rtcd_rtc_port: 8443
 rtcd_ice_host_override: ""       # public IP or name clients use to reach rtcd
 # Mattermost servers allowed to reach the rtcd API. Empty = localhost only.
 rtcd_api_sources: []
+# rtcd's own default is false. Mattermost's guidance is to turn it on only on a
+# private network with access control, which is what rtcd_api_sources gives you:
+# anyone who can reach port 8045 can start calls, and only those addresses can.
+# Set this to false and register Mattermost through rtcd's admin API instead if
+# the API port has to be reachable more widely than that.
+rtcd_allow_self_registration: true
 
 # ---------------------------------------------------------------- opensearch
 opensearch_version: "2.19.7"

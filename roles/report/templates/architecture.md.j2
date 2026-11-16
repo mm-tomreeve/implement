@@ -429,9 +429,23 @@ TLS is not configured yet, so Nginx serves Mattermost over plain HTTP on port 80
 Upstreams: {{ mmd_nginx_upstreams | join(', ') }}. Static assets are cached in `{{ nginx_cache_dir }}`.
 
 {% elif c == 'rtcd' %}
-Mattermost registers with rtcd on first contact (self-registration), which is why only
-{{ rtcd_api_sources | join(', ') if rtcd_api_sources else 'localhost' }} can reach the API port.
+{% if rtcd_allow_self_registration | bool %}
+Mattermost registers with rtcd on first contact. rtcd ships with that off, and Mattermost's
+guidance is to allow it only on a private network with access control, so only
+{{ rtcd_api_sources | join(', ') if rtcd_api_sources else 'localhost' }} can reach the API port
+on {{ rtcd_api_port }}. Anyone who can reach that port can start a call on this server.
+{% else %}
+Self-registration is off, as rtcd ships it. Register Mattermost through rtcd's admin API and put
+the client ID and auth key in `mattermost_rtcd_url`.
+{% endif %}
 ICE host override: {{ rtcd_ice_host_override if rtcd_ice_host_override else 'not set' }}.
+{% if not rtcd_ice_host_override %}
+Without it, rtcd asks `stun.global.calls.mattermost.com` on UDP 3478 what its public address is.
+Set the override and that lookup stops being needed.
+{% endif %}
+Calls media never goes through Nginx. Clients reach UDP and TCP {{ rtcd_rtc_port }} on this server
+directly. If some clients cannot reach that port at all, Calls needs a TURN server, which this
+toolkit does not install.
 
 {% elif c == 'nfs' %}
 Exported over NFSv4 on TCP {{ nfs_port }}, read-write to {{ nfs_allowed_clients | join(', ') if nfs_allowed_clients else 'nobody yet' }}{{ ' and read-only to ' ~ nfs_readonly_clients | join(', ') if nfs_readonly_clients else '' }}.

@@ -364,6 +364,56 @@ failing, which is what you want for a file store. The monitoring server alerts o
 errors and stale handles on files01, and latency, timeouts and retransmissions as each app server
 sees them) once files01 is in `monitoring_estate` with `nfs` among its components.
 
+### Example: Calls
+
+Calls runs two ways. Up to about 50 people in calls, it runs inside the app servers and needs no
+server of its own. Past that, Mattermost expects a dedicated media server (rtcd), so calls stop
+competing with messaging for the app server's CPU.
+
+What you get depends on the licence. Team Edition is 1-to-1 calls and screen sharing, capped at 40
+minutes. Professional adds group calls and screen sharing with no time limit. Enterprise adds
+recording, transcription, live captions, and rtcd.
+
+Inside the app servers, which is the default:
+
+```yaml
+# app01, nothing to add: mattermost_calls_integrated is already true
+```
+
+On servers of their own:
+
+```yaml
+# calls01 (10.10.1.13)
+deploy_profiles: [calls]
+rtcd_api_sources: [10.10.1.12]
+rtcd_ice_host_override: 203.0.113.20     # the address clients use
+
+# and on app01
+mattermost_rtcd_url: http://10.10.1.13:8045
+```
+
+Either way the media port works the same, and it is where most Calls problems come from:
+
+- Clients reach UDP **and** TCP 8443 on whichever server runs the media, directly. Nginx must not
+  proxy it.
+- Behind NAT or a load balancer, that port has to map through unchanged, and
+  `rtcd_ice_host_override` has to name the address clients actually use. Get this wrong and calls
+  connect but carry no audio, which is exactly what the `calls-port-unreachable` alert watches for.
+- If clients can't reach 8443 at all, Calls needs a TURN server. This toolkit doesn't install one.
+- With no `rtcd_ice_host_override`, rtcd asks `stun.global.calls.mattermost.com` on UDP 3478 what
+  its public address is. Set the override and that lookup stops being needed, which is what you
+  want on a network that doesn't let servers out.
+
+rtcd ships with self-registration off. This toolkit turns it on, which is what lets Mattermost
+register itself on first contact, and Mattermost's guidance allows that on a private network with
+access control. `rtcd_api_sources` is that control: port 8045 stays on loopback until you fill it
+in, and then opens to those addresses alone. Set `rtcd_allow_self_registration: false` if the API
+port has to be reachable more widely, and register Mattermost through rtcd's admin API instead.
+
+More than one rtcd server needs a load balancer in front of them, with `mattermost_rtcd_url`
+pointing at it. Mattermost talks to one URL, so without it only the first server is used. Add a
+second once the first passes 70% CPU.
+
 ### Example: no internet access
 
 On a machine that does have internet access:
