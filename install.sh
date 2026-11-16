@@ -398,8 +398,8 @@ print("      %s%-20s%s %s" % (bold, "prerequisite RPMs", off, (grn + "present" +
 
 prompt_for_source() {
   local src
-  info "Point me at the installers instead: a bundle made with tools/build-offline-bundle.sh,"
-  info "an internal mirror URL, or a folder holding the vendors' files as downloaded."
+  info "Give a bundle made with tools/build-offline-bundle.sh,"
+  info "an internal mirror URL, or a folder of the vendors' files as downloaded."
   while true; do
     ask src "Folder or URL with the installers (q to stop)" "${OFFLINE_SOURCE:-/srv/mm-bundle}"
     if [[ "${src}" == q ]]; then
@@ -433,7 +433,7 @@ choose_installer_source() {
   case "${setting}" in
     yes|true|online)
       ONLINE=true; GALAXY_OK=true
-      info "The answer file says this server has internet access, so I won't check."
+      info "The answer file says this server has internet access, so the check is skipped."
       return 0 ;;
     no|false|offline)
       ONLINE=false
@@ -446,13 +446,13 @@ choose_installer_source() {
   # A run that went online saved deploy_internet: auto, so that answer stands as
   # agreement to check again rather than asking every time.
   if [[ -z "${setting}" && -z "${ANSWERS}" && "$(yaml_get deploy_internet "${SAVED_ANSWERS}")" == auto ]]; then
-    info "Per the configuration in ${SAVED_ANSWERS}, I'll check the installer sources without asking."
+    info "Checking the installer sources, as set in ${SAVED_ANSWERS}."
   elif [[ -z "${setting}" && "${NON_INTERACTIVE}" != true ]]; then
     info "An online install downloads from these sites:"
     list_sources
     [[ -n "${https_proxy:-${HTTPS_PROXY:-}}" ]] && info "${C_DIM}Using the proxy in https_proxy: ${https_proxy:-${HTTPS_PROXY:-}}${C_OFF}"
-    if ! ask_yn "Can I check whether this server reaches them?" y; then
-      info "No problem. Without the check we'll use a local copy of the installers."
+    if ! ask_yn "Check that this server can reach them?" y; then
+      info "Skipped. Using a local copy of the installers."
       prompt_for_source
       return 0
     fi
@@ -462,7 +462,7 @@ choose_installer_source() {
   check_sources || failed=$?
   if [[ "${failed}" -eq 0 ]]; then
     ONLINE=true
-    info "All installer sources are reachable, so we'll download from the vendors."
+    info "All installer sources are reachable. Downloading from the vendors."
     return 0
   fi
 
@@ -471,7 +471,7 @@ choose_installer_source() {
   if [[ "${NON_INTERACTIVE}" == true ]]; then
     die "Set artifact_source in the answer file (or pass --offline-dir) to a bundle from tools/build-offline-bundle.sh, or open up the sites marked FAIL."
   fi
-  ask_choice choice "What would you like to do?" "Use a local folder or mirror" \
+  ask_choice choice "How do you want to continue?" "Use a local folder or mirror" \
     "Use a local folder or mirror" "Carry on online anyway" "Stop here"
   case "${choice}" in
     "Use a local folder or mirror") prompt_for_source ;;
@@ -695,7 +695,7 @@ ask_yn() {
       y|yes) return 0 ;;
       n|no) return 1 ;;
     esac
-    echo "    Please answer y or n."
+    echo "    Answer y or n."
   done
 }
 
@@ -881,7 +881,7 @@ choose_components() {
       done
       [[ "${ok}" == true && ${#chosen_profiles[@]} -gt 0 ]] && break
     fi
-    echo "    That did not match anything. Try again."
+    echo "    No match. Try again."
   done
   ANS_PROFILES="$(IFS=,; echo "${chosen_profiles[*]-}")"
   ANS_COMPONENTS="$(IFS=,; echo "${extra[*]-}")"
@@ -1007,7 +1007,7 @@ monitoring_and_logs() {
   info "Add this server when the installer asks for the other servers, or add this line"
   info "to monitoring_estate in its answer file, and run it again:"
   info "${C_YEL}  - {name: ${short}, address: ${self_ip}, components: [${joined//,/, }]}${C_OFF}"
-  info "${C_DIM}That adds this server's checks, alerts and dashboards there, and opens its firewall to this server:${C_OFF}"
+  info "${C_DIM}That adds this server's checks, alerts and dashboards there, and opens its firewall to this server.${C_OFF}"
   [[ "${shipped}" == true ]] && info "${C_DIM}  Loki (3100), so the logs get in${C_OFF}"
   [[ "${shipped}" != true && -n "${lurl:-}" ]] && has_component grafana \
     && info "${C_DIM}  Loki (3100), so Grafana here can search the logs${C_OFF}"
@@ -1235,10 +1235,10 @@ interview() {
     local build_q="Build monitors, alerts and dashboards for the estate?" site_q
     site_q="Site URL users reach (checked from here; $(blank) = skip)"
     if has_component prometheus; then
-      info "We can build Prometheus jobs, tiered alerts (info, warning, critical) and dashboards"
+      info "This builds Prometheus jobs, tiered alerts (info, warning, critical) and dashboards"
       info "in Grafana for every server in this Mattermost estate. This server is included already."
     else
-      info "We can build tiered alerts (info, warning, critical) and dashboards in Grafana for every"
+      info "This builds tiered alerts (info, warning, critical) and dashboards in Grafana for every"
       info "server in this Mattermost estate. This server is included already."
       info "Give the same site URL and server names as on the Prometheus server."
       build_q="Build alerts and dashboards for the estate?"
@@ -1294,7 +1294,7 @@ interview() {
             continue
           fi
           if printf '%s\n' "${snames[@]}" | grep -Fxq -- "${sname}"; then
-            echo "    You've already added ${sname}."
+            echo "    ${sname} is already in the list."
             continue
           fi
           while true; do
@@ -1338,8 +1338,8 @@ interview() {
         for i in "${!snames[@]}"; do
           printf '    %-20s %-24s %s\n' "${snames[$i]}" "${saddrs[$i]}" "${scomps_list[$i]:-host metrics only}"
         done
-        ask_yn "Look right?" y && break
-        echo "    Let's go through the servers again. Enter keeps each one as you just gave it."
+        ask_yn "Is the list correct?" y && break
+        echo "    Going through the servers again. Enter keeps each as entered."
         defaults=("${entered[@]}")
       done
       if [[ ${#estate_lines[@]} -gt 0 ]]; then
@@ -1514,7 +1514,7 @@ preflight_line() {
 preflight_resolve() {
   local target="$1" label="$2"
   if [[ "${target}" =~ ^[0-9.]+$ || "${target}" == *:* ]]; then
-    preflight_line ok "${target}" "${label}, already an address"
+    preflight_line ok "${target}" "${label} (an address, nothing to resolve)"
     return 0
   fi
   if getent ahosts "${target}" > /dev/null 2>&1; then
@@ -1534,8 +1534,8 @@ preflight_tcp() {
   timeout 3 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' _ "${target}" "${port}" 2>/dev/null || rc=$?
   case "${rc}" in
     0) preflight_line ok "${target}:${port}" "${label}" ;;
-    124) preflight_line fail "${target}:${port}" "${label}: timed out, so something is dropping it"; return 1 ;;
-    *) preflight_line note "${target}:${port}" "${label}: refused, so the path is open and nothing is listening yet" ;;
+    124) preflight_line fail "${target}:${port}" "${label}: timed out, something is dropping it"; return 1 ;;
+    *) preflight_line note "${target}:${port}" "${label}: refused, route open and nothing listening yet" ;;
   esac
   return 0
 }
@@ -1574,8 +1574,8 @@ run_preflight() {
   local kind target port label failed=0 checked=0 node
   node="${ESTATE_NODE:-this server}"
   section "Preflight for ${node}"
-  info "Nothing is installed yet, so refused is the good result: the route is open and the service"
-  info "isn't there. A timeout is the one to chase."
+  info "Nothing is installed yet, so a refused connection is the expected result: the route is open and"
+  info "nothing is listening. A timeout means something is dropping the traffic."
   echo
   while IFS=$'\t' read -r kind target port label; do
     [[ -n "${kind}" ]] || continue
@@ -1594,7 +1594,7 @@ run_preflight() {
     say "All ${checked} checks passed. Install this server with ./install.sh --estate."
     return 0
   fi
-  warn "${failed} of ${checked} checks need sorting before you install."
+  warn "${failed} of ${checked} checks failed. Fix them before you install."
   return 1
 }
 
@@ -1777,7 +1777,7 @@ PY
 
 confirm() {
   [[ "${ASSUME_YES}" == true || "${NON_INTERACTIVE}" == true ]] && return 0
-  ask_yn "Go ahead and deploy?" n || { say "Stopped. Nothing was changed."; exit 0; }
+  ask_yn "Deploy this plan?" n || { say "Stopped. Nothing was changed."; exit 0; }
 }
 
 finish_message() {

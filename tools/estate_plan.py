@@ -295,7 +295,7 @@ def checks_for_node(plan, node_name):
     for other in nodes:
         if other["name"] != node_name:
             checks.append({"kind": "resolve", "target": other["address"], "port": "",
-                           "label": "%s is resolvable" % other["name"]})
+                           "label": other["name"]})
 
     if "mattermost" in components:
         peers("postgresql", "the database")
@@ -682,7 +682,7 @@ def main(argv=None):
             node = select_node(plan, args.node, args.local_name, args.local_address)
             # kind \t target \t port \t label, for install.sh to run one per line.
             for check in checks_for_node(plan, node["name"]):
-                print("%s\t%s\t%s\t%s" % (check["kind"], check["target"], check["port"], check["label"]))
+                print("%s\t%s\t%s\t%s" % (check["kind"], check["target"], check["port"] or "-", check["label"]))
             return 0
         if args.command == "apply":
             node = select_node(plan, args.node, args.local_name, args.local_address)
