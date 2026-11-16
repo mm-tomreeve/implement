@@ -1,8 +1,8 @@
 ---
 galaxy_info:
   role_name: blackbox_exporter
-  author: mattermost-implement
-  description: blackbox_exporter for Mattermost Implement monitoring
+  author: mattermost-parthenon
+  description: blackbox_exporter for Mattermost Parthenon monitoring
   license: MIT
   min_ansible_version: "2.14"
   platforms:

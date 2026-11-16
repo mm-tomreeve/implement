@@ -1,6 +1,8 @@
-# Mattermost Implement
+# Mattermost Parthenon
 
-Mattermost Implement installs Mattermost and the services around it on RHEL 9 or 10, from the
+> **Parthenon** /ˈpɑːθənɒn/ (n.) A temple built to house something important.
+
+Mattermost Parthenon installs Mattermost and the services around it on RHEL 9 or 10, from the
 official tarballs. You run it on the server you're building. It asks what that server should run,
 installs it, tests it, and writes an architecture document for it. On a monitoring server it also
 builds Prometheus, Grafana dashboards and a full set of tiered alerts for the whole estate.
@@ -25,28 +27,56 @@ storage.
 
 ## Quick start
 
+### One server
+
 On the target server, as root:
 
 ```bash
-git clone https://github.com/mm-tomreeve/implement.git /opt/mattermost-implement
-cd /opt/mattermost-implement
+git clone https://github.com/mm-tomreeve/implement.git /opt/mattermost-parthenon
+cd /opt/mattermost-parthenon
 ./install.sh
 ```
 
-The script then:
+It asks what this server should run, shows you the plan, deploys it, runs the tests and writes an
+architecture document. Run it again whenever you like: the roles are idempotent, so a second run
+changes nothing unless something has drifted.
 
-1. checks this is RHEL 9 or 10,
-2. asks before checking it can reach the vendors' download sites (later runs that went online
-   check again without asking), and falls back to a local folder if it can't,
-3. installs `ansible-core` and the `ansible.posix` collection,
-4. asks what this server should run and saves the answers to `/etc/mattermost-implement/answers.yml`,
-5. shows the plan, with any warnings about putting too much on one box, and waits for a yes,
-6. deploys, runs the post-deploy tests and writes the architecture document.
+### An estate
 
-Run it again whenever you like. It offers your last answers to use as they are, to go through
-and change, or to start again from blank. The roles are idempotent, so a second run changes nothing
-unless something has drifted, and you get a fresh report. An installed Mattermost stays on its version
-until you ask for an upgrade with `--upgrade`; see [Layout and upgrades](#layout-and-upgrades).
+Plan it once in the browser, then repeat three commands per server.
+
+1. Open [wizard/index.html](wizard/index.html). Answer the questions, enter each server's address,
+   and copy the estate plan it gives you. Hand the firewall and sizing tables to whoever needs them.
+2. Make one set of passwords for the estate, on any machine:
+
+   ```bash
+   python3 tools/estate_plan.py new-secrets --out estate-secrets.yml
+   ```
+
+3. On each server, in the install order the wizard gave you:
+
+   ```bash
+   ./install.sh --estate my-estate.yml --preflight                        # check it can reach the rest
+   ./install.sh --estate my-estate.yml --estate-secrets estate-secrets.yml
+   ./install.sh --edit                                                    # certificates, licence, CA
+   ```
+
+Step 2 is optional. Without it each server generates its own passwords and you copy the database
+one across by hand. Step 3's `--edit` is only needed where something has to be a file on that
+server, and it tells you which.
+
+### What a run does
+
+1. Checks this is RHEL 9 or 10.
+2. Asks before checking it can reach the vendors' download sites, and falls back to a local folder
+   if it can't.
+3. Installs `ansible-core` and the `ansible.posix` collection.
+4. Works out what this server should run, and saves it to `/etc/mattermost-parthenon/answers.yml`.
+5. Shows the plan, with any warnings about putting too much on one box, and waits for a yes.
+6. Deploys, runs the post-deploy tests and writes the architecture document.
+
+An installed Mattermost stays on its version until you ask for an upgrade with `--upgrade`; see
+[Layout and upgrades](#layout-and-upgrades).
 
 ## What it can install
 
@@ -82,10 +112,12 @@ Roles are grouped into profiles. Give a server one profile, several, or a custom
 | `core` | postgresql, mattermost, nginx | Small teams, one server |
 | `app` | mattermost, nginx | Application server in a split estate |
 | `database` | postgresql | Dedicated database server, or a read replica of one |
-| `calls` | rtcd | Dedicated Calls server |
+| `calls` | rtcd | Dedicated Calls server, once Calls outgrows the app servers |
 | `search` | opensearch | Dedicated search server |
 | `storage` | nfs | NFS share for the Mattermost data directory |
 | `monitoring` | prometheus, loki, grafana | Watches the rest of the estate and keeps its logs |
+| `metrics` | prometheus, loki | The same, on estates big enough to keep Grafana apart |
+| `dashboards` | grafana | Grafana on its own, pointed at a metrics server |
 | `all-in-one` | everything | Labs and proofs of concept only |
 
 You can put everything on one box. The installer tells you why that's a bad idea before it starts
@@ -98,7 +130,7 @@ and the report repeats it under Risks.
 
 Just run `./install.sh`. It asks for the profile, the site URL, which Mattermost build you want,
 where uploaded files go, TLS, and whatever the chosen components need. Passwords left blank are
-generated and kept in `/etc/mattermost-implement/secrets.yml` (root only).
+generated and kept in `/etc/mattermost-parthenon/secrets.yml` (root only).
 
 On any server that isn't the monitoring server it then asks two questions: should Prometheus on
 the monitoring server watch this one, and should its logs go to Loki there. A yes installs the
@@ -110,7 +142,7 @@ A server running Loki without Prometheus also asks which servers send it logs.
 ### Running it again
 
 On a server that has been installed before, the installer asks what to do with the saved answers
-in `/etc/mattermost-implement/answers.yml`:
+in `/etc/mattermost-parthenon/answers.yml`:
 
 | Choice | Does |
 |---|---|
@@ -126,7 +158,7 @@ hand, are copied into the new file. The old file is kept next to it as a `.bak`.
 
 `./install.sh --edit` goes straight to changing the saved answers, and
 `./install.sh --edit --answers FILE` starts from that file instead. Either way the result is saved
-to `/etc/mattermost-implement/answers.yml`.
+to `/etc/mattermost-parthenon/answers.yml`.
 
 ### From an answer file
 
@@ -143,6 +175,101 @@ The plan stops if the answer file has a setting it doesn't know (usually a typo)
 wrong kind, such as `10.0.0.5` where a list like `[10.0.0.5]` is needed. `--verify-only` and
 `--report-only` only warn, so an older answer file doesn't block them.
 
+### From an architecture wizard plan
+
+Open [wizard/index.html](wizard/index.html) in a browser. It runs entirely in the page, so nothing
+is installed and nothing leaves the machine.
+
+Give it the licence and seat count and it recommends a topology, draws it, and works out the
+install order. Fill in each server's hostname or address and it writes an **estate plan**:
+one encoded line describing the whole estate. It also produces an inbound and outbound firewall
+table for the network team, a sizing table for the server team, and the design decisions behind
+the shape, all copyable as Markdown.
+
+The sizing comes from Mattermost's own [reference
+architectures](https://docs.mattermost.com/deployment-guide/scale/scaling-for-enterprise), one band
+per published tier: 200, 2,000, 15,000, 30,000 and 50,000. vCPU and memory are Mattermost's figures
+for that tier. Two things differ, because this toolkit builds different servers: Mattermost gives
+the proxy a server of its own where Nginx runs on the app servers here, and Mattermost's search
+tier is a cluster where this toolkit installs a single node. Disk is this toolkit's estimate,
+because Mattermost publishes a growth formula rather than figures.
+
+One thing to watch: Mattermost states those tiers in **concurrent users**, which is well below the
+number of accounts. The wizard asks for seats, so a seat count lands you in a band at or above the
+one your real concurrency needs. Enter peak concurrent users instead for a like-for-like match.
+
+High availability is a checkbox there, and only on Enterprise, because clustering, Enterprise
+search and dedicated Calls servers are all Enterprise features. The chip next to it says whether
+Mattermost marks high availability as required at that size, which it does from 2,000 upwards.
+The choice is still yours. Turning it on asks how many app servers and read replicas you want, and
+stops offering local disk for uploads, since more than one app server can't keep files on its own
+disk. It does not configure clustering: you turn cluster mode on yourself and open TCP and UDP 8074
+between the app servers, and the wizard says so in the firewall table and the checklist.
+
+Paste that line when `install.sh` asks for it, or save it as a file:
+
+```bash
+./install.sh --estate my-estate.yml
+```
+
+Each server works out which node in the plan it is, from its hostname or one of its addresses, and
+derives its own answers: profiles, `mattermost_db_host`, the `*_allowed_clients` lists,
+`monitoring_estate`, scrape sources, the Loki URL. That is the hand-copying in the split-estate
+example below, done for you. The result goes to `/etc/mattermost-parthenon/answers.yml`, the same
+file an interactive run writes, and behaves like `--answers` from there: nothing is asked, so a
+setting the server needs and the plan can't know stops the plan with a message naming it.
+
+Four things are deliberately not in the plan, because a plan is made in a browser and passed around:
+passwords, the licence, the TLS certificate and key, and the OpenSearch CA. They are printed as a
+checklist once the plan is applied. Run `./install.sh --edit` on the same server to fill them in; it
+keeps everything the plan settled and asks only about the rest. Going back to the wizard is for
+changing the estate itself, such as adding a server.
+
+To change a plan later, paste it back into the wizard. It loads the whole thing and you carry on
+from the recommendation. [estate.example.yml](estate.example.yml) documents the format if you would
+rather write one by hand.
+
+### Checking a server before you install
+
+With a plan in hand, each server can check it is ready:
+
+```bash
+./install.sh --estate my-estate.yml --preflight
+```
+
+It resolves every other server in the plan, tries the ports this one has to reach, and compares the
+memory and CPU against what its role needs. Nothing is installed or changed.
+
+Nothing is listening yet at this point, so a refused connection is the good result: the route and
+the firewall are open and the service simply isn't there. A timeout is the one to take to the
+network team.
+
+### One set of passwords for the estate
+
+By default each server generates its own passwords and you copy the database one from the database
+server into the app servers. On a split estate that is tedious, and it means reading a password off
+one terminal and typing it into another.
+
+Instead, make them once:
+
+```bash
+python3 tools/estate_plan.py new-secrets --out estate-secrets.yml
+```
+
+That writes one `ansible-vault` encrypted file holding the database, replication, OpenSearch and
+Grafana passwords. Carry it to each server and hand it over with the plan:
+
+```bash
+./install.sh --estate my-estate.yml --estate-secrets estate-secrets.yml
+```
+
+Each server takes only the entries its own role needs: the database server gets the database
+password, the app servers get the database and OpenSearch ones, Grafana's goes to the monitoring
+server. Nothing else in the file is written to that server, and the checklist drops the lines
+telling you to copy them by hand.
+
+It is optional. Leave it out and every server generates its own, exactly as before.
+
 ### From flags
 
 ```bash
@@ -156,6 +283,11 @@ The other flags:
 | Flag | Does |
 |---|---|
 | `--edit` | Asks the questions again with the saved answers (or `--answers FILE`) as the defaults |
+| `--estate FILE\|-` | Uses an estate plan from the architecture wizard (see [estate.example.yml](estate.example.yml)); `-` reads it from stdin |
+| `--estate-node NAME` | Skips matching and says which node in the plan this server is |
+| `--estate-secrets FILE` | Takes this server's passwords from a vault-encrypted estate secrets file |
+| `--vault-password-file F` | Passphrase file for that estate secrets file |
+| `--preflight` | With `--estate`: checks this server can reach the rest of the estate and has the memory and CPU for its role |
 | `--plan-only` | Shows what would happen, then stops |
 | `--upgrade` | Lets an installed Mattermost (and rtcd) move to the newest release on its channel |
 | `--check` | Dry run |
@@ -470,7 +602,7 @@ An answer file settles all this without questions:
 ### How downloads are checked
 
 Every tarball is checked before it's unpacked. If a check fails the install stops, and the file
-stays in `/var/cache/mattermost-implement` for you to look at.
+stays in `/var/cache/mattermost-parthenon` for you to look at.
 
 | Download | Checked against |
 |---|---|
@@ -529,7 +661,7 @@ Mattermost is handled more carefully, because its database migrations only go fo
   `mattermost_allow_upgrade: true`) to move to the newest release. Changing a pinned
   `mattermost_version` is an upgrade by itself. rtcd on `latest` is held the same way.
 - Before an upgrade, Mattermost is stopped and its database dumped with `pg_dump -Fc` to
-  `/var/lib/mattermost-implement/backups`, next to a copy of `config.json`. On an app server with a
+  `/var/lib/mattermost-parthenon/backups`, next to a copy of `config.json`. On an app server with a
   remote database this installs the PostgreSQL client from the `postgresql_version` stream, which
   must be the database server's major version or newer. If the dump fails, Mattermost restarts on
   the old version and the run stops. Uploaded files aren't copied, so back those up yourself.
@@ -549,7 +681,7 @@ CA, never the public demo ones. PostgreSQL uses SCRAM-SHA-256, with TLS on a sel
 certificate once remote clients or replicas are allowed. Replicas log in as a separate
 `replicator` user, which pg_hba.conf only lets in for replication. Each replica makes its own
 certificate rather than keeping the copy of the primary's key. Generated passwords live in
-`/etc/mattermost-implement/secrets.yml`, root only.
+`/etc/mattermost-parthenon/secrets.yml`, root only.
 
 ### Post-deploy tests
 
@@ -568,12 +700,12 @@ get a document that says what went wrong. [docs/testing.md](docs/testing.md) lis
 
 ### The architecture document
 
-Each run writes `/var/lib/mattermost-implement/reports/latest.md`. It has Mermaid diagrams of the
+Each run writes `/var/lib/mattermost-parthenon/reports/latest.md`. It has Mermaid diagrams of the
 components, traffic and request flow, and the server's spec. It gives every component's version,
 checksum, paths and ports, plus the firewall matrix, security notes and backup guidance. It also
 records the monitoring estate and alert counts, every test result, risks and design decisions,
 and an operations runbook. Test results are also kept as JSON in
-`/var/lib/mattermost-implement/results/`.
+`/var/lib/mattermost-parthenon/results/`.
 
 ## Monitoring, alerts and dashboards
 
@@ -686,7 +818,7 @@ Every rule carries these labels, which is what you route on:
 |---|---|
 | `severity` | `info`, `warning`, `critical` |
 | `module` | `host`, `site`, `mattermost`, `postgresql`, `nginx`, `opensearch`, `rtcd`, `nfs`, `monitoring` |
-| `mmi_rule` | the check's id, as in the tables below |
+| `mmp_rule` | the check's id, as in the tables below |
 | `signal` | `metrics` or `logs` |
 | `deployment` | `deploy_name` from the answer file |
 
@@ -727,7 +859,7 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 | Check | Info | Warning | Critical | For | What to do |
 |---|---|---|---|---|---|
 | Metrics target down `target-down` |  |  | < 1 | 3m | The server, or one of its exporters, is down, or the firewall is blocking the scrape. Check the "Up by job and server" panel on the host dashboard for which job, then `systemctl status` for that service on the host, then `firewall-cmd --list-all`. |
-| Mattermost Implement service not running `service-not-active` |  |  | < 1 | 2m | Run `systemctl status {{ $labels.name }}` and `journalctl -u {{ $labels.name }} -n 100` on the host. |
+| Mattermost Parthenon service not running `service-not-active` |  |  | < 1 | 2m | Run `systemctl status {{ $labels.name }}` and `journalctl -u {{ $labels.name }} -n 100` on the host. |
 | Disk usage `disk-used` | > 70% | > 80% | > 95% | 10m | Find what is growing with `du -xh --max-depth=2 {{ $labels.mountpoint }} \| sort -h \| tail`. Usual suspects: Mattermost data, PostgreSQL WAL, OpenSearch indices, logs in /var/log. |
 | Disk predicted full within 24 hours `disk-fills-24h` |  | < 0 GiB |  | 30m | Growth over the last 6 hours points to a full disk tomorrow. Find the cause before the usage alerts start. |
 | Disk predicted full within 4 hours `disk-fills-4h` |  |  | < 0 GiB | 10m | Act now: free space or extend the volume. A full disk stops PostgreSQL and Mattermost. |
@@ -901,7 +1033,7 @@ contact point. Grafana 13 starts with an empty one:
 ![Contact points: only Grafana's empty default](docs/images/grafana-contact-points.png)
 
 1. Log in to Grafana at `http://<monitoring server>:3000` as `admin`. The password is in
-   `/etc/mattermost-implement/secrets.yml` on the monitoring server. Change it after you first
+   `/etc/mattermost-parthenon/secrets.yml` on the monitoring server. Change it after you first
    log in.
 2. Under Alerting > Contact points, add one for each place alerts should go.
    For email, configure SMTP in the `[smtp]` section of `/etc/grafana/grafana.ini` first and
@@ -936,7 +1068,7 @@ contact point. Grafana 13 starts with an empty one:
 | With a read replica, plan how you'd fail over | Replication doesn't fail over by itself. Promote the replica with `pg_ctl promote` (the replica's report has the full command), then point `mattermost_db_host` at it and re-run the app servers. |
 | Schedule backups and test a restore | `pg_dump` plus a file backup of the data directory, taken together and kept off the server. The report has the commands. |
 | Set `rtcd_ice_host_override` behind NAT or a load balancer, and open UDP 8443 from clients | Otherwise calls connect but carry no audio. |
-| Copy each server's `/etc/mattermost-implement/secrets.yml` somewhere safe | It holds the generated passwords. |
+| Copy each server's `/etc/mattermost-parthenon/secrets.yml` somewhere safe | It holds the generated passwords. |
 | Tune thresholds after a week | Use `monitoring_alert_overrides` for anything noisy. |
 | On arm64 app servers, install plugins from the Marketplace | The arm64 tarball ships without Calls and the other bundled plugins. |
 
@@ -982,6 +1114,9 @@ tools/resolve_versions.py      finds versions, URLs and checksums, online or off
 tools/build-offline-bundle.sh  builds an offline bundle
 tools/alert_catalogue.py       every check and its thresholds
 tools/observability.py         turns the estate into alert rules and dashboards
+tools/estate_plan.py           decodes an estate plan and derives one server's answers
+estate.example.yml             the estate plan format, commented
+wizard/                        the architecture wizard (open index.html in a browser)
 tests/                         unit, render, smoke and end-to-end tests
 docs/                          alerts, offline installs, roles and testing
 ```

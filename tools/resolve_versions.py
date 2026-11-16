@@ -30,7 +30,7 @@ MM_RELEASES = "https://releases.mattermost.com"
 GITHUB_API = "https://api.github.com"
 OPENSEARCH_ARTIFACTS = "https://artifacts.opensearch.org/releases"
 GRAFANA_API = "https://grafana.com/api/downloads/grafana/versions"
-USER_AGENT = "mattermost-implement-resolver/1.0"
+USER_AGENT = "mattermost-parthenon-resolver/1.0"
 
 MATTERMOST_KEY = {"gpg_key": "mattermost-pubkey.gpg",
                   "gpg_fingerprint": "A1B31D46F0F3A10B02CF2D44F8F2C31744774B28"}

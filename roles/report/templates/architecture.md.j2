@@ -36,11 +36,11 @@
 | Generated | {{ lookup('ansible.builtin.pipe', 'date -u +"%Y-%m-%d %H:%M UTC"') }} |
 | Run ID | {{ mmd_run_id }}{% if mmd_install_run_id is defined and mmd_install_run_id and mmd_install_run_id != mmd_run_id %} (tests re-run; installed in {{ mmd_install_run_id }}){% endif %} |
 | Operator | {{ deploy_operator }} |
-| Mattermost Implement | {{ deploy_tool_version }} |
+| Mattermost Parthenon | {{ deploy_tool_version }} |
 | Status | {% if failed %}Install incomplete{% elif n_fail > 0 %}Installed, {{ n_fail }} critical check{{ 's' if n_fail != 1 }} failing{% elif n_warn > 0 %}Installed, {{ n_warn }} warning{{ 's' if n_warn != 1 }}{% else %}Installed and verified{% endif %} |
 
 This document describes what this server runs, how it connects to the rest of the
-{{ deploy_name }} deployment, and how to look after it. Mattermost Implement rewrites it
+{{ deploy_name }} deployment, and how to look after it. Mattermost Parthenon rewrites it
 on every run, so make notes elsewhere or they will be lost.
 
 ## Summary
@@ -388,7 +388,7 @@ System Console. Database: `{{ mmd_db_host }}:{{ mattermost_db_port }}/{{ matterm
 Calls: {{ 'rtcd at ' ~ mmd_rtcd_url if mmd_rtcd_url else ('built-in media server on port ' ~ mattermost_calls_port if mmd_calls_integrated else 'not configured') }}.
 Search: {{ 'OpenSearch at ' ~ mmd_opensearch_url ~ (', indexing on' if mattermost_search_enable | bool else ', indexing off until a licence is installed') if mmd_opensearch_url else 'database search (no OpenSearch configured)' }}.
 {% if mmd_opensearch_ca_src %}
-The search CA is trusted system-wide (`/etc/pki/ca-trust/source/anchors/mattermost-implement-opensearch.pem`).
+The search CA is trusted system-wide (`/etc/pki/ca-trust/source/anchors/mattermost-parthenon-opensearch.pem`).
 {% endif %}
 
 {% elif c == 'postgresql' %}
@@ -570,7 +570,7 @@ are not needed. The always-on rows still are.
 |---|---|---|
 | SELinux | {{ mmd_host_selinux | default('unknown') }} | {{ 'Left as the host had it. ' if not selinux_manage | bool else 'Booleans and contexts set for what is installed here. ' }}{% if has.ngx %}`httpd_can_network_connect` is on so Nginx can reach its upstream.{% endif %} |
 | firewalld | {{ 'managed, zone ' ~ ((_report_zone.stdout | default('') | trim) or firewall_zone) if firewall_manage | bool else 'not managed by this toolkit' }} | {{ 'Only the ports in the matrix above are open, and only to the addresses listed.' if firewall_manage | bool else 'firewall_manage is false, so nothing was opened or closed here.' }} |
-| fapolicyd | {{ (_report_fapolicyd.stdout | default('') | trim) or 'not installed' }} | {{ 'Installed paths are in the mattermost-implement trust file.' if (_report_fapolicyd.stdout | default('') | trim) == 'active' else 'Not running, so no execution allow-listing is in force.' }} |
+| fapolicyd | {{ (_report_fapolicyd.stdout | default('') | trim) or 'not installed' }} | {{ 'Installed paths are in the mattermost-parthenon trust file.' if (_report_fapolicyd.stdout | default('') | trim) == 'active' else 'Not running, so no execution allow-listing is in force.' }} |
 {% if has.ngx %}
 | TLS at the edge | {{ 'HTTPS' if mmd_tls_enabled else 'pending' }} | {{ 'Terminated at Nginx' ~ (', which talks to Mattermost over HTTP on 127.0.0.1' if has.mm else '') ~ '.' if mmd_tls_enabled else 'Users reach this server over plain HTTP until a certificate is installed.' }} |
 {% endif %}
@@ -714,7 +714,7 @@ Grafana is at `http://{{ fqdn }}:{{ grafana_port }}/` (user `admin`, password in
 Grafana holds {{ obs.rules }} alert rules, built from {{ obs.checks }} checks across {{ obs.modules | join(', ') }}:
 {{ obs.by_severity.critical }} critical, {{ obs.by_severity.warning }} warning and {{ obs.by_severity.info }} info.
 The tiers don't overlap, so a disk at 96% raises the critical alert only. Every rule carries a
-`severity` label, plus `module` and `mmi_rule`. They sit in the {{ grafana_alert_folder | default('Mattermost') }} folder under
+`severity` label, plus `module` and `mmp_rule`. They sit in the {{ grafana_alert_folder | default('Mattermost') }} folder under
 Alerting and are provisioned from files, so change thresholds with `monitoring_alert_overrides`
 in the answer file rather than in the UI. `docs/alerts.md` in the repo lists every
 check, its tiers and what to do when it fires.
@@ -728,7 +728,7 @@ set the notification policy to route on `severity`. A sensible starting point:
 | warning | The team's email or a Mattermost ops channel | every 4 hours |
 | info | A Mattermost channel or a daily digest. Never page for these. | every 24 hours |
 
-Dashboards, all tagged `mattermost-implement` and linked to each other: {{ obs.dashboards | join(', ') }}.
+Dashboards, all tagged `mattermost-parthenon` and linked to each other: {{ obs.dashboards | join(', ') }}.
 {% if has.mm or (mmd_estate | default([]) | selectattr('components', 'contains', 'mattermost') | list) %}
 Mattermost's own community dashboards are provisioned alongside them, in the same folder.
 {% endif %}

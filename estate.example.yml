@@ -1,0 +1,88 @@
+---
+# An estate plan: every server in one deployment, and the settings they share.
+#
+# Build one in the architecture wizard (wizard/index.html) and paste the encoded
+# line it gives you, or copy this file, change it, and run on EACH server:
+#   sudo ./install.sh --estate my-estate.yml
+#
+# Each server finds itself in the nodes list by hostname or address, then derives
+# its own answers.yml: profiles, mattermost_db_host, the *_allowed_clients lists,
+# monitoring_estate, scrape sources, the Loki URL. That is the cross-copying in
+# README's "Example: a split estate", done for you.
+#
+# Four things are deliberately missing, because a plan is made in a browser and
+# passed around:
+#   - passwords. Each server generates its own, or use one estate secrets file:
+#       python3 tools/estate_plan.py new-secrets --out estate-secrets.yml
+#       sudo ./install.sh --estate my-estate.yml --estate-secrets estate-secrets.yml
+#   - the licence, the TLS certificate and key, and the OpenSearch CA. Put them on
+#     the server, then run ./install.sh --edit to point at them.
+#
+# Check a server is ready before installing anything:
+#   sudo ./install.sh --estate my-estate.yml --preflight
+#
+# This plan is README's split estate.
+
+estate_version: 1
+
+name: chat-prod
+# Professional runs the same binary as Enterprise, so only Team Edition differs.
+# High availability, Enterprise search and dedicated Calls servers all need
+# Enterprise.
+licence: enterprise                  # enterprise | professional | team
+mattermost_edition: enterprise       # enterprise | team
+mattermost_site_url: https://chat.acme.example
+tls_mode: provided                   # later | provided (never the certificate itself)
+file_storage: local                  # local | nfs | amazons3
+
+# How Calls runs. Mattermost's figure is 50: up to that, integrated Calls inside
+# the app servers is fine. Past it, give Calls servers of their own (the calls
+# profile below) so media doesn't slow messaging down. Either way, clients reach
+# the media port directly on UDP and TCP 8443, never through the proxy.
+# The licence sets what Calls can do: Team Edition is 1-to-1 and capped at 40
+# minutes, Professional adds group calls with no time limit, and Enterprise adds
+# recording, transcription, live captions and rtcd.
+#   none        Calls off
+#   integrated  inside the app servers
+#   rtcd        on nodes with the calls profile
+calls: rtcd
+
+# The wizard writes this so it can reload the plan later. Nothing else reads it.
+# Mattermost's reference architectures, which the wizard sizes from, are stated in
+# concurrent users rather than seats, so a seat count sizes you generously.
+seats: 2000
+
+# managed: this estate runs its own Prometheus, Loki and Grafana. Give one node the
+#   monitoring profile, or split it: metrics (Prometheus and Loki) and dashboards
+#   (Grafana) on separate servers.
+# external: you already run them. Fill in the two settings below and leave all
+#   three off the nodes.
+observability: managed
+monitoring_scrape_sources: []        # only read when observability is external
+logging_loki_url: ""                 # only read when observability is external
+
+# One role per server, except monitoring, which is already three things together.
+# A database node that follows another names it in `primary`, which makes it a read
+# replica: the primary streams WAL to it, and every app server is pointed at it as a
+# DataSourceReplica so Mattermost actually reads from it. That needs Enterprise.
+# At least one database node has to be a primary, so leave `primary` off that one.
+#
+# More than one app node is a cluster, and this toolkit does not configure clustering.
+# You put a load balancer in front, turn cluster mode on in Mattermost, and open TCP
+# and UDP 8074 between the app servers.
+nodes:
+  - name: db01
+    address: 10.10.1.11
+    profiles: [database]
+  - name: app01
+    address: 10.10.1.12
+    profiles: [app]
+  - name: calls01
+    address: 10.10.1.13
+    profiles: [calls]
+  - name: search01
+    address: 10.10.1.14
+    profiles: [search]
+  - name: mon01
+    address: 10.10.1.15
+    profiles: [monitoring]

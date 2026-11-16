@@ -116,8 +116,8 @@ log "Second run of both"
 install pg01 rerun || rc=1
 install pg02 rerun || rc=1
 for s in "${SERVERS[@]}"; do
-  in_box "${s}" 'cat /var/lib/mattermost-implement/reports/latest.md' > "${OUT}/ARCHITECTURE-${s}.md" 2>/dev/null || true
-  in_box "${s}" 'cat /var/lib/mattermost-implement/results/latest.json' > "${OUT}/results-${s}.json" 2>/dev/null || true
+  in_box "${s}" 'cat /var/lib/mattermost-parthenon/reports/latest.md' > "${OUT}/ARCHITECTURE-${s}.md" 2>/dev/null || true
+  in_box "${s}" 'cat /var/lib/mattermost-parthenon/results/latest.json' > "${OUT}/results-${s}.json" 2>/dev/null || true
 done
 
 log "Rebuilding the replica after it has gone"

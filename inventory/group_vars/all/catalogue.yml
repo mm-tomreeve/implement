@@ -116,7 +116,7 @@ mmd_catalogue:
     service: nfs-server
     user: root
     paths:
-      config: /etc/exports.d/mattermost-implement.exports, /etc/nfs.conf.d/90-mattermost-implement.conf
+      config: /etc/exports.d/mattermost-parthenon.exports, /etc/nfs.conf.d/90-mattermost-parthenon.conf
       data: "{{ nfs_export_dir }}"
       logs: journald (journalctl -u nfs-server)
     min_ram_mb: 512

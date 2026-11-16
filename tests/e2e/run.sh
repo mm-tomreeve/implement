@@ -111,8 +111,8 @@ log "Re-running every server's checks now the whole estate is up"
 for s in "${SERVERS[@]}"; do
   in_box "${s}" 'cd /opt/mmd && ./install.sh --verify-only --non-interactive' > "${OUT}/${s}-verify.log" 2>&1 \
     && echo 0 > "${OUT}/${s}.verify.rc" || echo 1 > "${OUT}/${s}.verify.rc"
-  in_box "${s}" 'cat /var/lib/mattermost-implement/reports/latest.md' > "${OUT}/ARCHITECTURE-${s}.md" 2>/dev/null || true
-  in_box "${s}" 'cat /var/lib/mattermost-implement/results/latest.json' > "${OUT}/results-${s}.json" 2>/dev/null || true
+  in_box "${s}" 'cat /var/lib/mattermost-parthenon/reports/latest.md' > "${OUT}/ARCHITECTURE-${s}.md" 2>/dev/null || true
+  in_box "${s}" 'cat /var/lib/mattermost-parthenon/results/latest.json' > "${OUT}/results-${s}.json" 2>/dev/null || true
 done
 
 log "Summary"
@@ -134,6 +134,6 @@ printf '    %-9s %s\n' alerts "$([[ ${observability_rc} == 0 ]] && echo ok || ec
 [[ "${functional_rc}" == 0 && "${observability_rc}" == 0 ]] || rc=1
 log "Reports and logs: ${OUT}"
 if [[ "${KEEP}" == true ]]; then
-  log "Grafana: http://localhost:${GRAFANA_PORT:-13000} (admin; password in mon01's /etc/mattermost-implement/secrets.yml)"
+  log "Grafana: http://localhost:${GRAFANA_PORT:-13000} (admin; password in mon01's /etc/mattermost-parthenon/secrets.yml)"
 fi
 exit "${rc}"

@@ -23,6 +23,12 @@ mmd_profiles:
   monitoring:
     description: Prometheus, Loki and Grafana with the Mattermost dashboards and logs.
     components: [prometheus, loki, grafana]
+  metrics:
+    description: Prometheus and Loki only, for estates big enough to keep Grafana separate.
+    components: [prometheus, loki]
+  dashboards:
+    description: Grafana on its own, pointed at a metrics server.
+    components: [grafana]
   all-in-one:
     description: Everything on one box. Lab and proof-of-concept use only.
     components: [postgresql, mattermost, nginx, rtcd, opensearch, prometheus, loki, grafana]

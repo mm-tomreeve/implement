@@ -32,7 +32,7 @@
     - {path: "{{ grafana_data_dir }}", owner: "{{ grafana_user }}"}
     - {path: "{{ grafana_data_dir }}/plugins", owner: "{{ grafana_user }}"}
     - {path: "{{ grafana_dashboard_dir }}", owner: root}
-    - {path: "{{ grafana_implement_dashboard_dir }}", owner: root}
+    - {path: "{{ grafana_parthenon_dashboard_dir }}", owner: root}
     - {path: "{{ grafana_log_dir }}", owner: "{{ grafana_user }}"}
 
 - name: Write grafana.ini
@@ -52,7 +52,7 @@
     group: "{{ grafana_user }}"
     mode: "0640"
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       apiVersion: 1
       datasources:
         - name: Prometheus
@@ -71,7 +71,7 @@
     group: "{{ grafana_user }}"
     mode: "0640"
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       apiVersion: 1
       datasources:
         - name: Loki
@@ -99,16 +99,16 @@
     group: "{{ grafana_user }}"
     mode: "0640"
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       apiVersion: 1
       providers:
-        - name: mattermost-implement
+        - name: mattermost-parthenon
           folder: {{ grafana_alert_folder }}
           type: file
           disableDeletion: true
           allowUiUpdates: false
           options:
-            path: {{ grafana_implement_dashboard_dir }}
+            path: {{ grafana_parthenon_dashboard_dir }}
         - name: mattermost-community
           folder: {{ grafana_alert_folder }}
           type: file
@@ -155,7 +155,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by Mattermost Implement. Local changes are overwritten on the next run.
+      # Managed by Mattermost Parthenon. Local changes are overwritten on the next run.
       [Unit]
       Description=Grafana
       After=network-online.target{{ ' prometheus.service' if 'prometheus' in mmd_selected else '' }}

@@ -2,6 +2,6 @@
 # Internal details. Everything an operator sets lives in group_vars/all/defaults.yml.
 nfs_packages: [nfs-utils]
 # Our own export and config files, so the ones RHEL ships are left alone.
-nfs_exports_file: /etc/exports.d/mattermost-implement.exports
+nfs_exports_file: /etc/exports.d/mattermost-parthenon.exports
 # Read after the files nfs-utils ships in the same directory, so these win.
-nfs_conf_file: /etc/nfs.conf.d/90-mattermost-implement.conf
+nfs_conf_file: /etc/nfs.conf.d/90-mattermost-parthenon.conf

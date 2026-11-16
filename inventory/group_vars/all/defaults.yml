@@ -12,8 +12,8 @@ deploy_components: []
 deploy_monitoring_exporters: false
 # Set by install.sh after it has tested connectivity. Do not set by hand.
 deploy_online: false
-deploy_state_dir: /var/lib/mattermost-implement
-deploy_config_dir: /etc/mattermost-implement
+deploy_state_dir: /var/lib/mattermost-parthenon
+deploy_config_dir: /etc/mattermost-parthenon
 deploy_tool_version: unknown
 deploy_operator: "{{ lookup('ansible.builtin.env', 'SUDO_USER') | default('root', true) }}"
 # Firewalld and SELinux handling.
@@ -25,7 +25,7 @@ selinux_manage: true
 # Offline directory or internal mirror URL. When set it is always used, even if
 # the server can reach the internet.
 artifact_source: ""
-artifact_cache_dir: /var/cache/mattermost-implement
+artifact_cache_dir: /var/cache/mattermost-parthenon
 # Refuse a Mattermost or OpenSearch tarball whose GPG signature cannot be checked.
 artifact_require_signature: true
 # Allow artifacts with no published or bundled checksum. Leave this off.
@@ -43,7 +43,7 @@ mattermost_allow_upgrade: false
 # Before an upgrade, stop Mattermost and pg_dump its database. Only switch this off
 # if you have just taken your own backup.
 mattermost_upgrade_backup: true
-mattermost_backup_dir: /var/lib/mattermost-implement/backups
+mattermost_backup_dir: /var/lib/mattermost-parthenon/backups
 mattermost_gpg_fingerprint: A1B31D46F0F3A10B02CF2D44F8F2C31744774B28
 mattermost_site_url: "https://{{ ansible_facts['fqdn'] }}"
 mattermost_user: mattermost
