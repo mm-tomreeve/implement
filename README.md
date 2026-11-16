@@ -82,10 +82,12 @@ Roles are grouped into profiles. Give a server one profile, several, or a custom
 | `core` | postgresql, mattermost, nginx | Small teams, one server |
 | `app` | mattermost, nginx | Application server in a split estate |
 | `database` | postgresql | Dedicated database server, or a read replica of one |
-| `calls` | rtcd | Dedicated Calls server |
+| `calls` | rtcd | Dedicated Calls server, once Calls outgrows the app servers |
 | `search` | opensearch | Dedicated search server |
 | `storage` | nfs | NFS share for the Mattermost data directory |
 | `monitoring` | prometheus, loki, grafana | Watches the rest of the estate and keeps its logs |
+| `metrics` | prometheus, loki | The same, on estates big enough to keep Grafana apart |
+| `dashboards` | grafana | Grafana on its own, pointed at a metrics server |
 | `all-in-one` | everything | Labs and proofs of concept only |
 
 You can put everything on one box. The installer tells you why that's a bad idea before it starts

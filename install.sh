@@ -21,7 +21,7 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Keep these in step with inventory/group_vars/all/profiles.yml and catalogue.yml.
 # tests/test_repo_consistency.py fails if they drift.
-PROFILE_NAMES=(core app database calls search storage monitoring all-in-one)
+PROFILE_NAMES=(core app database calls search storage monitoring metrics dashboards all-in-one)
 declare -A PROFILE_COMPONENTS=(
   [core]="postgresql mattermost nginx"
   [app]="mattermost nginx"
@@ -30,6 +30,8 @@ declare -A PROFILE_COMPONENTS=(
   [search]="opensearch"
   [storage]="nfs"
   [monitoring]="prometheus loki grafana"
+  [metrics]="prometheus loki"
+  [dashboards]="grafana"
   [all-in-one]="postgresql mattermost nginx rtcd opensearch prometheus loki grafana"
 )
 declare -A PROFILE_DESCRIPTIONS=(
@@ -40,6 +42,8 @@ declare -A PROFILE_DESCRIPTIONS=(
   [search]="Dedicated OpenSearch node for Enterprise search."
   [storage]="NFS file storage for the Mattermost data directory."
   [monitoring]="Prometheus, Loki and Grafana with the Mattermost dashboards and logs."
+  [metrics]="Prometheus and Loki only, for estates big enough to keep Grafana separate."
+  [dashboards]="Grafana on its own, pointed at a metrics server."
   [all-in-one]="Everything on one box. Lab and proof-of-concept use only."
 )
 COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch nfs prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
