@@ -304,7 +304,7 @@
       </div>
       <p class="hint" id="sizing-source"></p>
       <p class="hint" id="storage-formula"></p>
-      <p class="hint">RHEL 9 or 10 on x86_64 or arm64, and outbound access to the vendor download sites
+      <p class="hint">RHEL 9 or 10, Debian 12 or later, or Ubuntu 24.04 or later, on x86_64 or arm64, and outbound access to the vendor download sites
          or an offline bundle.</p>
     </details>
 
@@ -634,8 +634,8 @@
         "when_label": "Until you set an ICE host override", "purpose": "Public IP discovery for Calls" }
     ],
     "install": [
-      { "component": null, "to": "Your dnf repositories: the Red Hat CDN, Satellite, or a local mirror", "port": 443, "proto": "tcp",
-        "purpose": "BaseOS and AppStream packages" },
+      { "component": null, "to": "Your package repositories: the Red Hat CDN, Satellite, the Debian or Ubuntu archive, or a local mirror", "port": 443, "proto": "tcp",
+        "purpose": "Operating system packages (BaseOS and AppStream on RHEL)" },
       { "component": "mattermost", "to": "releases.mattermost.com", "port": 443, "proto": "tcp",
         "purpose": "The Mattermost tarball and its signature" },
       { "component": "opensearch", "to": "artifacts.opensearch.org", "port": 443, "proto": "tcp",

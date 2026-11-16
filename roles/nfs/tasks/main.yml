@@ -1,8 +1,10 @@
 ---
 - name: Install the NFS server packages
-  ansible.builtin.dnf:
-    name: "{{ nfs_packages }}"
-    state: present
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: package
+  vars:
+    pkg_names: "{{ nfs_packages }}"
 
 - name: Create the group that owns the share
   ansible.builtin.group:
@@ -36,7 +38,7 @@
     state: true
     persistent: true
   when:
-    - selinux_manage | bool
+    - mmd_selinux_manage | bool
     - ansible_facts['selinux']['status'] | default('disabled') == 'enabled'
 
 - name: Create the directory for our NFS config drop-in

@@ -3,7 +3,7 @@
 
 Online it asks the vendors directly. Offline it reads a bundle built by
 tools/build-offline-bundle.sh (manifest.json), or scans a directory someone
-filled by hand. Standard library only, so it runs on a bare RHEL host.
+filled by hand. Standard library only, so it runs on a bare server.
 
 Subcommands:
   resolve        print a JSON description of every artifact the components need
@@ -37,7 +37,7 @@ MATTERMOST_KEY = {"gpg_key": "mattermost-pubkey.gpg",
 OPENSEARCH_KEY = {"gpg_key": "opensearch.pgp",
                   "gpg_fingerprint": "C5B7498965EFD1C2924BA9D539D319879310D3FC"}
 
-# Which artifacts each component needs. PostgreSQL and Nginx come from dnf.
+# Which artifacts each component needs. PostgreSQL and Nginx come from the package manager.
 COMPONENT_ARTIFACTS = {
     "mattermost": ["mattermost"],
     "rtcd": ["rtcd"],
@@ -550,6 +550,8 @@ def inventory(source, arch):
                        and any(f.endswith(".tar.gz") for f in os.listdir(os.path.join(source, "collections"))),
         "rpms": local and os.path.isdir(os.path.join(source, "rpms"))
                 and any(f.endswith(".rpm") for f in os.listdir(os.path.join(source, "rpms"))),
+        "debs": local and os.path.isdir(os.path.join(source, "debs"))
+                and any(f.endswith(".deb") for f in os.listdir(os.path.join(source, "debs"))),
     }
     return {"kind": kind, "arch": arch, "artifacts": sorted(items, key=lambda i: (i["name"], i["version"])),
             "extras": extras}

@@ -21,20 +21,35 @@
   changed_when: _pg_seport.rc == 0
   failed_when: false
   when:
-    - selinux_manage | bool
+    - mmd_selinux_manage | bool
     - postgresql_port | int != 5432
 
 - name: Remove the PostgreSQL packages
-  ansible.builtin.dnf:
-    name: "{{ postgresql_packages }}"
-    state: absent
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: package
+  vars:
+    pkg_names: "{{ postgresql_packages }}"
+    pkg_state: absent
+
+# postgresql-common stays, since it also serves the client tools. Put its setting back so a
+# later install of PostgreSQL by hand makes its usual cluster.
+- name: Let the package make a default cluster again (Debian and Ubuntu)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql-common/createcluster.conf
+    regexp: "^create_main_cluster = false  # Managed by Mattermost Parthenon"
+    line: "#create_main_cluster = true"
+  failed_when: false
+  when: mmd_is_debian | bool
 
 - name: Reset the PostgreSQL module stream (RHEL 9)
   ansible.builtin.command: dnf -y module reset postgresql
   register: _pg_module
   changed_when: "'Nothing to do' not in _pg_module.stdout"
   failed_when: false
-  when: ansible_facts['distribution_major_version'] == '9'
+  when:
+    - not mmd_is_debian | bool
+    - ansible_facts['distribution_major_version'] == '9'
 
 - name: Remove the replica password file
   ansible.builtin.file:
@@ -47,5 +62,6 @@
     state: absent
   loop:
     - "{{ postgresql_data_dir }}"
+    - "{{ postgresql_conf_dir }}"
     - "{{ postgresql_log_dir }}"
   when: uninstall_purge | default(false) | bool

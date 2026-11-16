@@ -1,13 +1,15 @@
 ---
-- name: Require RHEL 9 or 10 (or a rebuild)
+- name: Require RHEL 9 or 10 (or a rebuild), Debian 12 or later, or Ubuntu 24.04 or later
   ansible.builtin.assert:
     that:
-      - ansible_facts['os_family'] == 'RedHat'
-      - ansible_facts['distribution_major_version'] in ['9', '10']
+      - >-
+        (ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution_major_version'] in ['9', '10'])
+        or (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] is version('12', '>='))
+        or (ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] is version('24.04', '>='))
       - ansible_facts['architecture'] in ['x86_64', 'aarch64']
     fail_msg: >-
-      This toolkit supports RHEL 9 and 10 on x86_64 or aarch64. Found
-      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+      This toolkit supports RHEL 9 and 10, Debian 12 and later, and Ubuntu 24.04 and later, on x86_64
+      or aarch64. Found {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
       on {{ ansible_facts['architecture'] }}.
     quiet: true
 
@@ -16,7 +18,18 @@
     msg: >-
       {{ ansible_facts['distribution'] }} is not RHEL. It should work, but Mattermost
       support is written against RHEL, so test before you rely on it.
-  when: ansible_facts['distribution'] != 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'RedHat'
+
+- name: Stop if this Debian or Ubuntu release needs a PostgreSQL version chosen by hand
+  ansible.builtin.assert:
+    that: postgresql_version | string | length > 0
+    fail_msg: >-
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} is newer than the
+      releases this toolkit has been checked against, so it doesn't know which PostgreSQL version the
+      release ships. Set postgresql_version in the answer file to the major version that
+      "apt-cache policy postgresql" shows (for example "17").
+    quiet: true
+  when: mmd_is_debian | bool
 
 - name: Record run metadata
   ansible.builtin.set_fact:

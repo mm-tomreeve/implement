@@ -31,6 +31,8 @@
         echo "$(ps -o unit= -p "$pid" | tr -d ' ') ($(ps -o comm= -p "$pid"), pid $pid)"
       fi
     done
+  args:
+    executable: /bin/bash
   loop: "{{ _ports_wanted }}"
   loop_control:
     label: "{{ item.component }}: {{ item.port }}/{{ item.protos | join('/') }}"

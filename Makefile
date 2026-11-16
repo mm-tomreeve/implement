@@ -2,7 +2,7 @@ VENV ?= .venv
 BIN := $(VENV)/bin
 export ANSIBLE_CONFIG := $(CURDIR)/ansible.cfg
 
-.PHONY: venv collections lint test render smoke e2e e2e-replica clean
+.PHONY: venv collections lint test render smoke smoke-debian e2e e2e-replica clean
 
 venv:
 	python3 -m venv $(VENV)
@@ -26,6 +26,13 @@ render: collections
 
 smoke:
 	tests/smoke/run.sh
+
+# Debian 12 and Ubuntu 24.04. The images are built here because the usual ones are amd64 only.
+smoke-debian:
+	docker build -q -f tests/smoke/Dockerfile.debian --build-arg BASE=debian:12 -t mmd-systemd-debian:12 tests/smoke
+	docker build -q -f tests/smoke/Dockerfile.debian --build-arg BASE=ubuntu:24.04 -t mmd-systemd-ubuntu:24.04 tests/smoke
+	ENGINE=docker NAME=mmd-smoke-debian IMAGE=mmd-systemd-debian:12 tests/smoke/run.sh
+	ENGINE=docker NAME=mmd-smoke-ubuntu IMAGE=mmd-systemd-ubuntu:24.04 tests/smoke/run.sh
 
 e2e:
 	tests/e2e/run.sh

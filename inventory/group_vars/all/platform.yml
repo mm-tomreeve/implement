@@ -1,0 +1,30 @@
+---
+# Everything that differs between RHEL and Debian or Ubuntu, in one place. These are
+# worked out from the host's facts when they are used, so they need no answer-file entry.
+# An answer file can still override any of them.
+
+mmd_is_debian: "{{ ansible_facts['os_family'] | default('RedHat') == 'Debian' }}"
+
+# SELinux handling only applies where SELinux exists. Debian and Ubuntu use AppArmor,
+# which we leave alone.
+mmd_selinux_manage: "{{ selinux_manage | bool and not mmd_is_debian | bool }}"
+
+# The PostgreSQL major version each supported Debian or Ubuntu release ships. We install
+# that one rather than adding the PGDG repository. A newer release needs postgresql_version
+# set by hand, and the install says so.
+mmd_debian_postgresql_versions:
+  Debian: {"12": "15", "13": "17"}
+  Ubuntu: {"24.04": "16"}
+mmd_debian_postgresql_default: >-
+  {{ (mmd_debian_postgresql_versions[ansible_facts['distribution'] | default('')] | default({}))[
+       ansible_facts['distribution_version'] if ansible_facts['distribution'] | default('') == 'Ubuntu'
+       else ansible_facts['distribution_major_version'] | default('')] | default('') }}
+
+# Service accounts and unit names that carry a different name on each family.
+mmd_nginx_user: "{{ 'www-data' if mmd_is_debian | bool else 'nginx' }}"
+mmd_chrony_service: "{{ 'chrony' if mmd_is_debian | bool else 'chronyd' }}"
+mmd_nfs_client_package: "{{ 'nfs-common' if mmd_is_debian | bool else 'nfs-utils' }}"
+
+# Where the PostgreSQL tools live. Debian keeps one directory per major version and only
+# wraps the client tools, so server tools such as pg_controldata need the full path.
+mmd_postgresql_bin_dir: "{{ ('/usr/lib/postgresql/' ~ postgresql_version ~ '/bin') if mmd_is_debian | bool else '/usr/bin' }}"

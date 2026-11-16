@@ -1,7 +1,7 @@
 # Offline installs
 
-Air-gapped servers need two things the internet would normally give them: the dnf packages
-for Ansible and the base OS components, and the Mattermost and third-party tarballs.
+Air-gapped servers need two things the internet would normally give them: the operating system
+packages for Ansible and the base components, and the Mattermost and third-party tarballs.
 
 ## Packages
 
@@ -13,6 +13,15 @@ estates already have Satellite or a local mirror, and that's all we need. If not
 - build the bundle with `--with-rpms` on a RHEL server with the same major version. The
   installer falls back to those RPMs if dnf can't reach anything. That covers the installer's
   own prerequisites, not PostgreSQL or Nginx, so for those you still need a repo.
+
+On Debian and Ubuntu the installer needs `ansible-core`, `python3`, `python3-apt`, `gnupg`,
+`openssl`, `iproute2` and `curl`, and the roles install PostgreSQL, Nginx, chrony and firewalld
+(or `nfs-kernel-server`) from the same archive. On Ubuntu, `ansible-core` is in `universe`. An
+internal apt mirror is the way to cover all of it. `--local-repo` is for RHEL only; on Debian
+and Ubuntu, add the mirror under `/etc/apt/sources.list.d` yourself. If you can't, build the
+bundle with `--with-debs` on a Debian or Ubuntu machine of the same release. The installer
+falls back to those `.deb` files if apt can't reach anything. As with RPMs, that covers the
+installer's own prerequisites, not PostgreSQL or Nginx, so for those you still need a mirror.
 
 ## Building a bundle
 
@@ -39,6 +48,7 @@ mm-bundle-20261028/
   keys/                  vendor GPG keys (the installer uses its own copies, see below)
   collections/           ansible.posix tarball and manifest.txt
   rpms/                  only with --with-rpms
+  debs/                  only with --with-debs
 mm-bundle-20261028.tar.gz
 ```
 

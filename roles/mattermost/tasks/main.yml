@@ -83,12 +83,16 @@
       changed_when: "'Nothing to do' not in _mm_pg_module.stdout"
       when:
         - not (mmd_db_local | bool)
+        - not mmd_is_debian | bool
         - ansible_facts['distribution_major_version'] == '9'
 
+    # Debian and Ubuntu ship the client for each major version as its own package.
     - name: Install pg_dump
-      ansible.builtin.dnf:
-        name: postgresql
-        state: present
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: package
+      vars:
+        pkg_names: "{{ ['postgresql-client-' ~ postgresql_version] if mmd_is_debian | bool else ['postgresql'] }}"
       when: not (mmd_db_local | bool)
 
     - name: Create the backup directory

@@ -12,13 +12,16 @@ mmd_catalogue:
       {{ 'Read-only replica of ' ~ postgresql_primary_host ~ ', for Mattermost reads.' if postgresql_replication == 'replica'
          else 'Relational database for Mattermost' ~ (', feeding read replicas on ' ~ postgresql_replica_hosts | join(', ')
               if postgresql_replication == 'primary' else '') ~ '.' }}
-    source: RHEL AppStream (dnf)
+    source: "{{ 'Debian or Ubuntu archive (apt)' if mmd_is_debian | bool else 'RHEL AppStream (dnf)' }}"
     service: postgresql
     user: postgres
     paths:
-      config: "{{ postgresql_data_dir }}/postgresql.conf, {{ postgresql_data_dir }}/conf.d/mattermost.conf"
+      config: "{{ postgresql_conf_dir }}/postgresql.conf, {{ postgresql_conf_dir }}/conf.d/mattermost.conf"
       data: "{{ postgresql_data_dir }}"
-      logs: "{{ (postgresql_log_dir ~ ' (jsonlog)') if 'otel_collector' in mmd_selected else postgresql_data_dir ~ '/log' }}"
+      logs: >-
+        {{ (postgresql_log_dir ~ ' (jsonlog)') if 'otel_collector' in mmd_selected
+           else ('/var/log/postgresql/postgresql-' ~ postgresql_version ~ '-main.log' if mmd_is_debian | bool
+                 else postgresql_data_dir ~ '/log') }}
     min_ram_mb: 2048
     min_cpus: 2
     ports:
@@ -62,9 +65,9 @@ mmd_catalogue:
   nginx:
     title: Nginx reverse proxy
     summary: TLS termination and reverse proxy in front of Mattermost.
-    source: RHEL AppStream (dnf)
+    source: "{{ 'Debian or Ubuntu archive (apt)' if mmd_is_debian | bool else 'RHEL AppStream (dnf)' }}"
     service: nginx
-    user: nginx
+    user: "{{ mmd_nginx_user }}"
     paths:
       config: /etc/nginx/conf.d/mattermost.conf
       tls: "{{ tls_install_dir if tls_mode == 'provided' else 'not configured yet' }}"
@@ -109,7 +112,7 @@ mmd_catalogue:
     summary: >-
       NFSv4 share for the Mattermost data directory, so every app server sees the same
       uploaded files. Mount it on the app servers yourself; this server only serves it.
-    source: RHEL AppStream (dnf)
+    source: "{{ 'Debian or Ubuntu archive (apt)' if mmd_is_debian | bool else 'RHEL AppStream (dnf)' }}"
     service: nfs-server
     user: root
     paths:

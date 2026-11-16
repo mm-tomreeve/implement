@@ -23,13 +23,18 @@
     - "{{ nginx_cache_dir }}"
 
 - name: Remove Nginx
-  ansible.builtin.dnf:
-    name: nginx
-    state: absent
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: package
+  vars:
+    pkg_names: "{{ nginx_packages }}"
+    pkg_state: absent
 
 - name: Reset the Nginx module stream (RHEL 9)
   ansible.builtin.command: dnf -y module reset nginx
   register: _nginx_module
   changed_when: "'Nothing to do' not in _nginx_module.stdout"
   failed_when: false
-  when: ansible_facts['distribution_major_version'] == '9'
+  when:
+    - not mmd_is_debian | bool
+    - ansible_facts['distribution_major_version'] == '9'

@@ -1,8 +1,32 @@
 ---
+# ufw and firewalld both drive the kernel's packet filter. Run together they overwrite each
+# other's rules, so stop before installing firewalld if ufw is already in charge.
+- name: Check whether ufw is active
+  ansible.builtin.command: ufw status
+  register: _ufw_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - mmd_is_debian | bool
+    - firewall_manage | bool
+
+- name: Stop if ufw is in charge of the firewall
+  ansible.builtin.assert:
+    that: "'Status: active' not in _ufw_status.stdout | default('')"
+    fail_msg: >-
+      ufw is active on this server. Mattermost Parthenon manages the firewall with firewalld, and the
+      two would overwrite each other's rules. Either turn ufw off (ufw disable) and run this again, or
+      set firewall_manage: false and open the ports yourself. The report lists them.
+    quiet: true
+  when:
+    - mmd_is_debian | bool
+    - firewall_manage | bool
+
 - name: Install baseline packages
-  ansible.builtin.dnf:
-    name: "{{ common_packages }}"
-    state: present
+  ansible.builtin.include_tasks: package.yml
+  vars:
+    pkg_names: "{{ common_packages }}"
 
 - name: Refresh network facts now iproute is present
   ansible.builtin.setup:
@@ -17,7 +41,7 @@
 
 - name: Keep time in sync
   ansible.builtin.systemd:
-    name: chronyd
+    name: "{{ mmd_chrony_service }}"
     state: started
     enabled: true
 

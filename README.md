@@ -4,8 +4,8 @@
 
 > **Parthenon** /ˈpɑːθənɒn/ (n.) A temple built to house something important.
 
-Parthenon installs Mattermost and the services around it on RHEL 9 or 10, from the official
-tarballs. You run it on each server. It asks what that server should run, installs it, tests it and
+Parthenon installs Mattermost and the services around it on RHEL 9 or 10, Debian 12 or later, or
+Ubuntu 24.04 or later, from the official tarballs. You run it on each server. It asks what that server should run, installs it, tests it and
 writes an architecture document. On a monitoring server it also builds Prometheus, Loki, Grafana
 dashboards and tiered alerts for the whole estate.
 
@@ -71,7 +71,7 @@ and the install tells you which.
 
 ### What a run does
 
-1. Checks this is RHEL 9 or 10.
+1. Checks this is a supported RHEL, Debian or Ubuntu release.
 2. Asks before checking it can reach the vendors' download sites, and falls back to a local folder
    if it can't.
 3. Installs `ansible-core` and the `ansible.posix` collection.
@@ -240,7 +240,8 @@ watch, so you don't pick them yourself.
 | OpenTelemetry Collector | `otel_collector` | Ships logs to Loki, on every server that has a Loki to send to |
 
 Three more roles do the plumbing. `common` handles OS checks, firewall rules, SELinux, fapolicyd
-and working out how the pieces connect. `artifacts` finds, downloads and verifies the tarballs,
+and working out how the pieces connect. It also hides the differences between RHEL and
+Debian or Ubuntu, so the other roles don't have to. `artifacts` finds, downloads and verifies the tarballs,
 and `report` writes the architecture document.
 
 Roles are grouped into profiles. Give a server one profile, several, or a custom list:
@@ -348,7 +349,7 @@ The other flags:
 | `--uninstall` | Removes components from this server (all of them, or those named by `--profile` or `--components`) |
 | `--purge` | With `--uninstall`: deletes the data, service users and, once nothing is left, the secrets and saved answers |
 | `--offline-dir DIR\|URL` | Uses a local copy of the installers |
-| `--local-repo PATH` | Adds a mounted RHEL ISO as a temporary dnf repo |
+| `--local-repo PATH` | RHEL only: adds a mounted RHEL ISO as a temporary dnf repo |
 | `--online`, `--offline` | Skips the connectivity question |
 
 ### Example: one server for a small team
@@ -557,7 +558,8 @@ client's own uid, in which case the uids do have to match.
 Then mount it on each app server. The report on files01 gives these lines filled in:
 
 ```bash
-dnf install -y nfs-utils
+dnf install -y nfs-utils        # RHEL
+apt-get install -y nfs-common   # Debian or Ubuntu
 mkdir -p /var/opt/mattermost/data
 mount -t nfs4 -o rw,hard,timeo=600,retrans=2,noatime,nodiratime,_netdev 10.10.1.16:/srv/mattermost/data /var/opt/mattermost/data
 ```
@@ -654,8 +656,8 @@ sudo ./install.sh --uninstall --components loki,grafana
 It shows what goes and what stays, and asks before it starts. For each component it stops and
 disables the service, closes the firewall ports the install opened, deletes the install
 directory, the `/opt/<name>` link, the systemd unit and the config the toolkit wrote, and
-stops fapolicyd trusting the paths. PostgreSQL and Nginx are removed with `dnf`, and their
-module streams are reset on RHEL 9.
+stops fapolicyd trusting the paths. PostgreSQL and Nginx are removed with the package manager
+(`dnf` or `apt`, never a purge), and their module streams are reset on RHEL 9.
 
 The data stays: the PostgreSQL cluster, Mattermost's `config.json`, uploaded files and plugins,
 OpenSearch indices, metrics, logs, the secrets file and the saved answers. That means you can
@@ -671,7 +673,8 @@ points here. Change those servers' answers yourself and re-run them.
 
 Two things are not undone, because they may have been set before the toolkit arrived: the
 SELinux booleans `httpd_can_network_connect` and `nfs_export_all_rw`, and the baseline packages
-(firewalld, chrony and the rest). `nfs-utils` also stays, since it is the NFS client too.
+(firewalld, chrony and the rest). `nfs-utils` (`nfs-common` on Debian and Ubuntu) also stays on
+RHEL, since it is the NFS client too.
 
 ## Where installers come from
 
@@ -690,8 +693,9 @@ them. It checks them all at once (through `https_proxy` if you've set one) and s
 | grafana.com | Grafana's download API, for the checksum |
 | galaxy.ansible.com | The `ansible.posix` collection Ansible needs |
 
-PostgreSQL and Nginx come from your own dnf repositories (RHEL CDN, Satellite, a mirror or a
-mounted ISO), so they get RHEL errata like everything else on the box.
+PostgreSQL and Nginx come from your own package repositories: the RHEL CDN, Satellite, a mirror or
+a mounted ISO with dnf, or the Debian or Ubuntu archive or a mirror of it with apt. They get the
+distribution's security updates like everything else on the box.
 
 If you say no to the check, or any site fails, it asks for a folder or mirror instead, shows what
 it found there and asks you to confirm. If only some sites fail you can choose to carry on
@@ -733,8 +737,8 @@ accept `latest`.
 |---|---|---|---|
 | Mattermost | `mattermost_version_channel` | `latest-stable` (the installer suggests `latest-esr`) | 12.0.1 stable, 11.7.14 ESR |
 | rtcd | `rtcd_version` | `latest` | 1.2.6 |
-| PostgreSQL | `postgresql_version` | `16` from AppStream | 16.15 on RHEL 9.8 |
-| Nginx | `nginx_module_stream` | RHEL's default stream | 1.20.1 on RHEL 9.8 |
+| PostgreSQL | `postgresql_version` | `16` from AppStream on RHEL; the release's own version on Debian and Ubuntu (Debian 12: 15, Debian 13: 17, Ubuntu 24.04: 16) | 16.15 on RHEL 9.8 |
+| Nginx | `nginx_module_stream` | RHEL's default stream; the release's own package on Debian and Ubuntu | 1.20.1 on RHEL 9.8 |
 | OpenSearch | `opensearch_version` | `2.19.7` | pinned |
 | Prometheus | `prometheus_version` | `3.15.1` | pinned |
 | node_exporter | `node_exporter_version` | `1.12.1` | pinned |
@@ -771,8 +775,9 @@ Mattermost is handled more carefully, because its database migrations only go fo
   `mattermost_version` is an upgrade by itself. rtcd on `latest` is held the same way.
 - Before an upgrade, Mattermost is stopped and its database dumped with `pg_dump -Fc` to
   `/var/lib/mattermost-parthenon/backups`, next to a copy of `config.json`. On an app server with a
-  remote database this installs the PostgreSQL client from the `postgresql_version` stream, which
-  must be the database server's major version or newer. If the dump fails, Mattermost restarts on
+  remote database this installs the PostgreSQL client from the `postgresql_version` stream (the
+  `postgresql-client-<version>` package on Debian and Ubuntu), which must be the database server's
+  major version or newer. If the dump fails, Mattermost restarts on
   the old version and the run stops. Uploaded files aren't copied, so back those up yourself.
   `mattermost_upgrade_backup: false` skips the dump if you've just taken your own backup.
 - An older version than the one installed is refused. Going back means restoring the dump, then
@@ -785,7 +790,8 @@ Console.
 ### Security defaults
 
 SELinux stays enforcing and firewalld stays on. Where fapolicyd runs, our install directories get
-trust entries so it can stay on too. OpenSearch uses certificates from its own
+trust entries so it can stay on too. Debian and Ubuntu have no SELinux or fapolicyd, so the
+toolkit leaves AppArmor as it found it and uses firewalld there too. OpenSearch uses certificates from its own
 CA, never the public demo ones. PostgreSQL uses SCRAM-SHA-256, with TLS on a self-signed
 certificate once remote clients or replicas are allowed. Replicas log in as a separate
 `replicator` user, which pg_hba.conf only lets in for replication. Each replica makes its own
@@ -1189,6 +1195,7 @@ make lint     # yamllint, ansible-lint (production profile), shellcheck, playboo
 make test     # unit tests and consistency checks (resolver, alert catalogue, docs, wrapper)
 make render   # sample reports for eight layouts from made-up facts, in tests/render/out
 make smoke    # the core profile in an AlmaLinux 9 container
+make smoke-debian   # the same in Debian 12 and Ubuntu 24.04 containers
 make e2e      # five containers wired together, a functional test and a check of every alert query
 make e2e-replica  # a PostgreSQL primary and read replica in two containers
 ```
@@ -1208,7 +1215,7 @@ other, checks the exporters publish what the replication alerts query, then rebu
 from scratch and checks it streams again.
 
 Containers can't show two things: SELinux is off inside them, and on Apple silicon they're arm64.
-A release still needs a run on real RHEL 9 and 10 servers, online and offline.
+A release still needs a run on real RHEL 9 and 10 servers, and on Debian and Ubuntu, online and offline.
 
 ## Repository layout
 
@@ -1237,9 +1244,12 @@ or a component.
 
 ## Requirements
 
-- RHEL 9 or 10 on x86_64 or aarch64. Rocky and Alma work, but print a warning.
+- RHEL 9 or 10, Debian 12 or later, or Ubuntu 24.04 or later, on x86_64 or aarch64. Rocky and Alma
+  work, but print a warning.
 - Root.
-- dnf repos for BaseOS and AppStream: subscription, Satellite, a mirror, or `--local-repo` with
-  a mounted ISO.
+- On RHEL, dnf repos for BaseOS and AppStream: subscription, Satellite, a mirror, or `--local-repo`
+  with a mounted ISO.
+- On Debian and Ubuntu, apt sources for the main archive (and `universe` on Ubuntu, where
+  `ansible-core` lives): the public mirrors or your own.
 - If you track `latest` for rtcd, OpenSearch or Grafana from a busy network, set `GITHUB_TOKEN`
   first. GitHub allows 60 anonymous API calls an hour per address.

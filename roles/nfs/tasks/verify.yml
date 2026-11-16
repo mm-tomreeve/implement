@@ -47,7 +47,9 @@
   failed_when: false
 
 - name: Read the nfs-utils version
-  ansible.builtin.command: rpm -q --queryformat '%{VERSION}' nfs-utils  # noqa: command-instead-of-module
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    argv: "{{ ['dpkg-query', '-W', '-f=${Version}', 'nfs-kernel-server'] if mmd_is_debian | bool
+              else ['rpm', '-q', '--queryformat', '%{VERSION}', 'nfs-utils'] }}"
   register: _v_nfs_version
   changed_when: false
   failed_when: false

@@ -1,2 +1,5 @@
 ---
 nginx_conf_file: /etc/nginx/conf.d/mattermost.conf
+# Debian and Ubuntu keep the service unit and the base configuration in nginx-common, which
+# a plain removal of nginx leaves behind.
+nginx_packages: "{{ ['nginx', 'nginx-common'] if mmd_is_debian | bool else ['nginx'] }}"
