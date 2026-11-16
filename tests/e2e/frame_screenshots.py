@@ -62,7 +62,7 @@ def img_page(path, title=""):
     return BASE + '<div class="canvas"><div class="win" style="background:#fff"><div class="bar" style="background:#e8ebf0;color:#6b7280"><i style="background:#ff5f56"></i><i style="background:#ffbd2e"></i><i style="background:#27c93f"></i><b style="color:#4b5563">%s</b></div><img class="shot" style="width:%dpx" src="data:image/png;base64,%s"></div></div>' % (html.escape(title), IMGW, b64)
 def read(n):
     t = open("%s/%s.raw" % (S, n)).read().replace("(f9c7717-dirty) ", "").replace("/scr2/", "")
-    return re.sub(r"(  0\.1\.0[^\x1b\r\n]*?) *\x1b\[0m", lambda m: m.group(1).ljust(63) + "\x1b[0m", t)
+    return re.sub(r"(  \d+\.\d+\.\d+[^\x1b\r\n]*?) *\x1b\[0m", lambda m: m.group(1).ljust(63) + "\x1b[0m", t)
 def squeeze(t):
     strip = lambda x: re.sub(r"\x1b\[[0-9;]*m", "", x)
     L = t.split("\n")
