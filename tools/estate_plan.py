@@ -152,6 +152,11 @@ def plan_problems(plan):
     problems = []
     if plan.get("estate_version") != 1:
         problems.append("estate_version should be 1.")
+    channel = plan.get("mattermost_version_channel", "latest-esr")
+    if channel not in ("latest-esr", "latest-stable", "pinned"):
+        problems.append("mattermost_version_channel should be latest-esr, latest-stable or pinned.")
+    elif channel == "pinned" and not plan.get("mattermost_version"):
+        problems.append("mattermost_version_channel is pinned, so mattermost_version is needed.")
     nodes = plan.get("nodes")
     if not isinstance(nodes, list) or not nodes:
         problems.append("nodes should be a non-empty list of servers.")
@@ -499,6 +504,10 @@ def derive_answers(plan, node_name, estate_secrets=None):
     if has("mattermost"):
         out["mattermost_site_url"] = plan["mattermost_site_url"]
         out["mattermost_edition"] = plan["mattermost_edition"]
+        if plan.get("mattermost_version_channel"):
+            out["mattermost_version_channel"] = plan["mattermost_version_channel"]
+            if plan["mattermost_version_channel"] == "pinned":
+                out["mattermost_version"] = str(plan["mattermost_version"])
         if plan.get("file_storage") == "amazons3":
             out["mattermost_file_driver"] = "amazons3"
             followups.append("Fill in the S3 bucket, region and keys (mattermost_s3_*). They aren't in the plan.")

@@ -69,6 +69,8 @@
       name: el("f-name").value.trim() || "mattermost",
       siteUrl: el("f-site").value.trim(),
       tier: el("f-tier").value,
+      channel: el("f-channel").value,
+      version: el("f-version").value.trim(),
       seats: Math.max(1, parseInt(el("f-seats").value, 10) || 1),
       observability: qs('input[name="observability"]:checked').value,
       monitoringLayout: qs('input[name="grafana"]:checked').value,
@@ -460,6 +462,9 @@
     } else {
       add("field-site", "");
     }
+
+    add("field-version", s.channel === "pinned" && !/^\d+\.\d+\.\d+$/.test(s.version)
+      ? "A full version such as 11.7.14." : "");
 
     add("field-seats", parseInt(el("f-seats").value, 10) > 0 ? "" : "A number above zero.");
 
@@ -855,6 +860,8 @@
       // Professional runs the Enterprise binary; only Team Edition is different.
       mattermost_edition: state.s.tier === "team" ? "team" : "enterprise",
       mattermost_site_url: state.s.siteUrl,
+      mattermost_version_channel: state.s.channel,
+      mattermost_version: state.s.channel === "pinned" ? state.s.version : "",
       tls_mode: state.s.tlsMode,
       file_storage: state.s.fileStorage,
       calls: state.s.callsMode,
@@ -878,6 +885,8 @@
       "licence: " + plan.licence,
       "mattermost_edition: " + plan.mattermost_edition,
       "mattermost_site_url: " + esc(plan.mattermost_site_url),
+      "mattermost_version_channel: " + plan.mattermost_version_channel,
+      ...(plan.mattermost_version_channel === "pinned" ? ["mattermost_version: " + esc(plan.mattermost_version)] : []),
       "tls_mode: " + plan.tls_mode,
       "file_storage: " + plan.file_storage,
       "calls: " + plan.calls,
@@ -1008,6 +1017,10 @@
     el("f-site").value = plan.mattermost_site_url || "";
     el("f-tier").value = ["team", "professional", "enterprise"].includes(plan.licence)
       ? plan.licence : (plan.mattermost_edition === "team" ? "team" : "enterprise");
+    el("f-channel").value = ["latest-esr", "latest-stable", "pinned"].includes(plan.mattermost_version_channel)
+      ? plan.mattermost_version_channel : "latest-esr";
+    el("f-version").value = plan.mattermost_version || "";
+    el("field-version").style.display = el("f-channel").value === "pinned" ? "" : "none";
     el("f-tls").value = plan.tls_mode === "provided" ? "provided" : "later";
     el("f-storage").value = ["local", "nfs", "amazons3"].includes(plan.file_storage) ? plan.file_storage : "local";
     if (plan.seats) el("f-seats").value = plan.seats;
@@ -1198,6 +1211,10 @@
       : "Host, PostgreSQL, Nginx and log collection work on any licence. Mattermost's own metrics on "
         + "port 8067 need Enterprise, so the Mattermost dashboards stay empty on this licence.";
   }
+
+  el("f-channel").addEventListener("change", () => {
+    el("field-version").style.display = el("f-channel").value === "pinned" ? "" : "none";
+  });
 
   el("f-seats").addEventListener("change", applyBandDefaults);
   el("f-seats").addEventListener("change", updateSearchNote);

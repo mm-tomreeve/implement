@@ -32,6 +32,8 @@ name: chat-prod
 licence: enterprise                  # enterprise | professional | team
 mattermost_edition: enterprise       # enterprise | team
 mattermost_site_url: https://chat.acme.example
+mattermost_version_channel: latest-esr   # latest-esr | latest-stable | pinned
+# mattermost_version: 11.7.14            # only with pinned
 tls_mode: provided                   # later | provided (never the certificate itself)
 file_storage: local                  # local | nfs | amazons3
 
