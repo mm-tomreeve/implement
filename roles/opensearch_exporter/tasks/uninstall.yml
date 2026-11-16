@@ -1,0 +1,12 @@
+---
+- name: Remove opensearch_exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: opensearch_exporter
+    tb_unit: opensearch_exporter
+    tb_user: "{{ opensearch_exporter_user }}"
+    tb_conf_dirs: ["{{ opensearch_exporter_conf_dir }}"]
+    tb_data_dirs: []
+    tb_ports: [{port: "{{ opensearch_exporter_port }}", proto: tcp}]

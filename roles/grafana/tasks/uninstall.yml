@@ -1,0 +1,12 @@
+---
+- name: Remove grafana
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: grafana
+    tb_unit: grafana
+    tb_user: "{{ grafana_user }}"
+    tb_conf_dirs: ["{{ grafana_conf_dir }}"]
+    tb_data_dirs: ["{{ grafana_data_dir }}", "{{ grafana_log_dir }}"]
+    tb_ports: [{port: "{{ grafana_port }}", proto: tcp}]

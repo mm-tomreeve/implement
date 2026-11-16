@@ -1,0 +1,52 @@
+---
+- name: Stop OpenSearch
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_unit
+  vars:
+    rm_unit: opensearch
+
+- name: Close the OpenSearch port
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfirewall
+  vars:
+    fw_ports: [{port: "{{ opensearch_port }}", proto: tcp}]
+
+- name: Find the install directories
+  ansible.builtin.find:
+    paths: /opt
+    patterns: ["^opensearch(-[0-9][^/]*)?$"]
+    use_regex: true
+    file_type: any
+  register: _os_found
+
+- name: Stop trusting the install for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfapolicyd
+  vars:
+    fapolicyd_paths: "{{ _os_found.files | rejectattr('islnk') | map(attribute='path') | map('regex_replace', '$', '/') | list }}"
+  when: _os_found.files | rejectattr('islnk') | list | length > 0
+
+- name: Remove the install, the config (with its certificates) and the sysctl file
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ (_os_found.files | map(attribute='path') | list) + [opensearch_conf_dir, '/etc/sysctl.d/60-opensearch.conf'] }}"
+
+- name: Purge the indices, logs and service user
+  when: uninstall_purge | default(false) | bool
+  block:
+    - name: Remove the data and log directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ opensearch_data_dir }}"
+        - "{{ opensearch_log_dir }}"
+
+    - name: Remove the opensearch user
+      ansible.builtin.user:
+        name: "{{ opensearch_user }}"
+        state: absent

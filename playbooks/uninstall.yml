@@ -1,0 +1,153 @@
+---
+# Take components off this server again: stop and disable the services, close the
+# ports the toolkit opened, delete the install directories, units and generated
+# config, and remove PostgreSQL and Nginx with dnf. Data stays unless
+# uninstall_purge is set. Run through install.sh --uninstall.
+#
+#   uninstall_profiles    profiles whose components to remove
+#   uninstall_components  components to remove
+#   (both empty)          remove everything the last install recorded
+#   uninstall_purge       also delete data, service users, secrets and saved state
+#   plan_output_file      write what would go as JSON and stop, changing nothing
+- name: Remove Mattermost components from this server
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: Check the operating system
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: assert_os
+
+    - name: Look for the saved deployment state
+      ansible.builtin.stat:
+        path: "{{ deploy_state_dir }}/deployment.json"
+      register: _un_state_stat
+
+    - name: Read the saved deployment state
+      ansible.builtin.slurp:
+        path: "{{ deploy_state_dir }}/deployment.json"
+      register: _un_state_raw
+      when: _un_state_stat.stat.exists
+
+    - name: Work out what was installed and what was asked for
+      ansible.builtin.set_fact:
+        _un_state: "{{ (_un_state_raw.content | b64decode | from_json) if _un_state_stat.stat.exists else {} }}"
+        _un_req_profiles: "{{ uninstall_profiles | default([]) }}"
+        _un_req_components: "{{ uninstall_components | default([]) }}"
+
+    - name: Reject unknown profiles or components
+      ansible.builtin.assert:
+        that:
+          - _un_req_profiles | difference(mmd_profiles.keys() | list) | length == 0
+          - _un_req_components | difference(mmd_component_order) | length == 0
+        fail_msg: >-
+          Unknown profiles: {{ _un_req_profiles | difference(mmd_profiles.keys() | list) }},
+          unknown components: {{ _un_req_components | difference(mmd_component_order) }}.
+          Profiles: {{ mmd_profiles.keys() | list | join(', ') }}.
+          Components: {{ mmd_component_order | join(', ') }}.
+        quiet: true
+
+    - name: Settle the removal list, last installed first
+      ansible.builtin.set_fact:
+        _un_installed: "{{ mmd_component_order | select('in', _un_state.selected | default([])) | list }}"
+        _un_asked: >-
+          {{ ((_un_req_profiles | map('extract', mmd_profiles) | map(attribute='components') | flatten)
+              + _un_req_components) | unique | list }}
+        mmd_remove: >-
+          {{ mmd_component_order | reverse | select('in',
+               (((_un_req_profiles | map('extract', mmd_profiles) | map(attribute='components') | flatten)
+                 + _un_req_components) | unique | list)
+               if (_un_req_profiles + _un_req_components) | length > 0
+               else (_un_state.selected | default([]))) | list }}
+
+    - name: Stop when there is nothing to remove
+      ansible.builtin.assert:
+        that: mmd_remove | length > 0
+        fail_msg: >-
+          Nothing to remove. {{ 'The last install recorded no components on this server, so say which with --components.'
+          if (_un_req_profiles + _un_req_components) | length == 0
+          else 'None of the requested components are in the list.' }}
+        quiet: true
+
+    - name: Work out what stays
+      ansible.builtin.set_fact:
+        mmd_remaining: "{{ _un_installed | difference(mmd_remove) }}"
+        mmd_remove_notes: >-
+          {{ (['Mattermost on this server loses its database.']
+              if 'postgresql' in mmd_remove and 'mattermost' in _un_installed and 'mattermost' not in mmd_remove else [])
+             + (['Nginx has nothing left to proxy to.']
+                if 'mattermost' in mmd_remove and 'nginx' in _un_installed and 'nginx' not in mmd_remove else [])
+             + (['Mattermost on this server loses its search index.']
+                if 'opensearch' in mmd_remove and 'mattermost' in _un_installed and 'mattermost' not in mmd_remove else [])
+             + (['Mattermost on this server loses its file storage.']
+                if 'nfs' in mmd_remove and 'mattermost' in _un_installed and 'mattermost' not in mmd_remove else []) }}
+
+    - name: Write the plan for the wrapper
+      ansible.builtin.copy:
+        dest: "{{ plan_output_file }}"
+        mode: "0600"
+        content: >-
+          {{ {'remove': mmd_remove, 'remaining': mmd_remaining, 'notes': mmd_remove_notes,
+              'purge': uninstall_purge | default(false) | bool,
+              'recorded': _un_installed} | to_nice_json }}
+      when: plan_output_file is defined
+
+    - name: Stop here when only planning
+      ansible.builtin.meta: end_play
+      when: plan_output_file is defined
+
+    - name: Remove each component
+      ansible.builtin.include_role:
+        name: "{{ component }}"
+        tasks_from: uninstall
+      loop: "{{ mmd_remove }}"
+      loop_control:
+        loop_var: component
+
+    - name: Check for the fapolicyd trust file
+      ansible.builtin.stat:
+        path: /etc/fapolicyd/trust.d/mattermost-parthenon
+      register: _un_fapolicyd_file
+
+    - name: Remove the fapolicyd trust file when nothing is left
+      ansible.builtin.file:
+        path: /etc/fapolicyd/trust.d/mattermost-parthenon
+        state: absent
+      when:
+        - mmd_remaining | length == 0
+        - _un_fapolicyd_file.stat.exists
+
+    - name: Reload the fapolicyd trust database
+      ansible.builtin.command: fapolicyd-cli --update
+      changed_when: true
+      failed_when: false
+      when: _un_fapolicyd_file.stat.exists
+
+    - name: Record what is left
+      ansible.builtin.copy:
+        dest: "{{ deploy_state_dir }}/deployment.json"
+        owner: root
+        group: root
+        mode: "0640"
+        content: "{{ _un_state | combine({'selected': mmd_remaining, 'profiles': []}) | to_nice_json }}"
+      when:
+        - mmd_remaining | length > 0
+        - _un_state_stat.stat.exists
+
+    - name: Forget the deployment when nothing is left
+      ansible.builtin.file:
+        path: "{{ deploy_state_dir }}/deployment.json"
+        state: absent
+      when: mmd_remaining | length == 0
+
+    - name: Purge the toolkit's own state, secrets and download cache
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ deploy_state_dir }}"
+        - "{{ deploy_config_dir }}"
+        - "{{ artifact_cache_dir }}"
+      when:
+        - mmd_remaining | length == 0
+        - uninstall_purge | default(false) | bool

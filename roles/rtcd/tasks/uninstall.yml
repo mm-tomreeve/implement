@@ -1,0 +1,46 @@
+---
+- name: Stop rtcd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_unit
+  vars:
+    rm_unit: rtcd
+
+- name: Close the media and API ports
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfirewall
+  vars:
+    fw_ports:
+      - {port: "{{ rtcd_rtc_port }}", proto: udp}
+      - {port: "{{ rtcd_rtc_port }}", proto: tcp}
+      - {port: "{{ rtcd_api_port }}", proto: tcp}
+
+- name: Stop trusting the rtcd binaries for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfapolicyd
+  vars:
+    fapolicyd_paths: ["{{ rtcd_dir }}/bin/"]
+
+- name: Remove rtcd, its config and its sysctl file
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ rtcd_dir }}"
+    - "{{ rtcd_conf_dir }}"
+    - /etc/sysctl.d/60-rtcd.conf
+
+- name: Purge the data and the service user
+  when: uninstall_purge | default(false) | bool
+  block:
+    - name: Remove the data directory
+      ansible.builtin.file:
+        path: "{{ rtcd_data_dir }}"
+        state: absent
+
+    - name: Remove the rtcd user
+      ansible.builtin.user:
+        name: "{{ rtcd_user }}"
+        state: absent

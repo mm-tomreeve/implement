@@ -1,0 +1,87 @@
+---
+# The server, its unit and its port rules go. config.json, uploaded files, plugins
+# and logs stay unless uninstall_purge is set. The database belongs to PostgreSQL.
+- name: Stop Mattermost
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_unit
+  vars:
+    rm_unit: mattermost
+
+- name: Close the Mattermost ports
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfirewall
+  vars:
+    fw_ports:
+      - {port: "{{ mattermost_port }}", proto: tcp}
+      - {port: "{{ mattermost_metrics_port }}", proto: tcp}
+      - {port: "{{ mattermost_calls_port }}", proto: udp}
+      - {port: "{{ mattermost_calls_port }}", proto: tcp}
+
+- name: Find the install directories
+  ansible.builtin.find:
+    paths: "{{ mattermost_install_root }}"
+    patterns: ["^mattermost(-[0-9][^/]*)?$"]
+    use_regex: true
+    file_type: any
+  register: _mm_found
+
+- name: Stop trusting the install for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfapolicyd
+  vars:
+    fapolicyd_paths: "{{ _mm_found.files | rejectattr('islnk') | map(attribute='path') | map('regex_replace', '$', '/') | list }}"
+  when: _mm_found.files | rejectattr('islnk') | list | length > 0
+
+- name: Remove the install
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _mm_found.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Check for the OpenSearch CA we trusted
+  ansible.builtin.stat:
+    path: "{{ mattermost_opensearch_ca_dest }}"
+  register: _mm_os_ca
+
+- name: Stop trusting the OpenSearch CA
+  when: _mm_os_ca.stat.exists
+  block:
+    - name: Remove the CA
+      ansible.builtin.file:
+        path: "{{ mattermost_opensearch_ca_dest }}"
+        state: absent
+
+    - name: Rebuild the system CA bundle
+      ansible.builtin.command: update-ca-trust extract
+      changed_when: true
+
+- name: Purge the configuration, data, plugins, logs and service account
+  when: uninstall_purge | default(false) | bool
+  block:
+    - name: Remove the directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ mattermost_config_dir }}"
+        - "{{ mattermost_data_dir }}"
+        - "{{ mattermost_plugin_dir }}"
+        - "{{ mattermost_client_plugin_dir }}"
+        - "{{ mattermost_log_dir }}"
+        - "{{ mattermost_data_dir | dirname }}"
+
+    - name: Remove the mattermost user
+      ansible.builtin.user:
+        name: "{{ mattermost_user }}"
+        state: absent
+
+    - name: Remove the mattermost group
+      ansible.builtin.group:
+        name: "{{ mattermost_group }}"
+        state: absent
+      failed_when: false

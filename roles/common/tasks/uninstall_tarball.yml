@@ -1,0 +1,64 @@
+---
+# Shared helper for the single-binary components that tarball_install.yml set up.
+# Stops the service, closes its ports and removes /opt/<name>-<version>, the
+# /opt/<name> link and the config the toolkit wrote. Data and the service user go
+# only when uninstall_purge is set.
+#   tb_name:       prometheus
+#   tb_unit:       systemd unit name (default: tb_name)
+#   tb_user:       prometheus
+#   tb_conf_dirs:  [/etc/prometheus]
+#   tb_data_dirs:  [/var/lib/prometheus]      removed on purge only
+#   tb_ports:      [{port: 9090, proto: tcp}]
+- name: "{{ tb_name }} | stop the service"
+  ansible.builtin.include_tasks: uninstall_unit.yml
+  vars:
+    rm_unit: "{{ tb_unit | default(tb_name) }}"
+
+- name: "{{ tb_name }} | close its ports"
+  ansible.builtin.include_tasks: unfirewall.yml
+  vars:
+    fw_ports: "{{ tb_ports }}"
+  when: tb_ports | default([]) | length > 0
+
+- name: "{{ tb_name }} | find the install directories"
+  ansible.builtin.find:
+    paths: /opt
+    patterns: ["^{{ tb_name }}(-[0-9][^/]*)?$"]
+    use_regex: true
+    file_type: any
+  register: _tb_found
+
+- name: "{{ tb_name }} | stop trusting the install for fapolicyd"
+  ansible.builtin.include_tasks: unfapolicyd.yml
+  vars:
+    fapolicyd_paths: "{{ _tb_found.files | rejectattr('islnk') | map(attribute='path') | map('regex_replace', '$', '/') | list }}"
+  when: _tb_found.files | rejectattr('islnk') | list | length > 0
+
+- name: "{{ tb_name }} | remove the install"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _tb_found.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: "{{ tb_name }} | remove the config"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ tb_conf_dirs | default([]) }}"
+
+- name: "{{ tb_name }} | purge the data"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ tb_data_dirs | default([]) }}"
+  when: uninstall_purge | default(false) | bool
+
+- name: "{{ tb_name }} | remove the service user"
+  ansible.builtin.user:
+    name: "{{ tb_user }}"
+    state: absent
+  when:
+    - uninstall_purge | default(false) | bool
+    - tb_user | length > 0

@@ -21,6 +21,7 @@ For a multi-server estate, `--preflight` checks that before you install anything
 - [Installing an estate](#installing-an-estate)
 - [What it can install](#what-it-can-install)
 - [Ways to install](#ways-to-install)
+- [Taking components off a server](#taking-components-off-a-server)
 - [Where installers come from](#where-installers-come-from)
 - [Versions we deploy](#versions-we-deploy)
 - [What happens on each server](#what-happens-on-each-server)
@@ -337,6 +338,8 @@ The other flags:
 | `--check` | Dry run |
 | `--verify-only` | Re-runs the post-deploy tests and refreshes the report |
 | `--report-only` | Rebuilds the report from the last results |
+| `--uninstall` | Removes components from this server (all of them, or those named by `--profile` or `--components`) |
+| `--purge` | With `--uninstall`: deletes the data, service users and, once nothing is left, the secrets and saved answers |
 | `--offline-dir DIR\|URL` | Uses a local copy of the installers |
 | `--local-repo PATH` | Adds a mounted RHEL ISO as a temporary dnf repo |
 | `--online`, `--offline` | Skips the connectivity question |
@@ -607,6 +610,38 @@ Carry `mm-bundle-<date>.tar.gz` across, unpack it and run:
 `--channel both` puts the latest stable and the latest ESR in the bundle, so you can still choose
 on the day. [docs/offline.md](docs/offline.md) covers the bundle layout, hand-filled folders and
 internal mirrors.
+
+## Taking components off a server
+
+`./install.sh --uninstall` reverses an install. By default it removes everything the last
+install put on this server. Name what to remove with `--profile` or `--components` to take off
+only some of it, for example a Loki you no longer want:
+
+```bash
+sudo ./install.sh --uninstall --components loki,grafana
+```
+
+It shows what goes and what stays, and asks before it starts. For each component it stops and
+disables the service, closes the firewall ports the install opened, deletes the install
+directory, the `/opt/<name>` link, the systemd unit and the config the toolkit wrote, and
+stops fapolicyd trusting the paths. PostgreSQL and Nginx are removed with `dnf`, and their
+module streams are reset on RHEL 9.
+
+The data stays: the PostgreSQL cluster, Mattermost's `config.json`, uploaded files and plugins,
+OpenSearch indices, metrics, logs, the secrets file and the saved answers. That means you can
+put a component back with a normal run and find it as you left it. To delete all of that as
+well, add `--purge`. It also removes the service users, and once nothing is left, the secrets,
+the saved answers, the state and the download cache. Interactively you have to type the
+server's name to go ahead. With `--non-interactive` you have to pass `--yes`.
+
+When some components stay, the saved answers are rewritten to list only those, so the next run
+does not put the removed ones back. The old file is kept as a `.bak`. A Mattermost server that
+uses this one's PostgreSQL, a Prometheus that scrapes it or a Grafana that reads from it still
+points here. Change those servers' answers yourself and re-run them.
+
+Two things are not undone, because they may have been set before the toolkit arrived: the
+SELinux booleans `httpd_can_network_connect` and `nfs_export_all_rw`, and the baseline packages
+(firewalld, chrony and the rest). `nfs-utils` also stays, since it is the NFS client too.
 
 ## Where installers come from
 
@@ -1151,7 +1186,7 @@ A release still needs a run on real RHEL 9 and 10 servers, online and offline.
 install.sh                     the installer: sources, prerequisites, questions, plan, deploy
 answers.example.yml            every setting, commented
 inventory/group_vars/all/      defaults, component catalogue, profiles
-playbooks/                     site, plan, verify, report
+playbooks/                     site, plan, verify, report, uninstall
 roles/<component>/             one role per component, each with tasks/verify.yml
 roles/common/                  OS checks, selection, wiring, firewall and fapolicyd helpers
 roles/artifacts/               resolve, download and verify tarballs; vendor GPG keys

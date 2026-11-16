@@ -1,0 +1,18 @@
+---
+# Shared helper. The reverse of fapolicyd.yml: stop trusting directories that are
+# about to be deleted.
+#   fapolicyd_paths: ["/opt/mattermost-12.0.1/"]
+- name: Check whether fapolicyd is running
+  ansible.builtin.command: systemctl is-active fapolicyd  # noqa: command-instead-of-module
+  register: _fapolicyd_state
+  changed_when: false
+  failed_when: false
+
+- name: Stop trusting the removed paths
+  ansible.builtin.command:
+    argv: [fapolicyd-cli, --file, delete, "{{ item }}", --trust-file, mattermost-parthenon]
+  loop: "{{ fapolicyd_paths }}"
+  register: _fapolicyd_del
+  changed_when: _fapolicyd_del.rc == 0
+  failed_when: false
+  when: _fapolicyd_state.stdout == 'active'

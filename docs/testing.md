@@ -93,7 +93,10 @@ real and missing files in a scratch directory and checks the plan names each mis
 The smoke test needs podman or docker with privileged containers and internet access. It runs
 `install.sh` non-interactively with `tests/smoke/answers-core.yml`, which turns off firewalld
 and SELinux handling because neither works inside a container. Then it runs `--verify-only`
-and copies the report to `tests/smoke/out/`. It is a good check that the roles converge. It is
+and copies the report to `tests/smoke/out/`. Then it runs `--uninstall` for Nginx alone, checks
+Mattermost and PostgreSQL are untouched and the saved answers no longer list Nginx, and runs
+`--uninstall --purge` to check nothing is left on disk. Firewall rules are not covered, because
+the smoke answers turn firewalld off. It is a good check that the roles converge. It is
 no substitute for a run on a real RHEL 9 and RHEL 10 VM, online and offline, before a release.
 
 ## End-to-end test

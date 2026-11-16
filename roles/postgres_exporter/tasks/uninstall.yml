@@ -1,0 +1,28 @@
+---
+- name: Remove postgres_exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: postgres_exporter
+    tb_unit: postgres_exporter
+    tb_user: "{{ postgres_exporter_user }}"
+    tb_conf_dirs: []
+    tb_data_dirs: []
+    tb_ports: [{port: "{{ postgres_exporter_port }}", proto: tcp}]
+
+# The exporter's database role lives inside PostgreSQL, so drop it while that is still here.
+- name: Check whether PostgreSQL is running here
+  ansible.builtin.command: systemctl is-active postgresql  # noqa: command-instead-of-module
+  register: _pgx_pg
+  changed_when: false
+  failed_when: false
+
+- name: Drop the exporter's database role
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -p, "{{ postgresql_port }}", -d, postgres,
+           -c, "DROP ROLE IF EXISTS {{ postgres_exporter_user }}"]
+  register: _pgx_drop
+  changed_when: "'DROP ROLE' in _pgx_drop.stdout"
+  failed_when: false
+  when: _pgx_pg.stdout == 'active'

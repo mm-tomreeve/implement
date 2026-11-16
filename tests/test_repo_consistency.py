@@ -62,9 +62,9 @@ class Consistency(unittest.TestCase):
     def test_install_order_covers_every_component(self):
         self.assertEqual(sorted(PROFILES["mmd_component_order"]), sorted(CATALOGUE))
 
-    def test_every_component_has_a_role_with_verify(self):
+    def test_every_component_has_a_role_with_verify_and_uninstall(self):
         for component in CATALOGUE:
-            for part in ("tasks/main.yml", "tasks/verify.yml", "meta/main.yml"):
+            for part in ("tasks/main.yml", "tasks/verify.yml", "tasks/uninstall.yml", "meta/main.yml"):
                 path = os.path.join(ROOT, "roles", component, part)
                 self.assertTrue(os.path.isfile(path), path)
 

@@ -54,3 +54,16 @@ in_box 'cat /var/lib/mattermost-parthenon/reports/latest.md' > "${OUT}/ARCHITECT
 in_box 'cat /var/lib/mattermost-parthenon/results/latest.json' > "${OUT}/results.json"
 test -s "${OUT}/ARCHITECTURE-smoke.md"
 echo "==> Report: ${OUT}/ARCHITECTURE-smoke.md"
+
+echo "==> Removing Nginx on its own"
+in_box 'cd /opt/mmd && ./install.sh --uninstall --components nginx --non-interactive --yes'
+in_box '! systemctl list-unit-files nginx.service | grep -q nginx && ! rpm -q nginx && test ! -e /etc/nginx/conf.d/mattermost.conf'
+in_box 'systemctl is-active mattermost postgresql'
+in_box 'grep -q "^deploy_profiles: \[\]" /etc/mattermost-parthenon/answers.yml && grep "^deploy_components:" /etc/mattermost-parthenon/answers.yml | grep -vq nginx'
+
+echo "==> Removing everything, data included"
+in_box 'cd /opt/mmd && ./install.sh --uninstall --purge --non-interactive --yes'
+in_box '! systemctl list-unit-files mattermost.service postgresql.service | grep -qE "mattermost|postgresql" && ! rpm -q postgresql-server'
+# shellcheck disable=SC2016  # the loop variable is for the shell inside the box
+in_box 'for p in /opt/mattermost /opt/mattermost-* /etc/mattermost /var/opt/mattermost /var/lib/pgsql/data /etc/mattermost-parthenon /var/lib/mattermost-parthenon; do test ! -e "$p" || { echo "left behind: $p"; exit 1; }; done'
+in_box '! id mattermost 2>/dev/null'

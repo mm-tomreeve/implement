@@ -1,0 +1,12 @@
+---
+- name: Remove nginx_exporter
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_tarball
+  vars:
+    tb_name: nginx_exporter
+    tb_unit: nginx_exporter
+    tb_user: "{{ nginx_exporter_user }}"
+    tb_conf_dirs: []
+    tb_data_dirs: []
+    tb_ports: [{port: "{{ nginx_exporter_port }}", proto: tcp}]
