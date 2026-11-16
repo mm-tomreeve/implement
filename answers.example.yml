@@ -116,6 +116,8 @@ mattermost_config_overrides: {}
 #    SMTPServer: smtp.example.com
 
 # ---------------------------------------------------------------- postgresql
+# RHEL installs the 16 stream. Debian and Ubuntu install the version the release ships
+# (Debian 12: 15, Debian 13: 17, Ubuntu 24.04: 16), so leave this out there.
 postgresql_version: "16"
 # Mattermost app servers allowed to connect when the database has its own server.
 # Required then; empty means localhost only. Addresses or CIDRs, e.g.
@@ -236,4 +238,4 @@ logging_alert_ignore: []
 # ---------------------------------------------------------------- host
 firewall_manage: true
 firewall_zone: public
-selinux_manage: true
+selinux_manage: true                    # RHEL only. Debian and Ubuntu have no SELinux.

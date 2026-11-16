@@ -4,6 +4,7 @@
   register: _v_selinux
   changed_when: false
   failed_when: false
+  when: not mmd_is_debian | bool
 
 - name: Probe firewalld
   ansible.builtin.command: systemctl is-active firewalld  # noqa: command-instead-of-module
@@ -31,7 +32,7 @@
     executable: /bin/bash
   vars:
     _paths: >-
-      {{ ['/'] + (['/var/lib/pgsql'] if 'postgresql' in mmd_selected else [])
+      {{ ['/'] + ([postgresql_data_dir | dirname] if 'postgresql' in mmd_selected else [])
          + ([mattermost_data_dir] if 'mattermost' in mmd_selected and mattermost_file_driver == 'local' else [])
          + ([opensearch_data_dir] if 'opensearch' in mmd_selected else [])
          + ([prometheus_data_dir] if 'prometheus' in mmd_selected else []) }}
@@ -42,7 +43,7 @@
 - name: Keep host details for the report
   ansible.builtin.set_fact:
     mmd_host_firewall: "{{ _v_fw_list.stdout_lines | default([]) }}"
-    mmd_host_selinux: "{{ _v_selinux.stdout | default('unknown') }}"
+    mmd_host_selinux: "{{ 'not applicable' if mmd_is_debian | bool else _v_selinux.stdout | default('unknown') }}"
     mmd_host_disk: "{{ _v_disk.stdout_lines | default([]) }}"
 
 - name: Record host checks
@@ -56,8 +57,8 @@
       - component: host
         name: SELinux is enforcing
         severity: warning
-        ok: "{{ _v_selinux.stdout | default('') == 'Enforcing' }}"
-        detail: "getenforce says {{ _v_selinux.stdout | default('unknown') }}"
+        status: "{{ 'skip' if mmd_is_debian | bool else ('pass' if _v_selinux.stdout | default('') == 'Enforcing' else 'warn') }}"
+        detail: "{{ 'Debian and Ubuntu do not use SELinux' if mmd_is_debian | bool else 'getenforce says ' ~ _v_selinux.stdout | default('unknown') }}"
       - component: host
         name: firewalld is running
         severity: warning

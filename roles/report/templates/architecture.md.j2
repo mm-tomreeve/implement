@@ -412,7 +412,7 @@ A read-only copy of `{{ postgresql_primary_host }}:{{ postgresql_port }}`, strea
 `conf.d/replication.conf`, password in `{{ postgresql_passfile }}`). Logins and the Mattermost database
 come from the primary. To rebuild it: `systemctl stop postgresql`, move `{{ postgresql_data_dir }}`
 aside and run install.sh. To promote it after
-losing the primary: `runuser -u postgres -- pg_ctl promote -D {{ postgresql_data_dir }}`, then point
+losing the primary: `runuser -u postgres -- {{ mmd_postgresql_bin_dir }}/pg_ctl promote -D {{ postgresql_data_dir }}`, then point
 `mattermost_db_host` at this server.
 {% endif %}
 
@@ -463,7 +463,8 @@ Client uids are kept as they are, so the `mattermost` user on each app server mu
 Mount it on each Mattermost server:
 
 ```bash
-dnf install -y nfs-utils
+dnf install -y nfs-utils        # RHEL
+apt-get install -y nfs-common   # Debian or Ubuntu
 mkdir -p {{ mattermost_data_dir }}
 mount -t nfs4 -o {{ nfs_mount_options }} {{ self_ip }}:{{ nfs_export_dir }} {{ mattermost_data_dir }}
 ```
@@ -544,7 +545,11 @@ leave your network.
 {% if (has.rtcd or mmd_calls_integrated) and not rtcd_ice_host_override %}
 {% set _ = ob.append(['stun.global.calls.mattermost.com', '3478', 'udp', 'Public IP discovery for Calls', 'Until you set an ICE host override']) %}
 {% endif %}
+{% if mmd_is_debian | bool %}
+{% set _ = ob.append(['Your apt repositories: the Debian or Ubuntu archive, or a local mirror', '443 or 80', 'tcp', 'Operating system packages', 'Install and upgrade']) %}
+{% else %}
 {% set _ = ob.append(['Your dnf repositories: the Red Hat CDN, Satellite or a local mirror', '443', 'tcp', 'BaseOS and AppStream packages', 'Install and upgrade']) %}
+{% endif %}
 {% if has.mm %}
 {% set _ = ob.append(['releases.mattermost.com', '443', 'tcp', 'The Mattermost tarball and its signature', 'Install and upgrade']) %}
 {% endif %}
@@ -575,9 +580,15 @@ are not needed. The always-on rows still are.
 
 | Control | State | Detail |
 |---|---|---|
+{% if mmd_is_debian | bool %}
+| SELinux | not used | Debian and Ubuntu use AppArmor, which this toolkit leaves as the host had it. |
+{% else %}
 | SELinux | {{ mmd_host_selinux | default('unknown') }} | {{ 'Left as the host had it. ' if not selinux_manage | bool else 'Booleans and contexts set for what is installed here. ' }}{% if has.ngx %}`httpd_can_network_connect` is on so Nginx can reach its upstream.{% endif %} |
+{% endif %}
 | firewalld | {{ 'managed, zone ' ~ ((_report_zone.stdout | default('') | trim) or firewall_zone) if firewall_manage | bool else 'not managed by this toolkit' }} | {{ 'Only the ports in the matrix above are open, and only to the addresses listed.' if firewall_manage | bool else 'firewall_manage is false, so nothing was opened or closed here.' }} |
+{% if not mmd_is_debian | bool %}
 | fapolicyd | {{ (_report_fapolicyd.stdout | default('') | trim) or 'not installed' }} | {{ 'Installed paths are in the mattermost-parthenon trust file.' if (_report_fapolicyd.stdout | default('') | trim) == 'active' else 'Not running, so no execution allow-listing is in force.' }} |
+{% endif %}
 {% if has.ngx %}
 | TLS at the edge | {{ 'HTTPS' if mmd_tls_enabled else 'pending' }} | {{ 'Terminated at Nginx' ~ (', which talks to Mattermost over HTTP on 127.0.0.1' if has.mm else '') ~ '.' if mmd_tls_enabled else 'Users reach this server over plain HTTP until a certificate is installed.' }} |
 {% endif %}
@@ -609,8 +620,8 @@ Nothing was downloaded for this server.
 {% endif %}
 {% if has.pg or has.ngx %}
 
-{% if has.pg %}PostgreSQL{% endif %}{% if has.pg and has.ngx %} and {% endif %}{% if has.ngx %}Nginx{% endif %} came from the RHEL
-repositories, so dnf checked Red Hat's own signatures.
+{% if has.pg %}PostgreSQL{% endif %}{% if has.pg and has.ngx %} and {% endif %}{% if has.ngx %}Nginx{% endif %} came from the
+{{ 'Debian and Ubuntu archive, so apt checked the distribution' if mmd_is_debian | bool else 'RHEL repositories, so dnf checked Red Hat' }}'s own signatures.
 {% endif %}
 
 ### Not done on this server
@@ -618,16 +629,20 @@ repositories, so dnf checked Red Hat's own signatures.
 {% set gaps = [] %}
 {% if has.ngx and not mmd_tls_enabled %}{% set _ = gaps.append('No TLS certificate yet, so traffic to this server is plain HTTP. See Certificates under Operations.') %}{% endif %}
 {% if has.mm and not mattermost_license_file %}{% set _ = gaps.append('No Enterprise licence file was given, so Enterprise features stay off until one is uploaded.') %}{% endif %}
-{% if (_report_fapolicyd.stdout | default('') | trim) != 'active' %}{% set _ = gaps.append('fapolicyd is not running, so nothing restricts which binaries may execute.') %}{% endif %}
+{% if not mmd_is_debian | bool and (_report_fapolicyd.stdout | default('') | trim) != 'active' %}{% set _ = gaps.append('fapolicyd is not running, so nothing restricts which binaries may execute.') %}{% endif %}
 {% if not firewall_manage | bool %}{% set _ = gaps.append('firewall_manage is false, so this toolkit opened and closed nothing. The ports in the matrix above still have to be handled.') %}{% endif %}
-{% if not selinux_manage | bool %}{% set _ = gaps.append('selinux_manage is false, so no SELinux contexts or booleans were set for these components.') %}{% endif %}
+{% if not mmd_is_debian | bool and not selinux_manage | bool %}{% set _ = gaps.append('selinux_manage is false, so no SELinux contexts or booleans were set for these components.') %}{% endif %}
 {% if artifact_allow_unverified | bool %}{% set _ = gaps.append('artifact_allow_unverified is true, so an artifact with no published checksum would have been accepted.') %}{% endif %}
 {% if gaps %}
 {% for gap in gaps %}
 - {{ gap }}
 {% endfor %}
 {% else %}
+{% if mmd_is_debian | bool %}
+Nothing outstanding: TLS and the firewall are in place.
+{% else %}
 Nothing outstanding: TLS, execution control, the firewall and SELinux are all in place.
+{% endif %}
 {% endif %}
 
 ## Data and backups
@@ -775,7 +790,7 @@ These are built into the toolkit. Change them in the toolkit so every server sta
 
 1. Tarball installs, not RPMs, for Mattermost, rtcd, OpenSearch and the monitoring tools. Each
    version gets its own directory under `/opt` and a symlink points at the live one, so upgrades and
-   rollbacks are a symlink swap. PostgreSQL and Nginx come from RHEL AppStream so they get RHEL errata.
+   rollbacks are a symlink swap. PostgreSQL and Nginx come from {{ 'the distribution archive' if mmd_is_debian | bool else 'RHEL AppStream' }} so they get its security updates.
 2. Every downloaded artifact is checked against the vendor checksum, and Mattermost and OpenSearch
    also against their GPG signatures. Trust comes from keys and fingerprints held in this repo, not
    from the download source.
@@ -783,8 +798,12 @@ These are built into the toolkit. Change them in the toolkit so every server sta
    only the keys we own. Admins can still use the System Console for everything else.
 4. Services that only local components use bind to 127.0.0.1 and get no firewall opening. Remote
    access is opt-in per component, by source address.
+{% if mmd_is_debian | bool %}
+5. firewalld stays on, and AppArmor is left as the host had it.
+{% else %}
 5. SELinux stays enforcing and firewalld stays on. Where fapolicyd runs, we add trust entries for our
    install directories instead of turning it off.
+{% endif %}
 6. OpenSearch uses certificates from its own CA, never the demo certificates that ship with it.
 7. Block storage and object storage are out of scope. Uploaded files go to local disk, to an NFS
    share this toolkit can serve (the `storage` profile), or to an S3 bucket you provide.

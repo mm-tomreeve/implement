@@ -11,17 +11,17 @@
         facts:
           fqdn: "{{ render_host }}.example.internal"
           hostname: "{{ render_host }}"
-          os_family: RedHat
-          distribution: RedHat
+          os_family: "{{ render_os_family | default('RedHat') }}"
+          distribution: "{{ render_distribution | default('RedHat') }}"
           distribution_version: "{{ render_os | default('9.6') }}"
           distribution_major_version: "{{ (render_os | default('9.6')).split('.')[0] }}"
           architecture: x86_64
-          kernel: 5.14.0-570.el9.x86_64
+          kernel: "{{ '6.8.0-45-generic' if render_os_family | default('RedHat') == 'Debian' else '5.14.0-570.el9.x86_64' }}"
           memtotal_mb: "{{ render_ram | default(16000) | int }}"
           processor_vcpus: "{{ render_cpus | default(8) | int }}"
           default_ipv4: {address: 10.10.1.20}
           all_ipv4_addresses: [10.10.1.20]
-          selinux: {status: enabled}
+          selinux: "{{ {'status': 'disabled'} if render_os_family | default('RedHat') == 'Debian' else {'status': 'enabled'} }}"
 
     - name: Run the plan
       ansible.builtin.include_role:
@@ -54,7 +54,9 @@
                 'gpg_fingerprint': 'A1B31D46F0F3A10B02CF2D44F8F2C31744774B28', 'esr': true}}) -%}{%- endfor -%}{{ out }}
         mmd_versions: "{{ dict(mmd_selected | zip(mmd_selected | map('regex_replace', '^.*$', '1.2.3'))) }}"
         mmd_results:
-          - {component: host, name: SELinux is enforcing, severity: warning, status: pass, detail: getenforce says Enforcing}
+          - "{{ {'component': 'host', 'name': 'SELinux is enforcing', 'severity': 'warning', 'status': 'skip', 'detail': 'Debian and Ubuntu do not use SELinux'}
+                if render_os_family | default('RedHat') == 'Debian'
+                else {'component': 'host', 'name': 'SELinux is enforcing', 'severity': 'warning', 'status': 'pass', 'detail': 'getenforce says Enforcing'} }}"
           - {component: mattermost, name: API ping returns OK, severity: critical, status: pass, detail: "HTTP 200, status OK"}
           - {component: nginx, name: Websocket upgrade reaches Mattermost, severity: warning, status: warn, detail: "HTTP 400 | pipe in detail"}
           - {component: nginx, name: Mattermost answers over HTTPS, severity: critical, status: skip, detail: TLS not configured yet}
@@ -64,8 +66,8 @@
         mmd_nfs_rw_options: rw,sync,no_subtree_check,all_squash,anonuid=997,anongid=995
         mmd_nfs_ro_options: ro,sync,no_subtree_check,all_squash,anonuid=997,anongid=995
         mmd_host_firewall: ["public (active)", "  services: ssh", "  ports: 80/tcp 443/tcp"]
-        mmd_host_selinux: Enforcing
-        mmd_host_disk: ["/ 34", "/var/lib/pgsql 12"]
+        mmd_host_selinux: "{{ 'not applicable' if render_os_family | default('RedHat') == 'Debian' else 'Enforcing' }}"
+        mmd_host_disk: ["/ 34", "{{ postgresql_data_dir | dirname }} 12"]
         mmd_tls_info: ["subject=CN = chat.example.com", "issuer=CN = Example CA", "notAfter=Oct 28 00:00:00 2027 GMT"]
         mmd_deploy_failed: "{{ render_failed | default(false) }}"
         mmd_deploy_error: "Unpack Mattermost: example failure"

@@ -56,7 +56,7 @@
     # name, and that stops the run.
     - name: Drop a slot left behind by an earlier copy
       ansible.builtin.command:
-        argv: [runuser, -u, postgres, --, pg_receivewal, --drop-slot, --slot, "{{ postgresql_replication_slot }}",
+        argv: [runuser, -u, postgres, --, "{{ mmd_postgresql_bin_dir }}/pg_receivewal", --drop-slot, --slot, "{{ postgresql_replication_slot }}",
                --dbname, "{{ _conninfo }}", --no-password]
       register: _pg_dropslot
       changed_when: _pg_dropslot.rc == 0
@@ -64,7 +64,7 @@
 
     - name: Copy the primary with pg_basebackup (takes a while on a big database)
       ansible.builtin.command:
-        argv: [runuser, -u, postgres, --, pg_basebackup, --dbname, "{{ _conninfo }}", --pgdata, "{{ postgresql_data_dir }}",
+        argv: [runuser, -u, postgres, --, "{{ mmd_postgresql_bin_dir }}/pg_basebackup", --dbname, "{{ _conninfo }}", --pgdata, "{{ postgresql_data_dir }}",
                --wal-method, stream, --create-slot, --slot, "{{ postgresql_replication_slot }}", --checkpoint, fast,
                --no-password]
       changed_when: true
@@ -89,7 +89,7 @@
 # control file carries the primary's value and follows it when it changes.
 - name: Read the primary's limits from the control file
   ansible.builtin.command:
-    argv: [runuser, -u, postgres, --, pg_controldata, --pgdata, "{{ postgresql_data_dir }}"]
+    argv: [runuser, -u, postgres, --, "{{ mmd_postgresql_bin_dir }}/pg_controldata", --pgdata, "{{ postgresql_data_dir }}"]
   register: _pg_control
   changed_when: false
   failed_when: false

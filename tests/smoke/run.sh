@@ -2,6 +2,8 @@
 # Run install.sh with the core profile inside a systemd container, then re-run the
 # tests and copy the report out. Needs podman or docker and internet access.
 #   IMAGE=docker.io/almalinux/10-init tests/smoke/run.sh
+#   IMAGE=docker.io/jrei/systemd-debian:12 tests/smoke/run.sh
+#   IMAGE=docker.io/jrei/systemd-ubuntu:24.04 tests/smoke/run.sh
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -29,6 +31,10 @@ echo "==> Starting ${IMAGE}"
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "${REPO_DIR}:/src:ro" "${IMAGE}" >/dev/null
 
 in_box() { "${ENGINE}" exec "${NAME}" bash -c "$1"; }
+# True when the package is installed, whichever package manager this image has. A package
+# that was removed but left its config behind doesn't count.
+# shellcheck disable=SC2016  # the dollar signs are for the shell inside the box
+PKG_INSTALLED='pkg_installed() { rpm -q "$1" >/dev/null 2>&1 || dpkg-query -W -f="\${Status}" "$1" 2>/dev/null | grep -q "^install ok installed$"; }'
 
 echo "==> Waiting for systemd"
 for _ in $(seq 1 30); do
@@ -57,13 +63,13 @@ echo "==> Report: ${OUT}/ARCHITECTURE-smoke.md"
 
 echo "==> Removing Nginx on its own"
 in_box 'cd /opt/mmd && ./install.sh --uninstall --components nginx --non-interactive --yes'
-in_box '! systemctl list-unit-files nginx.service | grep -q nginx && ! rpm -q nginx && test ! -e /etc/nginx/conf.d/mattermost.conf'
+in_box "${PKG_INSTALLED}; ! systemctl list-unit-files nginx.service | grep -q nginx && ! pkg_installed nginx && test ! -e /etc/nginx/conf.d/mattermost.conf"
 in_box 'systemctl is-active mattermost postgresql'
 in_box 'grep -q "^deploy_profiles: \[\]" /etc/mattermost-parthenon/answers.yml && grep "^deploy_components:" /etc/mattermost-parthenon/answers.yml | grep -vq nginx'
 
 echo "==> Removing everything, data included"
 in_box 'cd /opt/mmd && ./install.sh --uninstall --purge --non-interactive --yes'
-in_box '! systemctl list-unit-files mattermost.service postgresql.service | grep -qE "mattermost|postgresql" && ! rpm -q postgresql-server'
+in_box "${PKG_INSTALLED}; ! systemctl list-unit-files mattermost.service | grep -q mattermost && { ! command -v rpm >/dev/null || ! systemctl list-unit-files postgresql.service | grep -q postgresql; } && ! pkg_installed postgresql-server && ! pkg_installed postgresql-16 && ! pkg_installed postgresql-15 && ! pkg_installed postgresql-17"
 # shellcheck disable=SC2016  # the loop variable is for the shell inside the box
-in_box 'for p in /opt/mattermost /opt/mattermost-* /etc/mattermost /var/opt/mattermost /var/lib/pgsql/data /etc/mattermost-parthenon /var/lib/mattermost-parthenon; do test ! -e "$p" || { echo "left behind: $p"; exit 1; }; done'
+in_box 'for p in /opt/mattermost /opt/mattermost-* /etc/mattermost /var/opt/mattermost /var/lib/pgsql/data /var/lib/postgresql/*/main /etc/postgresql/*/main /etc/mattermost-parthenon /var/lib/mattermost-parthenon; do test ! -e "$p" || { echo "left behind: $p"; exit 1; }; done'
 in_box '! id mattermost 2>/dev/null'

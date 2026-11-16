@@ -16,6 +16,7 @@ MM_VERSION=""
 COMPONENTS=all
 OUT=""
 WITH_RPMS=false
+WITH_DEBS=false
 ALLOW_UNVERIFIED=false
 declare -a PINS=()
 
@@ -32,6 +33,9 @@ Usage: $(basename "$0") [options]
   --version NAME=VERSION        Override a pinned third-party version (repeatable)
   --with-rpms                   Also download the RPMs install.sh needs. Run this on
                                 RHEL with the same major version as the targets.
+  --with-debs                   The same for Debian or Ubuntu: download the .debs install.sh
+                                needs. Run this on Debian or Ubuntu, the same release as the
+                                targets.
   --allow-unverified            Accept artifacts that have no published checksum
   --out DIR                     Output directory (default ./mm-bundle-<date>)
   -h, --help                    Show this help
@@ -53,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --components) COMPONENTS="$2"; shift 2 ;;
     --version) PINS+=("$2"); shift 2 ;;
     --with-rpms) WITH_RPMS=true; shift ;;
+    --with-debs) WITH_DEBS=true; shift ;;
     --allow-unverified) ALLOW_UNVERIFIED=true; shift ;;
     --out) OUT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -121,6 +126,18 @@ if [[ "${WITH_RPMS}" == true ]]; then
   mkdir -p "${OUT}/rpms"
   dnf download --resolve --alldeps --destdir "${OUT}/rpms" \
     ansible-core python3 gnupg2 tar curl policycoreutils-python-utils firewalld openssl iproute
+fi
+
+if [[ "${WITH_DEBS}" == true ]]; then
+  command -v apt-get >/dev/null || die "--with-debs needs apt (run it on Debian or Ubuntu)"
+  log "Downloading prerequisite packages"
+  mkdir -p "${OUT}/debs"
+  # Everything the prerequisites depend on, whether or not this machine has it already,
+  # so a bare target can be installed from the folder alone.
+  prereqs=(ansible-core python3 python3-apt gnupg tar openssl iproute2 curl ca-certificates)
+  mapfile -t deb_names < <(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts \
+    --no-breaks --no-replaces --no-enhances "${prereqs[@]}" | grep '^[a-z0-9]' | sort -u)
+  (cd "${OUT}/debs" && apt-get download "${deb_names[@]}")
 fi
 
 log "Packing ${OUT}.tar.gz"

@@ -1,5 +1,7 @@
 ---
-common_packages:
+# The packages every server gets. firewalld goes on a Debian or Ubuntu server only when we
+# manage the firewall, because installing it starts it, and that would fight ufw.
+common_packages_redhat:
   - firewalld
   - policycoreutils-python-utils
   - python3-libselinux
@@ -12,5 +14,9 @@ common_packages:
   - acl
   - iproute
   - procps-ng
+common_packages_debian: >-
+  {{ ['chrony', 'tar', 'gzip', 'unzip', 'openssl', 'gnupg', 'acl', 'iproute2', 'procps', 'ca-certificates', 'python3-apt']
+     + (['firewalld'] if firewall_manage | bool else []) }}
+common_packages: "{{ common_packages_debian if mmd_is_debian | bool else common_packages_redhat }}"
 # Components counted when deciding whether a server is "all in one".
 common_major_components: [postgresql, mattermost, nginx, rtcd, opensearch, nfs, prometheus, grafana]

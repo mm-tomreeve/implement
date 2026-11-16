@@ -4,13 +4,16 @@
   register: _nginx_module
   changed_when: "'Nothing to do' not in _nginx_module.stdout"
   when:
+    - not mmd_is_debian | bool
     - ansible_facts['distribution_major_version'] == '9'
     - nginx_module_stream | length > 0
 
 - name: Install Nginx
-  ansible.builtin.dnf:
-    name: nginx
-    state: present
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: package
+  vars:
+    pkg_names: "{{ nginx_packages }}"
 
 - name: Read the Nginx version
   ansible.builtin.command: nginx -v
@@ -28,15 +31,15 @@
     state: true
     persistent: true
   when:
-    - selinux_manage | bool
+    - mmd_selinux_manage | bool
     - ansible_facts['selinux']['status'] | default('disabled') == 'enabled'
 
 - name: Create the proxy cache directory
   ansible.builtin.file:
     path: "{{ nginx_cache_dir }}"
     state: directory
-    owner: nginx
-    group: nginx
+    owner: "{{ mmd_nginx_user }}"
+    group: "{{ mmd_nginx_user }}"
     mode: "0700"
 
 - name: Install TLS material

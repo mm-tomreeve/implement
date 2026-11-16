@@ -26,7 +26,7 @@
 
 - name: Read server settings
   ansible.builtin.command:
-    argv: [runuser, -u, postgres, --, psql, -X, -p, "{{ postgresql_port }}", -tAc,
+    argv: [runuser, -u, postgres, --, "{{ mmd_postgresql_bin_dir }}/psql", -X, -p, "{{ postgresql_port }}", -tAc,
            "SELECT current_setting('server_version') || '|' || current_setting('password_encryption') || '|' || current_setting('ssl')
             || '|' || current_setting('max_connections')"]
   register: _v_pg_settings
@@ -35,7 +35,7 @@
 
 - name: Read the replication state
   ansible.builtin.command:
-    argv: [runuser, -u, postgres, --, psql, -X, -p, "{{ postgresql_port }}", -tAc, "{{ _query[postgresql_replication] }}"]
+    argv: [runuser, -u, postgres, --, "{{ mmd_postgresql_bin_dir }}/psql", -X, -p, "{{ postgresql_port }}", -tAc, "{{ _query[postgresql_replication] }}"]
   vars:
     _query:
       replica: >-

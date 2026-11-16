@@ -71,7 +71,8 @@ Every `uninstall.yml` does the same four things:
   (`common/tasks/unfirewall.yml`)
 - deletes the install directories, the `/opt/<name>` link and the config the toolkit wrote,
   and stops fapolicyd trusting them
-- removes the packages, for PostgreSQL and Nginx, and resets their module streams on RHEL 9
+- removes the packages, for PostgreSQL and Nginx (removed, never purged), and resets their module
+  streams on RHEL 9
 
 Data goes only when `uninstall_purge` is true (`--purge`): the PostgreSQL cluster, Mattermost's
 `config.json`, uploaded files and plugins, the OpenSearch indices, Prometheus, Loki and Grafana
@@ -81,6 +82,28 @@ server it does not own, so Mattermost's database is PostgreSQL's to remove.
 Two things are left alone on purpose. The SELinux booleans `httpd_can_network_connect` and
 `nfs_export_all_rw` may have been on before the toolkit arrived, and `nfs-utils` is also the NFS
 client. The baseline packages (firewalld, chrony and the rest) stay for the same reason.
+
+## RHEL, Debian and Ubuntu
+
+One set of roles serves all three. What differs lives in a few places, so a new role rarely
+needs to know which it is on:
+
+- `inventory/group_vars/all/platform.yml` holds the facts: `mmd_is_debian`, the Nginx user, the
+  chrony unit name, where the PostgreSQL tools are, and which PostgreSQL version each Debian
+  and Ubuntu release ships. `mmd_selinux_manage` is `selinux_manage` on RHEL and always false
+  elsewhere, so use it rather than `selinux_manage` before a `semanage` or `seboolean` task.
+- `common/tasks/package.yml` installs or removes packages with dnf or apt. Use it instead of
+  calling a package module, and give it `pkg_names` and, to remove, `pkg_state: absent`.
+- `postgresql_conf_dir` is where `postgresql.conf`, `pg_hba.conf` and `conf.d` live. It is the
+  data directory on RHEL and `/etc/postgresql/<version>/main` on Debian and Ubuntu, where the
+  data is in `/var/lib/postgresql/<version>/main`.
+
+Debian and Ubuntu keep firewalld, so the same rich rules apply, but the toolkit stops if ufw is
+active, because the two overwrite each other's rules. They also have no SELinux or fapolicyd,
+and the tasks for both are skipped. The PostgreSQL role stops the package making its own
+`main` cluster and creates one with `pg_createcluster` instead, with the encoding and
+authentication the RHEL path sets through `postgresql-setup`.
+
 
 ## Upgrades
 

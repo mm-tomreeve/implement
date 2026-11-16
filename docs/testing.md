@@ -71,6 +71,7 @@ make lint     # yamllint, ansible-lint (production profile), shellcheck, playboo
 make test     # unit tests for the resolver, and consistency checks across the repo
 make render   # render the plan logic and the report for eight server layouts
 make smoke    # the core profile in an AlmaLinux 9 systemd container
+make smoke-debian  # the same in Debian 12 and Ubuntu 24.04 containers
 make e2e      # five containers, one per role, wired together, plus a functional test
 make e2e-replica  # a PostgreSQL primary and a read replica in two containers
 ```
@@ -98,7 +99,12 @@ and copies the report to `tests/smoke/out/`. Then it runs `--uninstall` for Ngin
 Mattermost and PostgreSQL are untouched and the saved answers no longer list Nginx, and runs
 `--uninstall --purge` to check nothing is left on disk. Firewall rules are not covered, because
 the smoke answers turn firewalld off. It is a good check that the roles converge. It is
-no substitute for a run on a real RHEL 9 and RHEL 10 VM, online and offline, before a release.
+no substitute for a run on a real RHEL 9 and RHEL 10 VM, and on Debian and Ubuntu, online and
+offline, before a release.
+
+`make smoke-debian` runs the same test on Debian 12 and Ubuntu 24.04. It builds its own systemd
+images from `tests/smoke/Dockerfile.debian`, because the usual ones on Docker Hub are amd64 only.
+To run one by hand, build an image with `--build-arg BASE=debian:12` and pass it as `IMAGE`.
 
 ## End-to-end test
 
@@ -119,7 +125,8 @@ Nginx over HTTPS, posts and reads back a message stored on db01, uploads a file,
 an authenticated websocket and checks Calls points at calls01. Finally every server re-runs its
 own checks, and the reports and results land in `tests/e2e/out/`.
 
-`IMAGE=docker.io/almalinux/10-init` tests RHEL 10 equivalents. `KEEP=true` leaves the containers
+`IMAGE=docker.io/almalinux/10-init` tests RHEL 10 equivalents. The end-to-end containers are
+RHEL-family only for now. `KEEP=true` leaves the containers
 running so you can `docker exec` in and look around.
 
 mon01 is the monitoring server. Its answer file lists the other four, so Prometheus, the alert

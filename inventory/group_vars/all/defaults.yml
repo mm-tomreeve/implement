@@ -16,7 +16,8 @@ deploy_state_dir: /var/lib/mattermost-parthenon
 deploy_config_dir: /etc/mattermost-parthenon
 deploy_tool_version: unknown
 deploy_operator: "{{ lookup('ansible.builtin.env', 'SUDO_USER') | default('root', true) }}"
-# Firewalld and SELinux handling.
+# Firewalld and SELinux handling. Debian and Ubuntu have no SELinux, so selinux_manage does
+# nothing there. Firewalld is installed and used on those too (see docs/roles.md).
 firewall_manage: true
 firewall_zone: public
 selinux_manage: true
@@ -123,7 +124,9 @@ mattermost_opensearch_ca_file: ""
 mattermost_disable_database_search: false
 
 # ---------------------------------------------------------------- postgresql
-postgresql_version: "16"
+# RHEL: the 16 stream from AppStream. Debian and Ubuntu: the version the release ships
+# (see mmd_debian_postgresql_versions in platform.yml).
+postgresql_version: "{{ mmd_debian_postgresql_default if mmd_is_debian | bool else '16' }}"
 postgresql_port: "{{ mattermost_db_port }}"
 # Mattermost app servers allowed to connect (CIDRs). Empty = localhost only.
 postgresql_allowed_clients: []
@@ -137,7 +140,11 @@ postgresql_max_connections: auto
 postgresql_spare_connections: 50
 # auto = on when remote clients are allowed (self-signed certificate).
 postgresql_ssl: auto
-postgresql_data_dir: /var/lib/pgsql/data
+# Where the data lives. Debian and Ubuntu keep one cluster per major version in a
+# directory of its own, with the configuration under /etc/postgresql.
+postgresql_data_dir: "{{ ('/var/lib/postgresql/' ~ postgresql_version ~ '/main') if mmd_is_debian | bool else '/var/lib/pgsql/data' }}"
+# Where postgresql.conf and pg_hba.conf live. The data directory on RHEL.
+postgresql_conf_dir: "{{ ('/etc/postgresql/' ~ postgresql_version ~ '/main') if mmd_is_debian | bool else postgresql_data_dir }}"
 # When this server ships its logs, PostgreSQL writes JSON logs (jsonlog) here instead of
 # the text log in the data directory, so the log alerts can match on SQLSTATE codes.
 postgresql_log_dir: /var/log/postgresql
@@ -156,7 +163,7 @@ postgresql_replication_user: replicator
 postgresql_replication_password: ""
 postgresql_replication_sslmode: require
 # Where a replica keeps the replication password (the postgres user's home).
-postgresql_passfile: /var/lib/pgsql/.pgpass
+postgresql_passfile: "{{ '/var/lib/postgresql/.pgpass' if mmd_is_debian | bool else '/var/lib/pgsql/.pgpass' }}"
 # The slot this replica holds on the primary. One per replica.
 postgresql_replication_slot: "{{ ansible_facts['hostname'] | lower | regex_replace('[^a-z0-9_]', '_') }}"
 # Most WAL the primary keeps for a replica that is down or behind, so a lost
@@ -173,7 +180,7 @@ nginx_client_max_body_size: 101M   # Mattermost's 100 MiB MaxFileSize plus overh
 nginx_hsts: false
 nginx_tls_profile: compatible     # compatible = TLS 1.2 and 1.3, modern = TLS 1.3 only
 nginx_cache_dir: /var/cache/nginx/mattermost
-nginx_module_stream: ""          # RHEL 9 only, e.g. "1.24". Blank = default stream.
+nginx_module_stream: ""          # RHEL 9 only, e.g. "1.24". Blank = default stream. Ignored on Debian and Ubuntu.
 tls_mode: later                  # provided | later
 tls_cert_file: ""                # PEM certificate (full chain preferred)
 tls_key_file: ""

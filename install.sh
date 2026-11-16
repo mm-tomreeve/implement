@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mattermost component installer for RHEL 9 and 10.
+# Mattermost component installer for RHEL 9 and 10, Debian 12 and later, and Ubuntu 24.04 and later.
 #
 # Asks which components go on THIS server (or reads an answer file), installs
 # Ansible and what it needs, deploys from verified tarballs, runs the post-deploy
@@ -67,6 +67,7 @@ PROFILES=""
 COMPONENTS=""
 OFFLINE_SOURCE=""
 LOCAL_REPO=""
+OS_FAMILY=rhel
 INTERNET_OVERRIDE=""
 NON_INTERACTIVE=false
 ASSUME_YES=false
@@ -164,7 +165,7 @@ trap 'echo; log_line "Stopped with Ctrl-C."; exit 130' INT
 
 usage() {
   cat <<EOF
-Mattermost Parthenon: install Mattermost components on this RHEL server.
+Mattermost Parthenon: install Mattermost components on this RHEL, Debian or Ubuntu server.
 
   Parthenon /ˈpɑːθənɒn/ (n.) A temple built to house something important.
 
@@ -187,7 +188,7 @@ What to install
 
 Where to get it
   --offline-dir DIR|URL   Offline bundle directory or internal mirror URL
-  --local-repo PATH       Add a temporary dnf repo, e.g. a mounted RHEL ISO
+  --local-repo PATH       RHEL only: add a temporary dnf repo, e.g. a mounted RHEL ISO
   --online | --offline    Skip the internet check and say which it is
 
 How to run
@@ -206,7 +207,7 @@ How to run
 Taking components off
   --uninstall             Remove components from this server: stop and disable the
                           services, close their ports, delete the installs, units and
-                          generated config, and dnf remove PostgreSQL and Nginx. With no
+                          generated config, and remove the PostgreSQL and Nginx packages. With no
                           --profile or --components it removes everything the last install
                           put here. The database, uploaded files, search indices, metrics
                           and logs are kept.
@@ -277,16 +278,26 @@ require_root() {
 }
 
 check_os() {
-  [[ -r /etc/os-release ]] || die "No /etc/os-release. This toolkit needs RHEL 9 or 10."
+  [[ -r /etc/os-release ]] || die "No /etc/os-release. This toolkit needs RHEL 9 or 10, Debian 12 or later, or Ubuntu 24.04 or later."
   # shellcheck disable=SC1091
   . /etc/os-release
   local major="${VERSION_ID%%.*}"
   case "${ID}" in
-    rhel) ;;
-    rocky|almalinux|ol|centos) warn "${PRETTY_NAME} is not RHEL. It should work, but test it before you rely on it." ;;
-    *) die "${PRETTY_NAME} is not supported. Use RHEL 9 or 10." ;;
+    rhel)
+      OS_FAMILY=rhel
+      [[ "${major}" == 9 || "${major}" == 10 ]] || die "${PRETTY_NAME} is not supported. Use RHEL 9 or 10." ;;
+    rocky|almalinux|ol|centos)
+      OS_FAMILY=rhel
+      warn "${PRETTY_NAME} is not RHEL. It should work, but test it before you rely on it."
+      [[ "${major}" == 9 || "${major}" == 10 ]] || die "${PRETTY_NAME} is not supported. Use version 9 or 10." ;;
+    debian)
+      OS_FAMILY=debian
+      [[ "${major}" =~ ^[0-9]+$ && "${major}" -ge 12 ]] || die "${PRETTY_NAME} is not supported. Use Debian 12 or later." ;;
+    ubuntu)
+      OS_FAMILY=debian
+      [[ "$(printf '%s\n%s\n' 24.04 "${VERSION_ID}" | sort -V | head -n1)" == 24.04 ]] || die "${PRETTY_NAME} is not supported. Use Ubuntu 24.04 or later." ;;
+    *) die "${PRETTY_NAME} is not supported. Use RHEL 9 or 10, Debian 12 or later, or Ubuntu 24.04 or later." ;;
   esac
-  [[ "${major}" == 9 || "${major}" == 10 ]] || die "${PRETTY_NAME} is not supported. Use RHEL 9 or 10."
   case "$(uname -m)" in
     x86_64|aarch64) ;;
     *) die "CPU architecture $(uname -m) is not supported." ;;
@@ -409,7 +420,7 @@ for a in arts:
     print("      %s%-20s%s %-10s %-24s %s" % (bold, a["name"], off, version, extra, ", ".join(checks)))
 ex = inv["extras"]
 print("      %s%-20s%s %s" % (bold, "ansible collections", off, (grn + "present" + off) if ex["collections"] else (dim + "not included" + off)))
-print("      %s%-20s%s %s" % (bold, "prerequisite RPMs", off, (grn + "present" + off) if ex["rpms"] else (dim + "not included" + off)))
+print("      %s%-20s%s %s" % (bold, "prerequisite packages", off, (grn + "present" + off) if (ex["rpms"] or ex["debs"]) else (dim + "not included" + off)))
 ' "${C_BOLD}" "${C_DIM}" "${C_YEL}" "${C_RED}" "${C_GRN}" "${C_OFF}" "${src}"
 }
 
@@ -500,6 +511,7 @@ choose_installer_source() {
 }
 
 setup_local_repo() {
+  [[ "${OS_FAMILY}" == rhel ]] || die "--local-repo is for RHEL. On ${OS_PRETTY}, point apt at your mirror in /etc/apt/sources.list.d instead."
   [[ -d "${LOCAL_REPO}" ]] || die "--local-repo ${LOCAL_REPO} is not a directory"
   say "Adding temporary dnf repos from ${LOCAL_REPO}"
   local repo_file=/etc/yum.repos.d/mattermost-parthenon-local.repo
@@ -520,30 +532,76 @@ setup_local_repo() {
 
 # ------------------------------------------------------------------ prerequisites
 
-# curl is left out on purpose: minimal RHEL 9 ships curl-minimal, which conflicts
-# with the curl package, and either gives us the command we need.
-PREREQ_PACKAGES=(ansible-core python3 python3-libselinux gnupg2 tar openssl policycoreutils-python-utils firewalld iproute)
+# curl is left out of the RHEL list on purpose: minimal RHEL 9 ships curl-minimal, which
+# conflicts with the curl package, and either gives us the command we need.
+# firewalld is not a Debian or Ubuntu prerequisite: installing it starts it, and the roles
+# first check that ufw isn't already in charge.
+PREREQ_PACKAGES_RHEL=(ansible-core python3 python3-libselinux gnupg2 tar openssl policycoreutils-python-utils firewalld iproute)
+PREREQ_PACKAGES_DEBIAN=(ansible-core python3 python3-apt gnupg tar openssl iproute2 curl ca-certificates)
 
-install_prereqs() {
-  say "Checking prerequisites"
+deb_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'; }
+
+install_prereqs_rhel() {
   local missing=() pkg
-  for pkg in "${PREREQ_PACKAGES[@]}"; do
+  for pkg in "${PREREQ_PACKAGES_RHEL[@]}"; do
     rpm -q "${pkg}" >/dev/null 2>&1 || missing+=("${pkg}")
   done
   command -v curl >/dev/null || missing+=(curl-minimal)
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    info "Installing: ${missing[*]}"
-    if ! dnf -y install "${missing[@]}" >> "${LOG_FILE}" 2>&1; then
-      local rpm_dir=""
-      [[ -n "${OFFLINE_SOURCE}" && -d "${OFFLINE_SOURCE}/rpms" ]] && rpm_dir="${OFFLINE_SOURCE}/rpms"
-      if [[ -n "${rpm_dir}" ]]; then
-        info "The configured repos failed; using RPMs from ${rpm_dir}"
-        dnf -y --disablerepo='*' install "${rpm_dir}"/*.rpm >> "${LOG_FILE}" 2>&1 \
-          || die "Could not install prerequisites from ${rpm_dir}. See ${LOG_FILE}."
-      else
-        die "Could not install ${missing[*]}. Check the dnf repos (Satellite, a local mirror or --local-repo), or build a bundle with --with-rpms. See ${LOG_FILE}."
-      fi
-    fi
+  [[ ${#missing[@]} -gt 0 ]] || return 0
+  info "Installing: ${missing[*]}"
+  dnf -y install "${missing[@]}" >> "${LOG_FILE}" 2>&1 && return 0
+  local rpm_dir=""
+  [[ -n "${OFFLINE_SOURCE}" && -d "${OFFLINE_SOURCE}/rpms" ]] && rpm_dir="${OFFLINE_SOURCE}/rpms"
+  if [[ -n "${rpm_dir}" ]]; then
+    info "The configured repos failed; using RPMs from ${rpm_dir}"
+    dnf -y --disablerepo='*' install "${rpm_dir}"/*.rpm >> "${LOG_FILE}" 2>&1 \
+      || die "Could not install prerequisites from ${rpm_dir}. See ${LOG_FILE}."
+  else
+    die "Could not install ${missing[*]}. Check the dnf repos (Satellite, a local mirror or --local-repo), or build a bundle with --with-rpms. See ${LOG_FILE}."
+  fi
+}
+
+# The check of the installer sources runs before the prerequisites, and a bare Debian or
+# Ubuntu server has no curl, so every site would show as down.
+ensure_curl() {
+  command -v curl >/dev/null && return 0
+  [[ "${OS_FAMILY}" == debian ]] || return 0
+  info "Installing curl, to check the installer sources"
+  export DEBIAN_FRONTEND=noninteractive
+  if ! { apt-get update && apt-get -y --no-install-recommends install curl ca-certificates; } >> "${LOG_FILE}" 2>&1; then
+    warn "Could not install curl. The source check will fail; point --offline-dir at a bundle, or fix the apt sources."
+  fi
+}
+
+install_prereqs_debian() {
+  local missing=() pkg
+  for pkg in "${PREREQ_PACKAGES_DEBIAN[@]}"; do
+    deb_installed "${pkg}" || missing+=("${pkg}")
+  done
+  [[ ${#missing[@]} -gt 0 ]] || return 0
+  info "Installing: ${missing[*]}"
+  export DEBIAN_FRONTEND=noninteractive
+  if apt-get update >> "${LOG_FILE}" 2>&1 \
+     && apt-get -y --no-install-recommends install "${missing[@]}" >> "${LOG_FILE}" 2>&1; then
+    return 0
+  fi
+  local deb_dir=""
+  [[ -n "${OFFLINE_SOURCE}" && -d "${OFFLINE_SOURCE}/debs" ]] && deb_dir="${OFFLINE_SOURCE}/debs"
+  if [[ -n "${deb_dir}" ]]; then
+    info "The configured repos failed; using packages from ${deb_dir}"
+    apt-get -y --no-install-recommends install "${deb_dir}"/*.deb >> "${LOG_FILE}" 2>&1 \
+      || die "Could not install prerequisites from ${deb_dir}. See ${LOG_FILE}."
+  else
+    die "Could not install ${missing[*]}. Check the apt sources (a local mirror, say), or build a bundle with --with-debs. See ${LOG_FILE}."
+  fi
+}
+
+install_prereqs() {
+  say "Checking prerequisites"
+  if [[ "${OS_FAMILY}" == debian ]]; then
+    install_prereqs_debian
+  else
+    install_prereqs_rhel
   fi
 
   local have
@@ -1912,8 +1970,13 @@ uninstall_message() {
     info "Kept: databases, uploaded files, search indices, metrics, logs, secrets and saved answers."
     info "Run again with --purge to delete them."
   fi
-  info "Not undone: the SELinux booleans httpd_can_network_connect and nfs_export_all_rw, and the"
-  info "baseline packages (firewalld, chrony and the rest), since other things may depend on them."
+  if [[ "${OS_FAMILY}" == debian ]]; then
+    info "Not undone: the baseline packages (firewalld, chrony and the rest), since other things may"
+    info "depend on them."
+  else
+    info "Not undone: the SELinux booleans httpd_can_network_connect and nfs_export_all_rw, and the"
+    info "baseline packages (firewalld, chrony and the rest), since other things may depend on them."
+  fi
   if [[ -n "${remaining}" ]]; then
     info "Still here: ${remaining//,/, }. Run ./install.sh to refresh their configuration."
   fi
@@ -1951,6 +2014,7 @@ main() {
   [[ -z "${LOCAL_REPO}" ]] || setup_local_repo
   # Only installs need installers; re-testing and reporting work from what is on disk.
   if [[ "${MODE}" == install || "${MODE}" == plan ]]; then
+    ensure_curl
     choose_installer_source
   fi
   install_prereqs

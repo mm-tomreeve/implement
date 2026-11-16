@@ -1,0 +1,22 @@
+---
+# Shared helper. Install or remove packages with the host's package manager.
+#   pkg_names: [nginx]
+#   pkg_state: present (default) | absent
+# Debian and Ubuntu get no recommended extras, so what lands on the box is what we asked for.
+# Removing never purges, because purging can take configuration and data with it.
+- name: "{{ 'Remove' if pkg_state | default('present') == 'absent' else 'Install' }} {{ pkg_names | join(', ') }}"
+  ansible.builtin.dnf:
+    name: "{{ pkg_names }}"
+    state: "{{ pkg_state | default('present') }}"
+  when: not mmd_is_debian | bool
+
+- name: "{{ 'Remove' if pkg_state | default('present') == 'absent' else 'Install' }} {{ pkg_names | join(', ') }}"
+  ansible.builtin.apt:
+    name: "{{ pkg_names }}"
+    state: "{{ pkg_state | default('present') }}"
+    install_recommends: false
+    update_cache: "{{ pkg_state | default('present') != 'absent' }}"
+    cache_valid_time: 3600
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: mmd_is_debian | bool
