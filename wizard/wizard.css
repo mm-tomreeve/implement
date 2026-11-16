@@ -11,9 +11,75 @@
   --danger: #b3261e;
   --danger-bg: #fdecea;
   --danger-line: #f3c6c2;
+  --heading: #1e325c;
+  --tint: #eef3ff;
+  --tint-line: #d3e0fb;
+  --warn-bg: #fff8e8;
+  --warn-line: #f3dca0;
+  --danger-text: #7a1b14;
+  --hover: #f3f4f8;
+  --bg-soft: #fbfcfe;
+  --badge-opt-bg: #e8f0ff;
+  --badge-never-bg: #eef0f3;
+  --badge-rec-bg: #fff1d6;
+  --badge-rec-fg: #8a5a00;
+  --focus-ring: rgba(28, 88, 217, .18);
+  --link: #1c58d9;
+  color-scheme: light;
   --radius: 10px;
   --shadow: 0 1px 2px rgba(20, 24, 38, .04), 0 6px 16px rgba(20, 24, 38, .06);
 }
+
+
+:root[data-theme="dark"] {
+  --sapphire: #6b9bff;
+  --sapphire-dark: #8fb2ff;
+  --ink: #e6e8ee;
+  --dim: #9aa2b2;
+  --line: #2f3545;
+  --bg: #11141b;
+  --card: #1a1e28;
+  --danger: #ff8a80;
+  --danger-bg: #3a1c1a;
+  --danger-line: #6b2f2b;
+  --danger-text: #ffb4ab;
+  --heading: #dbe5fb;
+  --tint: #1f2a44;
+  --tint-line: #2f4272;
+  --warn-bg: #3a3017;
+  --warn-line: #6b5a22;
+  --hover: #252b39;
+  --bg-soft: #151922;
+  --badge-opt-bg: #1f2a44;
+  --badge-never-bg: #262b38;
+  --badge-rec-bg: #3a3017;
+  --badge-rec-fg: #ffcf66;
+  --focus-ring: rgba(107, 155, 255, .35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 16px rgba(0, 0, 0, .35);
+  color-scheme: dark;
+}
+:root[data-theme="dark"] button.primary { background: #2f66e8; color: #fff; }
+:root[data-theme="dark"] .diagram svg { filter: invert(.92) hue-rotate(180deg); }
+
+.theme-toggle {
+  float: right;
+  margin: 0 0 0 12px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.35);
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  cursor: pointer;
+}
+.theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+.theme-toggle:hover { background: rgba(255,255,255,.22); }
 
 * { box-sizing: border-box; }
 
@@ -66,8 +132,8 @@ main {
   transition: border-color .15s ease, color .15s ease, background-color .15s ease;
 }
 .steps .step:hover { border-color: var(--sapphire); color: var(--sapphire); }
-.steps .step.active { border-color: var(--sapphire); color: var(--sapphire); font-weight: 600; background: #fff; }
-.steps .step.done { background: #eef3ff; border-color: #d3e0fb; }
+.steps .step.active { border-color: var(--sapphire); color: var(--sapphire); font-weight: 600; background: var(--card); }
+.steps .step.done { background: var(--tint); border-color: var(--tint-line); }
 
 .card {
   background: var(--card);
@@ -78,8 +144,8 @@ main {
   margin-bottom: 20px;
 }
 
-.card h2 { margin-top: 0; font-size: 1.15rem; font-weight: 600; color: var(--denim); }
-.card h3 { font-size: .98rem; font-weight: 600; color: var(--denim); }
+.card h2 { margin-top: 0; font-size: 1.15rem; font-weight: 600; color: var(--heading); }
+.card h3 { font-size: .98rem; font-weight: 600; color: var(--heading); }
 .card p.hint { color: var(--dim); font-size: .9rem; margin-top: -6px; }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -97,7 +163,7 @@ input[type="text"], input[type="number"], input[type="url"], select, textarea {
   border-radius: 7px;
   font-size: .92rem;
   font-family: inherit;
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
   transition: border-color .15s ease, box-shadow .15s ease;
 }
@@ -107,7 +173,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--sapphire);
-  box-shadow: 0 0 0 3px rgba(28, 88, 217, .18);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 0 0 16px; }
@@ -139,8 +205,8 @@ button {
 }
 button.primary { background: var(--sapphire); color: #fff; box-shadow: 0 1px 2px rgba(28, 88, 217, .25); }
 button.primary:hover { background: var(--sapphire-dark); }
-button.secondary { background: #fff; border-color: var(--line); color: var(--ink); }
-button.secondary:hover { background: #f3f4f8; }
+button.secondary { background: var(--card); border-color: var(--line); color: var(--ink); }
+button.secondary:hover { background: var(--hover); }
 button.link { background: none; border: none; color: var(--sapphire); padding: 4px 6px; font-weight: 600; }
 button.small { padding: 5px 10px; font-size: .78rem; }
 button:disabled { opacity: .5; cursor: not-allowed; }
@@ -153,16 +219,16 @@ table.nodes th { color: var(--dim); font-weight: 600; font-size: .8rem; }
 table.nodes select, table.nodes input { padding: 6px 8px; font-size: .85rem; }
 
 .rationale {
-  background: #eef3ff;
-  border: 1px solid #d3e0fb;
+  background: var(--tint);
+  border: 1px solid var(--tint-line);
   border-radius: 8px;
   padding: 12px 16px;
   font-size: .9rem;
   margin-bottom: 16px;
 }
 .note {
-  background: #fff8e8;
-  border: 1px solid #f3dca0;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
   border-radius: 8px;
   padding: 12px 16px;
   font-size: .86rem;
@@ -171,20 +237,20 @@ table.nodes select, table.nodes input { padding: 6px 8px; font-size: .85rem; }
 .error-message {
   background: var(--danger-bg);
   border: 1px solid var(--danger-line);
-  color: #7a1b14;
+  color: var(--danger-text);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: .86rem;
   margin: 12px 0;
 }
 
-.diagram { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.diagram { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
 
 .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600; }
-.badge.never { background: #eef0f3; color: var(--dim); }
-.badge.optional { background: #e8f0ff; color: var(--sapphire); }
-.badge.recommended { background: #fff1d6; color: #8a5a00; }
-.badge.required { background: #fde3e1; color: var(--danger); }
+.badge.never { background: var(--badge-never-bg); color: var(--dim); }
+.badge.optional { background: var(--badge-opt-bg); color: var(--sapphire); }
+.badge.recommended { background: var(--badge-rec-bg); color: var(--badge-rec-fg); }
+.badge.required { background: var(--danger-bg); color: var(--danger); }
 
 code.blob {
   display: block;
@@ -209,8 +275,8 @@ code.blob {
 
 /* Step 4 reads top to bottom: what to do, then the detail behind it. */
 .run-steps {
-  background: #eef3ff;
-  border: 1px solid #d3e0fb;
+  background: var(--tint);
+  border: 1px solid var(--tint-line);
   border-radius: 8px;
   padding: 12px 16px 12px 8px;
   margin-bottom: 18px;
@@ -229,7 +295,7 @@ details.section > summary {
   cursor: pointer;
   font-size: .98rem;
   font-weight: 600;
-  color: var(--denim);
+  color: var(--heading);
   list-style: none;
   user-select: none;
   transition: background-color .15s ease;
@@ -249,7 +315,7 @@ details.section[open] > summary::before { transform: rotate(45deg); }
 details.section > summary:hover { background: var(--bg); }
 details.section > summary:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(28, 88, 217, .18);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 details.section .count { color: var(--dim); font-weight: 400; font-size: .85rem; }
 details.section > *:not(summary) { margin: 4px 0 16px; }
@@ -259,7 +325,7 @@ details.section > *:not(summary) { margin: 4px 0 16px; }
 }
 
 /* The estate, grouped by what each tier does. */
-.tier { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; background: #fff; }
+.tier { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; background: var(--card); }
 .tier-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .tier-head h4 { margin: 0; font-size: .92rem; font-weight: 600; }
 .tier-head .shape { color: var(--dim); font-size: .85rem; }
@@ -311,7 +377,7 @@ footer { text-align: center; color: var(--dim); font-size: .8rem; padding: 24px 
   border-radius: 8px;
   padding: 14px 16px;
   margin-bottom: 16px;
-  background: #fbfcfe;
+  background: var(--bg-soft);
 }
 .group > h3 { margin: 0 0 10px; font-size: .85rem; font-weight: 600; color: var(--ink); }
 
