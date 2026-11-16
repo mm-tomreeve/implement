@@ -30,6 +30,24 @@
   ansible.builtin.set_fact:
     _report_risks: "{{ lookup('ansible.builtin.template', 'risks.yml.j2') | from_yaml }}"
 
+# For the hardening table. A security team wants this stated, not implied, and
+# reading it here means the document says what is true now rather than what the
+# install set out to do.
+- name: Check fapolicyd
+  ansible.builtin.command: systemctl is-active fapolicyd  # noqa: command-instead-of-module
+  register: _report_fapolicyd
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check which firewalld zone is active
+  ansible.builtin.command: firewall-cmd --get-default-zone
+  register: _report_zone
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: firewall_manage | bool
+
 - name: Set the report path
   ansible.builtin.set_fact:
     mmd_report_path: "{{ report_dir }}/ARCHITECTURE-{{ ansible_facts['hostname'] }}-{{ mmd_run_id }}.md"

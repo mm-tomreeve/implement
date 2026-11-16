@@ -504,43 +504,123 @@ Bound to 127.0.0.1 with the security plugin off, which is fine while only the lo
 {% endfor %}
 
 "localhost only" means the service binds to 127.0.0.1 and no firewall port is open.
+{% if has.mm %}
+Port {{ mattermost_cluster_port }} is listed for completeness and is not opened: this toolkit does
+not configure Mattermost clustering. If you run more than one app server behind a load balancer and
+turn cluster mode on yourself, open {{ mattermost_cluster_port }} TCP and UDP between the app servers,
+keep every node on the same Mattermost version and the same `config.json`, and apply the licence to
+each one. Mattermost also asks for 65536 open files and 8192 processes per clustered node; the unit
+here sets `LimitNOFILE=49152`, which is Mattermost's own figure for a single server.
+{% endif %}
 Live firewalld configuration for zone `{{ firewall_zone }}` at the time of the run:
 
 ```text
 {{ mmd_host_firewall | default(['not captured']) | join('\n') }}
 ```
 
-## Security
+### Outbound
 
-SELinux is {{ mmd_host_selinux | default('unknown') }} and we leave it that way.{% if has.ngx %} The `httpd_can_network_connect` boolean is on so Nginx can reach the upstream.{% endif %}
+Connections this server has to be able to make. Nothing here is a firewalld rule, because these
+leave your network.
 
-
-{% if has.ngx %}
-Users reach Nginx over {{ 'HTTPS' if mmd_tls_enabled else 'plain HTTP, because TLS is still pending' }}{% if has.mm %}, and Nginx talks to Mattermost over HTTP on 127.0.0.1{% endif %}.
-{% endif %}
+{% set ob = [] %}
 {% if has.mm %}
-Mattermost connects to the database with sslmode `{{ mmd_db_sslmode }}`.
+{% set _ = ob.append(['push.mattermost.com', '443', 'tcp', 'Mobile push notifications, unless you run your own push proxy', 'Always']) %}
+{% set _ = ob.append(['Your SMTP relay', '25, 465 or 587', 'tcp', 'Invitations, password resets and email notifications', 'Always']) %}
+{% set _ = ob.append(['Your AD or LDAP server', '389 or 636', 'tcp', 'User sync and login', 'If you use AD/LDAP']) %}
+{% set _ = ob.append(['api.integrations.mattermost.com', '443', 'tcp', 'Plugin marketplace', 'Unless you install plugins by hand']) %}
+{% if mattermost_file_driver == 'amazons3' %}
+{% set s3_port = mattermost_s3_endpoint.split(':')[1] if ':' in mattermost_s3_endpoint else ('443' if mattermost_s3_ssl | bool else '80') %}
+{% set _ = ob.append([mattermost_s3_endpoint.split(':')[0], s3_port, 'tcp', 'File uploads and attachments', 'Always']) %}
+{% endif %}
+{% endif %}
+{% if (has.rtcd or mmd_calls_integrated) and not rtcd_ice_host_override %}
+{% set _ = ob.append(['stun.global.calls.mattermost.com', '3478', 'udp', 'Public IP discovery for Calls', 'Until you set an ICE host override']) %}
+{% endif %}
+{% set _ = ob.append(['Your dnf repositories: the Red Hat CDN, Satellite or a local mirror', '443', 'tcp', 'BaseOS and AppStream packages', 'Install and upgrade']) %}
+{% if has.mm %}
+{% set _ = ob.append(['releases.mattermost.com', '443', 'tcp', 'The Mattermost tarball and its signature', 'Install and upgrade']) %}
 {% endif %}
 {% if has.os %}
-OpenSearch is {{ 'HTTPS with authentication' if mmd_opensearch_security else 'plain HTTP, reachable on localhost only' }}.
+{% set _ = ob.append(['artifacts.opensearch.org', '443', 'tcp', 'The OpenSearch tarball and its signature', 'Install and upgrade']) %}
 {% endif %}
-
-Secrets are not in this document. Generated passwords live in `{{ deploy_config_dir }}/secrets.yml`
-(root, 0600) and the answer file is at `{{ mmd_answers_file | default(deploy_config_dir ~ '/answers.yml') }}`.
-{% if has.mm %}
-Mattermost keeps its database password in `{{ mattermost_config_dir }}/config.json` (0600, owned by `{{ mattermost_user }}`).
+{% if has.graf %}
+{% set _ = ob.append(['dl.grafana.com', '443', 'tcp', 'The Grafana tarball', 'Install and upgrade']) %}
 {% endif %}
-
-Services run as {% for c in sel %}`{{ mmd_catalogue[c].user }}`{{ ', ' if not loop.last }}{% endfor %}. These are system
-accounts with no login shell, apart from `postgres`, which comes from the RPM.
-
-We checked every tarball before installing it:
-
-{% for name, a in (mmd_artifacts | default({})).items() %}
-- `{{ a.filename }}`: {{ 'checksum matched (' ~ a.checksum_source ~ ')' if a.checksum_verified else 'no published checksum' }}{{ ', GPG signature verified against key ' ~ a.gpg_fingerprint if a.signature == 'verified' else '' }}.
+{% set _ = ob.append(['api.github.com, github.com and objects.githubusercontent.com', '443', 'tcp', 'rtcd, Loki, the OpenTelemetry Collector and the Prometheus exporters', 'Install and upgrade']) %}
+| Destination | Port | Protocol | What it carries | When |
+|---|---|---|---|---|
+{% for row in ob %}
+| {{ cell(row[0]) }} | {{ row[1] }} | {{ row[2] }} | {{ cell(row[3]) }} | {{ row[4] }} |
 {% endfor %}
-{% if not mmd_artifacts | default({}) %}
-- Nothing was downloaded for this server. PostgreSQL and Nginx come from the RHEL repositories.
+
+{% if artifact_source %}
+This server installs from `{{ artifact_source }}`, so the install and upgrade rows above are not
+needed. The always-on rows still are.
+{% else %}
+Set `artifact_source` to an offline bundle or an internal mirror and the install and upgrade rows
+are not needed. The always-on rows still are.
+{% endif %}
+
+## Security
+
+### Hardening on this server
+
+| Control | State | Detail |
+|---|---|---|
+| SELinux | {{ mmd_host_selinux | default('unknown') }} | {{ 'Left as the host had it. ' if not selinux_manage | bool else 'Booleans and contexts set for what is installed here. ' }}{% if has.ngx %}`httpd_can_network_connect` is on so Nginx can reach its upstream.{% endif %} |
+| firewalld | {{ 'managed, zone ' ~ ((_report_zone.stdout | default('') | trim) or firewall_zone) if firewall_manage | bool else 'not managed by this toolkit' }} | {{ 'Only the ports in the matrix above are open, and only to the addresses listed.' if firewall_manage | bool else 'firewall_manage is false, so nothing was opened or closed here.' }} |
+| fapolicyd | {{ (_report_fapolicyd.stdout | default('') | trim) or 'not installed' }} | {{ 'Installed paths are in the mattermost-implement trust file.' if (_report_fapolicyd.stdout | default('') | trim) == 'active' else 'Not running, so no execution allow-listing is in force.' }} |
+{% if has.ngx %}
+| TLS at the edge | {{ 'HTTPS' if mmd_tls_enabled else 'pending' }} | {{ 'Terminated at Nginx' ~ (', which talks to Mattermost over HTTP on 127.0.0.1' if has.mm else '') ~ '.' if mmd_tls_enabled else 'Users reach this server over plain HTTP until a certificate is installed.' }} |
+{% endif %}
+{% if has.mm %}
+| Database connection | sslmode `{{ mmd_db_sslmode }}` | {{ 'Encrypted to a database on another server.' if mmd_db_sslmode != 'disable' else 'Local socket on this server, so TLS adds nothing.' }} |
+{% endif %}
+{% if has.os %}
+| OpenSearch | {{ 'HTTPS with authentication' if mmd_opensearch_security else 'HTTP on localhost' }} | {{ 'Remote clients authenticate and the transport is encrypted.' if mmd_opensearch_security else 'No remote clients, so it listens on localhost only.' }} |
+{% endif %}
+| Service accounts | {{ sel | length }} | {% for c in sel %}`{{ mmd_catalogue[c].user }}`{{ ', ' if not loop.last }}{% endfor %}. System accounts with no login shell, apart from `postgres`, which comes from the RPM. |
+| Secrets at rest | root only, 0600 | Generated passwords in `{{ deploy_config_dir }}/secrets.yml`, answers in `{{ mmd_answers_file | default(deploy_config_dir ~ '/answers.yml') }}`.{% if has.mm %} Mattermost holds its database password in `{{ mattermost_config_dir }}/config.json` (0600, `{{ mattermost_user }}`).{% endif %} |
+
+No secret is reproduced in this document.
+
+### Where the software came from
+
+Verification policy for this run: a GPG signature was {{ 'required' if artifact_require_signature | bool else 'not required' }},
+and an artifact with no published checksum was {{ 'allowed' if artifact_allow_unverified | bool else 'refused' }}.
+{% if mmd_artifacts | default({}) %}
+Anything that failed either check stopped the install before it was unpacked.
+
+| Artifact | Version | Came from | SHA-256 | Signature |
+|---|---|---|---|---|
+{% for name, a in mmd_artifacts.items() %}
+| `{{ a.filename }}` | {{ a.version }} | {{ {'online': 'vendor download', 'bundle': 'offline bundle', 'directory': 'local directory'}[a.source | default('online')] | default(a.source | default('online')) }} | {{ 'matched ' ~ (a.checksum_source | default('the published checksum')) if a.checksum_verified else 'none published' }} | {{ 'verified, key ' ~ a.gpg_fingerprint if a.signature == 'verified' else a.signature }} |
+{% endfor %}
+{% else %}
+Nothing was downloaded for this server.
+{% endif %}
+{% if has.pg or has.ngx %}
+
+{% if has.pg %}PostgreSQL{% endif %}{% if has.pg and has.ngx %} and {% endif %}{% if has.ngx %}Nginx{% endif %} came from the RHEL
+repositories, so dnf checked Red Hat's own signatures.
+{% endif %}
+
+### Not done on this server
+
+{% set gaps = [] %}
+{% if has.ngx and not mmd_tls_enabled %}{% set _ = gaps.append('No TLS certificate yet, so traffic to this server is plain HTTP. See Certificates under Operations.') %}{% endif %}
+{% if has.mm and not mattermost_license_file %}{% set _ = gaps.append('No Enterprise licence file was given, so Enterprise features stay off until one is uploaded.') %}{% endif %}
+{% if (_report_fapolicyd.stdout | default('') | trim) != 'active' %}{% set _ = gaps.append('fapolicyd is not running, so nothing restricts which binaries may execute.') %}{% endif %}
+{% if not firewall_manage | bool %}{% set _ = gaps.append('firewall_manage is false, so this toolkit opened and closed nothing. The ports in the matrix above still have to be handled.') %}{% endif %}
+{% if not selinux_manage | bool %}{% set _ = gaps.append('selinux_manage is false, so no SELinux contexts or booleans were set for these components.') %}{% endif %}
+{% if artifact_allow_unverified | bool %}{% set _ = gaps.append('artifact_allow_unverified is true, so an artifact with no published checksum would have been accepted.') %}{% endif %}
+{% if gaps %}
+{% for gap in gaps %}
+- {{ gap }}
+{% endfor %}
+{% else %}
+Nothing outstanding: TLS, execution control, the firewall and SELinux are all in place.
 {% endif %}
 
 ## Data and backups
