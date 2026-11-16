@@ -1,5 +1,7 @@
 # Mattermost Parthenon
 
+**Version 1.1.0**
+
 > **Parthenon** /ˈpɑːθənɒn/ (n.) A temple built to house something important.
 
 Parthenon installs Mattermost and the services around it on RHEL 9 or 10, from the official
