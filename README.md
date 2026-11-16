@@ -100,14 +100,17 @@ search, Calls, monitoring, TLS and file storage.
 
 ![Step 1: the deployment](docs/images/wizard-1-deployment.png)
 
-High availability is a checkbox and only offered on Enterprise, because clustering, Enterprise
-search and dedicated Calls servers are all Enterprise features. The badge beside it says whether
-Mattermost marks high availability as required at that size, which it does from 2,000 users up. The
-choice is still yours. Turning it on asks for the number of app servers and read replicas, and
-stops offering local disk for uploads, since more than one app server can't keep files on its own
-disk. Clustering itself is switched on by listing the other app servers in `mattermost_cluster_peers`
-on each one; see [Example: two app servers](#example-two-app-servers). The firewall table says which
-peers get TCP and UDP 8074.
+High availability is a checkbox, offered only on Enterprise, because clustering, Enterprise search
+and dedicated Calls servers are all Enterprise features. The badge beside it shows whether Mattermost
+marks high availability as required at your size (it does from 2,000 users up). The choice is still
+yours.
+
+Turning it on asks for the number of app servers and read replicas, and stops offering local disk
+for uploads, since several app servers can't share one server's disk. The plan then clusters the app
+servers for you. Each one gets the others in `mattermost_cluster_peers`, so Mattermost's cluster mode
+is switched on and TCP and UDP 8074 is opened between them. The firewall table lists those flows. You
+still need the Enterprise licence on every app server and a load balancer in front. See
+[Example: two app servers](#example-two-app-servers).
 
 ### 2. The recommendation
 

@@ -236,11 +236,7 @@
     const band = state.band;
     el("rationale").textContent = band.label + " users, sized from " + band.reference + ", " +
       (nodes.length === 1 ? "one server" : nodes.length + " servers");
-    const ha = haRequired(band, state.s.seats)
-      ? "Mattermost marks high availability as required at this size. The Availability group on the "
-        + "previous page is where you decide."
-      : "";
-    const text = [band.note, ha].filter(Boolean).join(" ");
+    const text = band.note || "";
     el("scale-note").style.display = text ? "" : "none";
     el("scale-note").textContent = text;
     renderEstateSummary();

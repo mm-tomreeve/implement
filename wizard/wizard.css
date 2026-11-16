@@ -272,6 +272,7 @@ details.section > *:not(summary) { margin: 4px 0 16px; }
 .address-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  align-items: end;
   gap: 12px;
   padding: 12px 0;
   border-bottom: 1px solid var(--line);
