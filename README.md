@@ -25,6 +25,8 @@ storage.
 
 ## Quick start
 
+### One server
+
 On the target server, as root:
 
 ```bash
@@ -33,20 +35,46 @@ cd /opt/mattermost-implement
 ./install.sh
 ```
 
-The script then:
+It asks what this server should run, shows you the plan, deploys it, runs the tests and writes an
+architecture document. Run it again whenever you like: the roles are idempotent, so a second run
+changes nothing unless something has drifted.
 
-1. checks this is RHEL 9 or 10,
-2. asks before checking it can reach the vendors' download sites (later runs that went online
-   check again without asking), and falls back to a local folder if it can't,
-3. installs `ansible-core` and the `ansible.posix` collection,
-4. asks what this server should run and saves the answers to `/etc/mattermost-implement/answers.yml`,
-5. shows the plan, with any warnings about putting too much on one box, and waits for a yes,
-6. deploys, runs the post-deploy tests and writes the architecture document.
+### An estate
 
-Run it again whenever you like. It offers your last answers to use as they are, to go through
-and change, or to start again from blank. The roles are idempotent, so a second run changes nothing
-unless something has drifted, and you get a fresh report. An installed Mattermost stays on its version
-until you ask for an upgrade with `--upgrade`; see [Layout and upgrades](#layout-and-upgrades).
+Plan it once in the browser, then repeat three commands per server.
+
+1. Open [wizard/index.html](wizard/index.html). Answer the questions, enter each server's address,
+   and copy the estate plan it gives you. Hand the firewall and sizing tables to whoever needs them.
+2. Make one set of passwords for the estate, on any machine:
+
+   ```bash
+   python3 tools/estate_plan.py new-secrets --out estate-secrets.yml
+   ```
+
+3. On each server, in the install order the wizard gave you:
+
+   ```bash
+   ./install.sh --estate my-estate.yml --preflight                        # check it can reach the rest
+   ./install.sh --estate my-estate.yml --estate-secrets estate-secrets.yml
+   ./install.sh --edit                                                    # certificates, licence, CA
+   ```
+
+Step 2 is optional. Without it each server generates its own passwords and you copy the database
+one across by hand. Step 3's `--edit` is only needed where something has to be a file on that
+server, and it tells you which.
+
+### What a run does
+
+1. Checks this is RHEL 9 or 10.
+2. Asks before checking it can reach the vendors' download sites, and falls back to a local folder
+   if it can't.
+3. Installs `ansible-core` and the `ansible.posix` collection.
+4. Works out what this server should run, and saves it to `/etc/mattermost-implement/answers.yml`.
+5. Shows the plan, with any warnings about putting too much on one box, and waits for a yes.
+6. Deploys, runs the post-deploy tests and writes the architecture document.
+
+An installed Mattermost stays on its version until you ask for an upgrade with `--upgrade`; see
+[Layout and upgrades](#layout-and-upgrades).
 
 ## What it can install
 
@@ -145,6 +173,101 @@ The plan stops if the answer file has a setting it doesn't know (usually a typo)
 wrong kind, such as `10.0.0.5` where a list like `[10.0.0.5]` is needed. `--verify-only` and
 `--report-only` only warn, so an older answer file doesn't block them.
 
+### From an architecture wizard plan
+
+Open [wizard/index.html](wizard/index.html) in a browser. It runs entirely in the page, so nothing
+is installed and nothing leaves the machine.
+
+Give it the licence and seat count and it recommends a topology, draws it, and works out the
+install order. Fill in each server's hostname or address and it writes an **estate plan**:
+one encoded line describing the whole estate. It also produces an inbound and outbound firewall
+table for the network team, a sizing table for the server team, and the design decisions behind
+the shape, all copyable as Markdown.
+
+The sizing comes from Mattermost's own [reference
+architectures](https://docs.mattermost.com/deployment-guide/scale/scaling-for-enterprise), one band
+per published tier: 200, 2,000, 15,000, 30,000 and 50,000. vCPU and memory are Mattermost's figures
+for that tier. Two things differ, because this toolkit builds different servers: Mattermost gives
+the proxy a server of its own where Nginx runs on the app servers here, and Mattermost's search
+tier is a cluster where this toolkit installs a single node. Disk is this toolkit's estimate,
+because Mattermost publishes a growth formula rather than figures.
+
+One thing to watch: Mattermost states those tiers in **concurrent users**, which is well below the
+number of accounts. The wizard asks for seats, so a seat count lands you in a band at or above the
+one your real concurrency needs. Enter peak concurrent users instead for a like-for-like match.
+
+High availability is a checkbox there, and only on Enterprise, because clustering, Enterprise
+search and dedicated Calls servers are all Enterprise features. The chip next to it says whether
+Mattermost marks high availability as required at that size, which it does from 2,000 upwards.
+The choice is still yours. Turning it on asks how many app servers and read replicas you want, and
+stops offering local disk for uploads, since more than one app server can't keep files on its own
+disk. It does not configure clustering: you turn cluster mode on yourself and open TCP and UDP 8074
+between the app servers, and the wizard says so in the firewall table and the checklist.
+
+Paste that line when `install.sh` asks for it, or save it as a file:
+
+```bash
+./install.sh --estate my-estate.yml
+```
+
+Each server works out which node in the plan it is, from its hostname or one of its addresses, and
+derives its own answers: profiles, `mattermost_db_host`, the `*_allowed_clients` lists,
+`monitoring_estate`, scrape sources, the Loki URL. That is the hand-copying in the split-estate
+example below, done for you. The result goes to `/etc/mattermost-implement/answers.yml`, the same
+file an interactive run writes, and behaves like `--answers` from there: nothing is asked, so a
+setting the server needs and the plan can't know stops the plan with a message naming it.
+
+Four things are deliberately not in the plan, because a plan is made in a browser and passed around:
+passwords, the licence, the TLS certificate and key, and the OpenSearch CA. They are printed as a
+checklist once the plan is applied. Run `./install.sh --edit` on the same server to fill them in; it
+keeps everything the plan settled and asks only about the rest. Going back to the wizard is for
+changing the estate itself, such as adding a server.
+
+To change a plan later, paste it back into the wizard. It loads the whole thing and you carry on
+from the recommendation. [estate.example.yml](estate.example.yml) documents the format if you would
+rather write one by hand.
+
+### Checking a server before you install
+
+With a plan in hand, each server can check it is ready:
+
+```bash
+./install.sh --estate my-estate.yml --preflight
+```
+
+It resolves every other server in the plan, tries the ports this one has to reach, and compares the
+memory and CPU against what its role needs. Nothing is installed or changed.
+
+Nothing is listening yet at this point, so a refused connection is the good result: the route and
+the firewall are open and the service simply isn't there. A timeout is the one to take to the
+network team.
+
+### One set of passwords for the estate
+
+By default each server generates its own passwords and you copy the database one from the database
+server into the app servers. On a split estate that is tedious, and it means reading a password off
+one terminal and typing it into another.
+
+Instead, make them once:
+
+```bash
+python3 tools/estate_plan.py new-secrets --out estate-secrets.yml
+```
+
+That writes one `ansible-vault` encrypted file holding the database, replication, OpenSearch and
+Grafana passwords. Carry it to each server and hand it over with the plan:
+
+```bash
+./install.sh --estate my-estate.yml --estate-secrets estate-secrets.yml
+```
+
+Each server takes only the entries its own role needs: the database server gets the database
+password, the app servers get the database and OpenSearch ones, Grafana's goes to the monitoring
+server. Nothing else in the file is written to that server, and the checklist drops the lines
+telling you to copy them by hand.
+
+It is optional. Leave it out and every server generates its own, exactly as before.
+
 ### From flags
 
 ```bash
@@ -158,6 +281,11 @@ The other flags:
 | Flag | Does |
 |---|---|
 | `--edit` | Asks the questions again with the saved answers (or `--answers FILE`) as the defaults |
+| `--estate FILE\|-` | Uses an estate plan from the architecture wizard (see [estate.example.yml](estate.example.yml)); `-` reads it from stdin |
+| `--estate-node NAME` | Skips matching and says which node in the plan this server is |
+| `--estate-secrets FILE` | Takes this server's passwords from a vault-encrypted estate secrets file |
+| `--vault-password-file F` | Passphrase file for that estate secrets file |
+| `--preflight` | With `--estate`: checks this server can reach the rest of the estate and has the memory and CPU for its role |
 | `--plan-only` | Shows what would happen, then stops |
 | `--upgrade` | Lets an installed Mattermost (and rtcd) move to the newest release on its channel |
 | `--check` | Dry run |

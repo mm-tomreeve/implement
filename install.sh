@@ -7,6 +7,7 @@
 #
 #   sudo ./install.sh                         interactive
 #   sudo ./install.sh --answers answers.yml   from an answer file
+#   sudo ./install.sh --estate estate.yml     from an architecture wizard plan (see estate.example.yml)
 #   sudo ./install.sh --offline-dir /srv/mm-bundle-20261028
 #   sudo ./install.sh --verify-only           re-run the tests and refresh the report
 set -Eeuo pipefail
@@ -49,6 +50,16 @@ declare -A PROFILE_DESCRIPTIONS=(
 COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch nfs prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
 
 ANSWERS=""
+ESTATE=""
+ESTATE_NODE=""
+ESTATE_SECRETS=""
+VAULT_PASSWORD_FILE=""
+# Working state for the estate helpers: the plan on disk, this server's addresses,
+# and the last run's output.
+ESTATE_FILE=""
+ESTATE_ADDR_ARGS=()
+ESTATE_OUT=""
+ESTATE_ERRFILE=""
 PROFILES=""
 COMPONENTS=""
 OFFLINE_SOURCE=""
@@ -155,6 +166,12 @@ Usage: sudo ./install.sh [options]
 
 What to install
   --answers FILE          Use an answer file (see answers.example.yml)
+  --estate FILE|-         An estate plan from the architecture wizard, as a file or
+                          - to paste it in (see estate.example.yml)
+  --estate-node NAME      Which node in the plan this server is, when it can't tell
+  --estate-secrets FILE   Take this server's passwords from an estate secrets file
+                          made with tools/estate_plan.py new-secrets
+  --vault-password-file F Passphrase file for that estate secrets file
   --edit                  Ask the questions again with the saved answers (or --answers FILE)
                           as the defaults, so you only change what you need
   --profile LIST          Profiles for this server, comma-separated:
@@ -173,6 +190,9 @@ How to run
   --upgrade               Let an installed Mattermost (and rtcd) move to a newer release
                           (it is stopped and its database dumped first)
   --check                 Dry run (Ansible check mode, best effort)
+  --preflight             With --estate: check this server can resolve and reach
+                          the rest of the estate, and has the memory and CPU for
+                          its role. Changes nothing.
   --plan-only             Show what would be installed, then stop
   --verify-only           Re-run the post-deploy tests and refresh the report
   --report-only           Rebuild the report from the last test results
@@ -188,6 +208,11 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --answers) ANSWERS="$2"; shift 2 ;;
+      --estate) ESTATE="$2"; shift 2 ;;
+      --estate-node) ESTATE_NODE="$2"; shift 2 ;;
+      --estate-secrets) ESTATE_SECRETS="$2"; shift 2 ;;
+      --vault-password-file) VAULT_PASSWORD_FILE="$2"; shift 2 ;;
+      --preflight) MODE=preflight; shift ;;
       --edit) EDIT_ANSWERS=true; shift ;;
       --profile|--profiles) PROFILES="$2"; shift 2 ;;
       --components) COMPONENTS="$2"; shift 2 ;;
@@ -215,6 +240,15 @@ parse_args() {
     [[ -r "${ANSWERS}" ]] || die "Cannot read answer file ${ANSWERS}"
     ANSWERS="$(cd "$(dirname "${ANSWERS}")" && pwd)/$(basename "${ANSWERS}")"
   fi
+  if [[ -n "${ESTATE}" ]]; then
+    [[ -z "${ANSWERS}" ]] || die "--estate and --answers don't go together."
+    [[ "${EDIT_ANSWERS}" != true ]] || die "Run --estate first, then ./install.sh --edit as a second step to add secrets and file paths."
+    if [[ "${ESTATE}" != - ]]; then
+      [[ -r "${ESTATE}" ]] || die "Cannot read estate plan ${ESTATE}"
+      ESTATE="$(cd "$(dirname "${ESTATE}")" && pwd)/$(basename "${ESTATE}")"
+    fi
+  fi
+  [[ -z "${ESTATE_NODE}" || -n "${ESTATE}" ]] || die "--estate-node only makes sense with --estate."
 }
 
 # ------------------------------------------------------------------ host checks
@@ -618,6 +652,15 @@ primary_ip() {
   # No default route and no usable hostname -I: read the kernel's local addresses directly.
   [[ -z "${ip}" ]] && ip="$(awk '/\/32 host LOCAL/ && prev !~ /^127\./ {print prev; exit} {prev = $2}' /proc/net/fib_trie 2>/dev/null || true)"
   printf '%s' "${ip}"
+}
+
+# Every address this server could be reached on, so an estate plan can match any
+# of them, not just the one primary_ip() would pick.
+local_addresses() {
+  { ip -o -4 addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1
+    ip -o -6 addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1
+    primary_ip
+  } | sort -u
 }
 
 ask_secret() {
@@ -1368,7 +1411,196 @@ interview() {
   chmod 0600 "${answers_out}"
 }
 
+# Read the plan, check it parses, and work out this server's addresses. Both the
+# estate install and the preflight start here.
+estate_prepare() {
+  [[ -z "${ESTATE_FILE}" ]] || return 0
+  local err line a
+  ESTATE_FILE="${ESTATE}"
+  if [[ "${ESTATE}" == - ]]; then
+    info "Paste the estate plan the architecture wizard gave you, then press Enter:"
+    read -r line || no_input
+    ESTATE_FILE="$(mktemp "${CONFIG_DIR}/estate.XXXXXX")"
+    printf '%s\n' "${line}" > "${ESTATE_FILE}"
+  fi
+  err="$(mktemp "${CONFIG_DIR}/estate-err.XXXXXX")"
+  if ! python3 -I "${REPO_DIR}/tools/estate_plan.py" decode --plan-file "${ESTATE_FILE}" > /dev/null 2> "${err}"; then
+    line="$(cat "${err}")"; rm -f "${err}"; die "${line}"
+  fi
+  rm -f "${err}"
+  ESTATE_ADDR_ARGS=()
+  while IFS= read -r a; do [[ -n "${a}" ]] && ESTATE_ADDR_ARGS+=(--local-address "${a}"); done < <(local_addresses)
+}
+
+# Run an estate_plan.py subcommand that has to know which node this server is,
+# asking when the plan can't tell on its own. Leaves stdout in ESTATE_OUT and
+# stderr in ESTATE_ERRFILE for the caller to read.
+estate_run() {
+  local sub="$1"; shift
+  local rc names=() node_args=()
+  ESTATE_ERRFILE="$(mktemp "${CONFIG_DIR}/estate-err.XXXXXX")"
+  while true; do
+    node_args=()
+    [[ -n "${ESTATE_NODE}" ]] && node_args=(--node "${ESTATE_NODE}")
+    ESTATE_OUT="$(python3 -I "${REPO_DIR}/tools/estate_plan.py" "${sub}" --plan-file "${ESTATE_FILE}" \
+      "${node_args[@]}" --local-name "$(hostname -s 2>/dev/null || true)" --local-name "$(host_name)" \
+      "${ESTATE_ADDR_ARGS[@]}" "$@" 2> "${ESTATE_ERRFILE}")"
+    rc=$?
+    [[ ${rc} -eq 0 ]] && return 0
+    [[ ${rc} -eq 3 || ${rc} -eq 4 ]] || die "$(cat "${ESTATE_ERRFILE}")"
+    mapfile -t names < <(tail -n +2 "${ESTATE_ERRFILE}")
+    if [[ "${NON_INTERACTIVE}" == true ]]; then
+      die "$(head -n1 "${ESTATE_ERRFILE}") Pass --estate-node NAME, one of: ${names[*]}."
+    fi
+    warn "$(head -n1 "${ESTATE_ERRFILE}")"
+    ask_choice ESTATE_NODE "Which node in the plan is this server?" "${names[0]}" "${names[@]}"
+  done
+}
+
+# Decode an estate plan, work out which node in it is this server, and derive
+# this server's answers from it. The result is a normal answer file, so
+# everything after this behaves as it does for --answers.
+resolve_estate() {
+  local secret_args=() node tmp backup="" followups line
+  estate_prepare
+  if [[ -n "${ESTATE_SECRETS}" ]]; then
+    secret_args=(--secrets "${ESTATE_SECRETS}")
+    [[ -n "${VAULT_PASSWORD_FILE}" ]] && secret_args+=(--vault-password-file "${VAULT_PASSWORD_FILE}")
+    info "Taking this server's passwords from ${ESTATE_SECRETS}."
+  fi
+  estate_run apply "${secret_args[@]}"
+
+  # Written to SAVED_ANSWERS rather than a run-specific path, so a later --edit
+  # finds it on its own, the way a normal interactive run's answers do.
+  tmp="$(mktemp "${CONFIG_DIR}/answers.XXXXXX")"
+  printf '%s\n' "${ESTATE_OUT}" > "${tmp}"
+  chmod 0600 "${tmp}"
+  if [[ -f "${SAVED_ANSWERS}" ]]; then
+    backup="${SAVED_ANSWERS}.${RUN_ID}.bak"
+    cp -p "${SAVED_ANSWERS}" "${backup}"
+  fi
+  mv "${tmp}" "${SAVED_ANSWERS}"
+  chmod 0600 "${SAVED_ANSWERS}"
+  ANSWERS="${SAVED_ANSWERS}"
+  # The script's first line of output says which node it matched.
+  node="$(head -n1 "${ANSWERS}" | sed -E 's/^# Derived from .* for node //')"
+  info "Wrote this server's answers to ${ANSWERS} from the estate plan (node ${node})${backup:+, and kept the earlier ones in ${backup}}."
+
+  followups="$(grep '^# FOLLOWUP: ' "${ESTATE_ERRFILE}" | sed 's/^# FOLLOWUP: //')"
+  rm -f "${ESTATE_ERRFILE}"
+  if [[ -n "${followups}" ]]; then
+    section "Still needed on this server"
+    while IFS= read -r line; do info "${line}"; done <<< "${followups}"
+    info "The plan still runs with these blank. An install stops if it needs one, such as a TLS"
+    info "certificate path. Run ./install.sh --edit here: it keeps what the plan settled and asks the rest."
+  fi
+}
+
+# ------------------------------------------------------------------ preflight
+
+preflight_line() {
+  # preflight_line ok|note|fail SUBJECT DETAIL
+  local status="$1" subject="$2" detail="$3" mark
+  case "${status}" in
+    ok) mark="${C_GRN}${C_BOLD}ok  ${C_OFF}" ;;
+    note) mark="${C_YEL}${C_BOLD}note${C_OFF}" ;;
+    *) mark="${C_RED}${C_BOLD}FAIL${C_OFF}" ;;
+  esac
+  printf '      %s %s %s\n' "${mark}" "$(printf '%-26s' "${subject}")" "${C_DIM}${detail}${C_OFF}"
+}
+
+preflight_resolve() {
+  local target="$1" label="$2"
+  if [[ "${target}" =~ ^[0-9.]+$ || "${target}" == *:* ]]; then
+    preflight_line ok "${target}" "${label}, already an address"
+    return 0
+  fi
+  if getent ahosts "${target}" > /dev/null 2>&1; then
+    preflight_line ok "${target}" "${label}"
+    return 0
+  fi
+  preflight_line fail "${target}" "${label}, but this name doesn't resolve here"
+  return 1
+}
+
+preflight_tcp() {
+  # The plan is pasted text, so the address goes in as an argument, never into
+  # the script bash runs.
+  local target="$1" port="$2" label="$3" rc=0
+  # shellcheck disable=SC2016  # single quotes on purpose: the address reaches
+  # bash as an argument, never as part of the script it runs.
+  timeout 3 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' _ "${target}" "${port}" 2>/dev/null || rc=$?
+  case "${rc}" in
+    0) preflight_line ok "${target}:${port}" "${label}" ;;
+    124) preflight_line fail "${target}:${port}" "${label}: timed out, so something is dropping it"; return 1 ;;
+    *) preflight_line note "${target}:${port}" "${label}: refused, so the path is open and nothing is listening yet" ;;
+  esac
+  return 0
+}
+
+preflight_ram() {
+  local need="$1" label="$2" have
+  have="$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+  if [[ "${have:-0}" -ge "${need}" ]]; then
+    preflight_line ok "RAM ${have} MB" "${need} MB is enough for ${label}"
+    return 0
+  fi
+  preflight_line fail "RAM ${have} MB" "${label} wants ${need} MB"
+  return 1
+}
+
+preflight_cpus() {
+  local need="$1" label="$2" have
+  have="$(nproc 2>/dev/null || echo 0)"
+  if [[ "${have:-0}" -ge "${need}" ]]; then
+    preflight_line ok "${have} vCPU" "${need} is enough for ${label}"
+    return 0
+  fi
+  preflight_line fail "${have} vCPU" "${label} wants ${need}"
+  return 1
+}
+
+# Everything this server needs before an install can work: can it resolve and
+# reach the other servers, and has it the memory and CPU for its own role.
+# Changes nothing.
+run_preflight() {
+  [[ -n "${ESTATE}" ]] || die "--preflight reads an estate plan, so it needs --estate FILE as well."
+  estate_prepare
+  estate_run checks
+  rm -f "${ESTATE_ERRFILE}"
+
+  local kind target port label failed=0 checked=0 node
+  node="${ESTATE_NODE:-this server}"
+  section "Preflight for ${node}"
+  info "Nothing is installed yet, so refused is the good result: the route is open and the service"
+  info "isn't there. A timeout is the one to chase."
+  echo
+  while IFS=$'\t' read -r kind target port label; do
+    [[ -n "${kind}" ]] || continue
+    checked=$((checked + 1))
+    case "${kind}" in
+      resolve) preflight_resolve "${target}" "${label}" || failed=$((failed + 1)) ;;
+      tcp) preflight_tcp "${target}" "${port}" "${label}" || failed=$((failed + 1)) ;;
+      ram) preflight_ram "${target}" "${label}" || failed=$((failed + 1)) ;;
+      cpus) preflight_cpus "${target}" "${label}" || failed=$((failed + 1)) ;;
+      *) checked=$((checked - 1)) ;;
+    esac
+  done <<< "${ESTATE_OUT}"
+
+  echo
+  if [[ ${failed} -eq 0 ]]; then
+    say "All ${checked} checks passed. Install this server with ./install.sh --estate."
+    return 0
+  fi
+  warn "${failed} of ${checked} checks need sorting before you install."
+  return 1
+}
+
 resolve_answers() {
+  if [[ -n "${ESTATE}" ]]; then
+    resolve_estate
+    return
+  fi
   if [[ "${EDIT_ANSWERS}" == true ]]; then
     # --edit: the questions again, with the saved answers (or --answers FILE) as defaults.
     local from="${ANSWERS:-${SAVED_ANSWERS}}"
@@ -1382,6 +1614,14 @@ resolve_answers() {
   fi
   if [[ -n "${ANSWERS}" ]]; then
     return
+  fi
+  if [[ ( "${MODE}" == install || "${MODE}" == plan ) && "${NON_INTERACTIVE}" != true && ! -r "${SAVED_ANSWERS}" ]]; then
+    section "Answers"
+    if ask_yn "Paste an estate plan from the architecture wizard, instead of answering these one at a time?" n; then
+      ESTATE=-
+      resolve_estate
+      return
+    fi
   fi
   if [[ "${MODE}" != install && "${MODE}" != plan ]] || [[ "${NON_INTERACTIVE}" == true && -z "${PROFILES}${COMPONENTS}" ]]; then
     [[ -r "${SAVED_ANSWERS}" ]] || die "No answer file. Pass --answers, or run interactively first."
@@ -1568,6 +1808,12 @@ main() {
     choose_installer_source
   fi
   install_prereqs
+  if [[ "${MODE}" == preflight ]]; then
+    local pf=0
+    trap - ERR
+    run_preflight || pf=$?
+    exit "${pf}"
+  fi
   resolve_answers
   [[ -n "${OFFLINE_SOURCE}" ]] || OFFLINE_SOURCE="$(yaml_get artifact_source "${ANSWERS}")"
   install_collections
