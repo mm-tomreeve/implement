@@ -78,7 +78,12 @@ mattermost_db_user: mmuser
 mattermost_db_password: ""      # blank = generated and stored in secrets.yml
 mattermost_db_sslmode: auto     # auto = disable locally, require for remote
 # SqlSettings.MaxOpenConns on each app server. PostgreSQL sizes max_connections from it.
-mattermost_db_max_open_conns: 300
+# Mattermost's default since v11.0, when it came down from 300. The pool is per data
+# source per app server, so every app server may open this many against the primary
+# and this many again against each read replica.
+mattermost_db_max_open_conns: 100
+# SqlSettings.MaxIdleConns. Mattermost asks for a 2:1 ratio with MaxOpenConns.
+mattermost_db_max_idle_conns: "{{ (mattermost_db_max_open_conns | int / 2) | round | int }}"
 # PostgreSQL read replicas Mattermost sends reads to (SqlSettings.DataSourceReplicas,
 # Enterprise only). Same port, database, login and password as the primary.
 mattermost_db_replica_hosts: []
@@ -99,6 +104,11 @@ mattermost_opensearch_url: ""   # e.g. https://search01.internal:9200
 mattermost_opensearch_username: mattermost
 mattermost_opensearch_password: ""
 mattermost_opensearch_ca_file: ""
+# SqlSettings.DisableDatabaseSearch. Mattermost says turning database search off
+# once a search engine is running may improve performance on larger deployments,
+# because the fallback is what hurts. The cost is that search stops entirely when
+# OpenSearch is down, so it is off by default. Only read when OpenSearch is in use.
+mattermost_disable_database_search: false
 
 # ---------------------------------------------------------------- postgresql
 postgresql_version: "16"

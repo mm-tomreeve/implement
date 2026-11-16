@@ -141,8 +141,10 @@
     mmd_rtcd_hold: >-
       {{ mmd_rtcd_installed | length > 0 and rtcd_version in ['latest', '']
          and not (rtcd_allow_upgrade | bool) }}
-    # Every app server may open mattermost_db_max_open_conns connections, and
-    # PostgreSQL keeps a few for superusers, so leave room on top.
+    # Mattermost's pool is per data source per app server, so every app server may
+    # open mattermost_db_max_open_conns connections against this database, whether
+    # it is the primary or a read replica. PostgreSQL keeps a few for superusers,
+    # and the exporter and maintenance want some, so leave room on top.
     mmd_postgresql_max_connections: >-
       {{ (postgresql_max_connections if postgresql_max_connections != 'auto'
           else mmd_postgresql_app_servers | int * mattermost_db_max_open_conns | int

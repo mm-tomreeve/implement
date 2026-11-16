@@ -1,7 +1,7 @@
 # Settings this toolkit owns in config.json. Everything else stays as Mattermost
 # or the System Console set it.
 {% macro dsn_for(host, sslmode) -%}
-postgres://{{ mattermost_db_user | urlencode | replace('/', '%2F') }}:{{ mmd_secrets.db_password | urlencode | replace('/', '%2F') }}@{{ host }}:{{ mattermost_db_port }}/{{ mattermost_db_name }}?sslmode={{ sslmode }}&connect_timeout=10&binary_parameters=yes
+postgres://{{ mattermost_db_user | urlencode | replace('/', '%2F') }}:{{ mmd_secrets.db_password | urlencode | replace('/', '%2F') }}@{{ host }}:{{ mattermost_db_port }}/{{ mattermost_db_name }}?sslmode={{ sslmode }}&connect_timeout=10
 {%- endmacro %}
 {% set dsn = dsn_for(mmd_db_host, mmd_db_sslmode) %}
 ServiceSettings:
@@ -20,7 +20,12 @@ SqlSettings:
   DriverName: postgres
   DataSource: {{ dsn | to_json }}
   # PostgreSQL sizes max_connections from this, so keep the two in step.
+  # Mattermost asks for a 2:1 ratio between the two.
   MaxOpenConns: {{ mattermost_db_max_open_conns | int }}
+  MaxIdleConns: {{ mattermost_db_max_idle_conns | int }}
+{% if mmd_opensearch_url | length > 0 %}
+  DisableDatabaseSearch: {{ mattermost_disable_database_search | bool | to_json }}
+{% endif %}
 {% if mattermost_db_replica_hosts | length > 0 %}
   # Read replicas (Enterprise). Same login as the primary; they're always remote.
 {% set replica_sslmode = mattermost_db_sslmode if mattermost_db_sslmode != 'auto' else 'require' %}

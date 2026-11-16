@@ -268,7 +268,10 @@ to `monitoring_scrape_sources` so the monitoring server can scrape them. Servers
 looked up when the plan runs; a name that doesn't resolve gets nothing opened, and the plan says so.
 
 The database server sizes `max_connections` for every app server in `postgresql_allowed_clients`:
-`mattermost_db_max_open_conns` (300, Mattermost's own default) for each, plus 50 spare. If you
+`mattermost_db_max_open_conns` (100, Mattermost's own default since v11.0) for each, plus 50 spare.
+Mattermost's pool is per data source per app server, so each app server may open that many against
+the primary and that many again against each read replica, which is why a replica is sized the same
+way. `mattermost_db_max_idle_conns` follows at half of it, the 2:1 ratio Mattermost asks for. If you
 list a subnet rather than single addresses, set `postgresql_app_servers` to the number of
 Mattermost servers behind it. If you change `mattermost_db_max_open_conns`, set it on the
 database server too.
@@ -302,6 +305,11 @@ postgresql_replication_password: "<replication_password from db01's secrets.yml>
 # and on app01
 mattermost_db_replica_hosts: [10.10.1.21]
 ```
+
+That last line is what makes Mattermost actually read from the replica
+(`SqlSettings.DataSourceReplicas`). Without it the replica streams and carries no traffic. An estate
+plan derives it for you: name the primary in the replica node's `primary` and every app server gets
+pointed at the replica.
 
 Install db01 first. On its first run db02 copies db01 with `pg_basebackup`, then keeps following
 it. It stops rather than overwrite a data directory that already holds a database of its own.
