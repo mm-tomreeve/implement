@@ -81,9 +81,14 @@ mattermost_db_name: mattermost
 mattermost_db_user: mmuser
 mattermost_db_password: ""
 mattermost_db_sslmode: auto             # auto = disable locally, require for remote
-# SqlSettings.MaxOpenConns. Keep it the same on the database server's answer file,
+# SqlSettings.MaxOpenConns, Mattermost's own default since v11.0. The pool is per
+# data source per app server: this many against the primary, and this many again
+# against each read replica. Keep it the same on the database server's answer file,
 # which sizes max_connections from it.
-mattermost_db_max_open_conns: 300
+mattermost_db_max_open_conns: 100
+# SqlSettings.MaxIdleConns. Mattermost asks for a 2:1 ratio with MaxOpenConns,
+# which is what the default works out.
+mattermost_db_max_idle_conns: 50
 # PostgreSQL read replicas to send reads to (Enterprise). Same login as the primary.
 mattermost_db_replica_hosts: []         # e.g. ["10.10.1.21"]
 

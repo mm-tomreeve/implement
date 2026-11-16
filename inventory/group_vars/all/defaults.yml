@@ -61,9 +61,17 @@ mattermost_listen_address: auto
 # Remote reverse proxies allowed to reach port 8065 (CIDRs or IPs).
 mattermost_proxy_sources: []
 mattermost_metrics_port: 8067
+# Cluster gossip between app servers. This toolkit does not turn clustering on,
+# so nothing here opens this port. It is documented, and named in the architecture
+# document, because a multi-app-server estate needs it open once you do.
+mattermost_cluster_port: 8074
 mattermost_license_file: ""
 # Turn on OpenSearch indexing and searching. Needs an Enterprise licence.
 mattermost_search_enable: "{{ mattermost_license_file | length > 0 }}"
+# Mattermost's own Prometheus metrics on mattermost_metrics_port. They need an
+# Enterprise licence, so auto = the Enterprise build with a licence file given.
+# Set it to true if you apply the licence in the System Console instead.
+mattermost_metrics_enable: auto
 # Extra settings deep-merged into config.json last.
 mattermost_config_overrides: {}
 # Open 8443 udp/tcp for the built-in Calls media server when no rtcd is used.
@@ -78,7 +86,12 @@ mattermost_db_user: mmuser
 mattermost_db_password: ""      # blank = generated and stored in secrets.yml
 mattermost_db_sslmode: auto     # auto = disable locally, require for remote
 # SqlSettings.MaxOpenConns on each app server. PostgreSQL sizes max_connections from it.
-mattermost_db_max_open_conns: 300
+# Mattermost's default since v11.0, when it came down from 300. The pool is per data
+# source per app server, so every app server may open this many against the primary
+# and this many again against each read replica.
+mattermost_db_max_open_conns: 100
+# SqlSettings.MaxIdleConns. Mattermost asks for a 2:1 ratio with MaxOpenConns.
+mattermost_db_max_idle_conns: "{{ (mattermost_db_max_open_conns | int / 2) | round | int }}"
 # PostgreSQL read replicas Mattermost sends reads to (SqlSettings.DataSourceReplicas,
 # Enterprise only). Same port, database, login and password as the primary.
 mattermost_db_replica_hosts: []
@@ -99,6 +112,11 @@ mattermost_opensearch_url: ""   # e.g. https://search01.internal:9200
 mattermost_opensearch_username: mattermost
 mattermost_opensearch_password: ""
 mattermost_opensearch_ca_file: ""
+# SqlSettings.DisableDatabaseSearch. Mattermost says turning database search off
+# once a search engine is running may improve performance on larger deployments,
+# because the fallback is what hurts. The cost is that search stops entirely when
+# OpenSearch is down, so it is off by default. Only read when OpenSearch is in use.
+mattermost_disable_database_search: false
 
 # ---------------------------------------------------------------- postgresql
 postgresql_version: "16"
@@ -170,6 +188,12 @@ rtcd_rtc_port: 8443
 rtcd_ice_host_override: ""       # public IP or name clients use to reach rtcd
 # Mattermost servers allowed to reach the rtcd API. Empty = localhost only.
 rtcd_api_sources: []
+# rtcd's own default is false. Mattermost's guidance is to turn it on only on a
+# private network with access control, which is what rtcd_api_sources gives you:
+# anyone who can reach port 8045 can start calls, and only those addresses can.
+# Set this to false and register Mattermost through rtcd's admin API instead if
+# the API port has to be reachable more widely than that.
+rtcd_allow_self_registration: true
 
 # ---------------------------------------------------------------- opensearch
 opensearch_version: "2.19.7"

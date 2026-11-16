@@ -4,9 +4,12 @@ http.listen_address = "{{ '127.0.0.1' if (rtcd_api_sources + mmd_scrape_sources)
 http.tls.enable = false
 http.tls.cert_file = ""
 http.tls.cert_key = ""
-# Mattermost registers itself on first contact. Only the servers in
-# rtcd_api_sources can reach this port, so self-registration is safe here.
-security.allow_self_registration = true
+# rtcd ships with self-registration off, and Mattermost's guidance is to enable it
+# only on a private network with access control. That is the case here: the API port
+# is bound to loopback until rtcd_api_sources is set, and then opened to those
+# addresses alone. Set rtcd_allow_self_registration to false and register Mattermost
+# through the admin API instead if that isn't good enough for your network.
+security.allow_self_registration = {{ rtcd_allow_self_registration | bool | lower }}
 security.enable_admin = false
 security.admin_secret_key = ""
 security.session_cache.expiration_minutes = 1440

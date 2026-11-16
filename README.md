@@ -268,7 +268,10 @@ to `monitoring_scrape_sources` so the monitoring server can scrape them. Servers
 looked up when the plan runs; a name that doesn't resolve gets nothing opened, and the plan says so.
 
 The database server sizes `max_connections` for every app server in `postgresql_allowed_clients`:
-`mattermost_db_max_open_conns` (300, Mattermost's own default) for each, plus 50 spare. If you
+`mattermost_db_max_open_conns` (100, Mattermost's own default since v11.0) for each, plus 50 spare.
+Mattermost's pool is per data source per app server, so each app server may open that many against
+the primary and that many again against each read replica, which is why a replica is sized the same
+way. `mattermost_db_max_idle_conns` follows at half of it, the 2:1 ratio Mattermost asks for. If you
 list a subnet rather than single addresses, set `postgresql_app_servers` to the number of
 Mattermost servers behind it. If you change `mattermost_db_max_open_conns`, set it on the
 database server too.
@@ -302,6 +305,11 @@ postgresql_replication_password: "<replication_password from db01's secrets.yml>
 # and on app01
 mattermost_db_replica_hosts: [10.10.1.21]
 ```
+
+That last line is what makes Mattermost actually read from the replica
+(`SqlSettings.DataSourceReplicas`). Without it the replica streams and carries no traffic. An estate
+plan derives it for you: name the primary in the replica node's `primary` and every app server gets
+pointed at the replica.
 
 Install db01 first. On its first run db02 copies db01 with `pg_basebackup`, then keeps following
 it. It stops rather than overwrite a data directory that already holds a database of its own.
@@ -355,6 +363,56 @@ and mount it over the top. `hard` means a write waits for the NFS server to come
 failing, which is what you want for a file store. The monitoring server alerts on the share (RPC
 errors and stale handles on files01, and latency, timeouts and retransmissions as each app server
 sees them) once files01 is in `monitoring_estate` with `nfs` among its components.
+
+### Example: Calls
+
+Calls runs two ways. Up to about 50 people in calls, it runs inside the app servers and needs no
+server of its own. Past that, Mattermost expects a dedicated media server (rtcd), so calls stop
+competing with messaging for the app server's CPU.
+
+What you get depends on the licence. Team Edition is 1-to-1 calls and screen sharing, capped at 40
+minutes. Professional adds group calls and screen sharing with no time limit. Enterprise adds
+recording, transcription, live captions, and rtcd.
+
+Inside the app servers, which is the default:
+
+```yaml
+# app01, nothing to add: mattermost_calls_integrated is already true
+```
+
+On servers of their own:
+
+```yaml
+# calls01 (10.10.1.13)
+deploy_profiles: [calls]
+rtcd_api_sources: [10.10.1.12]
+rtcd_ice_host_override: 203.0.113.20     # the address clients use
+
+# and on app01
+mattermost_rtcd_url: http://10.10.1.13:8045
+```
+
+Either way the media port works the same, and it is where most Calls problems come from:
+
+- Clients reach UDP **and** TCP 8443 on whichever server runs the media, directly. Nginx must not
+  proxy it.
+- Behind NAT or a load balancer, that port has to map through unchanged, and
+  `rtcd_ice_host_override` has to name the address clients actually use. Get this wrong and calls
+  connect but carry no audio, which is exactly what the `calls-port-unreachable` alert watches for.
+- If clients can't reach 8443 at all, Calls needs a TURN server. This toolkit doesn't install one.
+- With no `rtcd_ice_host_override`, rtcd asks `stun.global.calls.mattermost.com` on UDP 3478 what
+  its public address is. Set the override and that lookup stops being needed, which is what you
+  want on a network that doesn't let servers out.
+
+rtcd ships with self-registration off. This toolkit turns it on, which is what lets Mattermost
+register itself on first contact, and Mattermost's guidance allows that on a private network with
+access control. `rtcd_api_sources` is that control: port 8045 stays on loopback until you fill it
+in, and then opens to those addresses alone. Set `rtcd_allow_self_registration: false` if the API
+port has to be reachable more widely, and register Mattermost through rtcd's admin API instead.
+
+More than one rtcd server needs a load balancer in front of them, with `mattermost_rtcd_url`
+pointing at it. Mattermost talks to one URL, so without it only the first server is used. Add a
+second once the first passes 70% CPU.
 
 ### Example: no internet access
 
@@ -870,7 +928,9 @@ contact point. Grafana 13 starts with an empty one:
 | Job | Why |
 |---|---|
 | Add TLS if you installed with `tls_mode: later` | Mattermost is on plain HTTP until you do. Put the certificate and key on the app server, set `tls_mode: provided` and re-run. |
-| Upload the Enterprise licence, or set `mattermost_license_file` | Until then Mattermost runs as a free instance, with Enterprise search and HA switched off. |
+| Upload the Enterprise licence, or set `mattermost_license_file` | Until then Mattermost runs as a free instance, with Enterprise search, HA and the metrics endpoint switched off. If you apply it in the System Console rather than by file, set `mattermost_metrics_enable: true` so Prometheus is pointed at port 8067. |
+| With more than one app server, turn cluster mode on yourself | This toolkit doesn't configure clustering. Set `ClusterSettings.Enable`, `ClusterName` and `GossipPort`, open TCP and UDP 8074 between the app servers, keep every node on the same version and the same `config.json`, and apply the licence to each. |
+| Open the outbound connections | Push notifications, SMTP, AD/LDAP and the plugin marketplace all leave your network, and `install.sh` can't open those. The architecture document lists them per server. |
 | Run a bulk index once licensed | System Console > Environment > Elasticsearch. Search uses the database until you do. |
 | Set up SMTP and push notifications in the System Console | Invitations, password resets and mobile notifications depend on them. |
 | With a read replica, plan how you'd fail over | Replication doesn't fail over by itself. Promote the replica with `pg_ctl promote` (the replica's report has the full command), then point `mattermost_db_host` at it and re-run the app servers. |
