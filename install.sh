@@ -362,14 +362,13 @@ list_sources() {
   for h in "${SOURCE_HOSTS[@]}"; do
     printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' "${h}")${C_OFF}" "${C_DIM}${SOURCE_PURPOSE[${h}]}${C_OFF}"
   done
-  # Not in the list above because it is not needed during an install: the job
-  # service pulls its runner images the first time someone records a call.
-  if has_component calls_offloader; then
-    printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' 'download.docker.com')${C_OFF}" \
-      "${C_DIM}Docker Engine on RHEL (Debian and Ubuntu use their own archive)${C_OFF}"
-    printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' 'registry-1.docker.io, auth.docker.io')${C_OFF}" \
-      "${C_DIM}the Calls recorder and transcriber images, at the first recording${C_OFF}"
-  fi
+  # The components aren't chosen yet when this list is shown, so the job service's
+  # two sites are listed with the condition rather than left out. Neither is needed
+  # during the install: it pulls its runner images at the first recording.
+  printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' 'download.docker.com')${C_OFF}" \
+    "${C_DIM}Docker Engine on RHEL, if this server runs the Calls job service${C_OFF}"
+  printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' 'registry-1.docker.io, auth.docker.io')${C_OFF}" \
+    "${C_DIM}the Calls recorder and transcriber images, at the first recording${C_OFF}"
 }
 
 # Check every source in parallel and print each result as it comes in. Any HTTP
@@ -922,6 +921,10 @@ PY
   [[ -n "${kept}" ]] && info "Kept the settings the questions don't cover: ${kept}"
   return 0
 }
+
+# The components going on this server, set by choose_components. Empty until then,
+# so has_component answers "no" for anything asked before the questions are done.
+SELECTED=""
 
 has_component() { [[ " ${SELECTED} " == *" $1 "* ]]; }
 
