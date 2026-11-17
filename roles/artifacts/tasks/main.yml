@@ -12,7 +12,9 @@
   ansible.builtin.set_fact:
     _art_held: >-
       {{ ({'mattermost': mmd_mattermost_installed} if mmd_mattermost_hold | bool and 'mattermost' in _artifacts_needed else {})
-         | combine({'rtcd': mmd_rtcd_installed} if mmd_rtcd_hold | bool and 'rtcd' in _artifacts_needed else {}) }}
+         | combine({'rtcd': mmd_rtcd_installed} if mmd_rtcd_hold | bool and 'rtcd' in _artifacts_needed else {})
+         | combine({'calls_offloader': mmd_offloader_installed}
+                   if mmd_offloader_hold | bool and 'calls_offloader' in _artifacts_needed else {}) }}
 
 - name: Read the last install's artifact records
   ansible.builtin.slurp:
@@ -69,6 +71,7 @@
       vars:
         _pins:
           rtcd: "{{ mmd_rtcd_installed if mmd_rtcd_hold | bool else rtcd_version }}"
+          calls_offloader: "{{ mmd_offloader_installed if mmd_offloader_hold | bool else calls_offloader_version }}"
           opensearch: "{{ opensearch_version }}"
           prometheus: "{{ prometheus_version }}"
           node_exporter: "{{ node_exporter_version }}"

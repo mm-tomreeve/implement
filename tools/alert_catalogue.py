@@ -209,6 +209,15 @@ CATALOGUE = [
         "action": "Calls may connect but carry no audio. Check rtcd is running and listening on the media port, and the firewall allows it.",
     },
 
+    {
+        "id": "jobs-api-unreachable", "module": "calls_offloader", "title": "Calls job service unreachable",
+        "expr": 'probe_success{job="blackbox_http_jobs"}',
+        "direction": "below", "tiers": {"critical": 1}, "for": "3m", "unit": "",
+        "summary": "The Calls job service on {{ $labels.instance }} isn't answering from the monitoring server",
+        "action": "Recording, transcription and live captions stop; calls themselves carry on. Check "
+                  "`systemctl status calls-offloader docker` on that server, and that port 4545 is open to it.",
+    },
+
     # ------------------------------------------------------------------ mattermost
     {
         "id": "mm-api-errors", "module": "mattermost", "title": "Mattermost API errors",
@@ -819,6 +828,28 @@ LOG_CATALOGUE = [
                   "failing integration are the usual causes.",
         "examples": [_pg("ERROR", "57014", "canceling statement due to statement timeout")],
         "counter_examples": [_pg("ERROR", "23505", "duplicate key value violates unique constraint \"idx_posts\"")],
+    },
+
+    # ------------------------------------------------------------------ calls job service
+    # calls-offloader audits job failures at debug level, so its own journal says
+    # little at the default log level. What does say so reliably is the Calls plugin
+    # on the app server, which is also where an admin would look first.
+    {
+        "id": "calls-job-errors", "module": "calls_offloader", "title": "Recording or transcription failing",
+        "source": "mattermost", "parser": "json",
+        "match": [("level", "error"), ("plugin_id", r"com\.mattermost\.calls"),
+                  ("msg", r".*([Jj]ob|[Rr]ecord|[Tt]ranscri|[Cc]aption).*")],
+        "window": "15m", "direction": "above", "tiers": {"warning": 0, "critical": 5}, "for": "0s", "unit": "",
+        "summary": "Calls on {{ $labels.host_name }} logged {{ printf \"%.0f\" $values.A.Value }} job errors in 15 minutes",
+        "action": "People press record and get nothing. Check the job service is up, that its runner images are "
+                  "present (`docker image ls` on the job server), and that the job containers can reach this "
+                  "server's site URL.",
+        "examples": [_mm("error", "failed to create recording job", "calls/recordings.go:112",
+                         plugin_id="com.mattermost.calls",
+                         error="failed to pull docker image: Get \"https://registry-1.docker.io/v2/\": dial tcp: i/o timeout")],
+        "counter_examples": [_mm("error", "failed to get user", "calls/api.go:88", plugin_id="com.mattermost.calls"),
+                             _mm("info", "recording job started", "calls/recordings.go:98",
+                                 plugin_id="com.mattermost.calls")],
     },
 
     # ------------------------------------------------------------------ every server (journal)

@@ -53,7 +53,7 @@
                else 'there is no Loki on this server and logging_loki_url is empty') }}
 
 # A task of its own because monitoring_site_url's default looks at mmd_selected.
-- name: Add blackbox_exporter when there's a site or Calls port to check
+- name: Add blackbox_exporter when there's a site, Calls port or job service to check
   ansible.builtin.set_fact:
     mmd_selected: "{{ mmd_component_order | select('in', mmd_selected + ['blackbox_exporter']) | list }}"
   when:
@@ -61,4 +61,6 @@
     - >-
       monitoring_site_url | length > 0
       or 'rtcd' in mmd_selected
+      or 'calls_offloader' in mmd_selected
       or monitoring_estate | selectattr('components', 'contains', 'rtcd') | list | length > 0
+      or monitoring_estate | selectattr('components', 'contains', 'calls_offloader') | list | length > 0

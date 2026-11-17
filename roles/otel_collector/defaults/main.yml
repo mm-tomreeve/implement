@@ -9,6 +9,7 @@ otel_collector_units:
   postgresql: postgresql
   nginx: nginx
   rtcd: rtcd
+  calls_offloader: calls-offloader
   opensearch: opensearch
   nfs: nfs-server
   prometheus: prometheus

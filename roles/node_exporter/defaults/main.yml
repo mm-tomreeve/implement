@@ -4,7 +4,8 @@ node_exporter_user: node_exporter
 # client side read; on a server with no NFS mounts it produces nothing.
 node_exporter_collectors: [systemd, mountstats]
 # The systemd collector only reports the units Mattermost Parthenon cares about.
-node_exporter_units: [mattermost, postgresql, nginx, rtcd, opensearch, nfs-server, prometheus, grafana,
+node_exporter_units: [mattermost, postgresql, nginx, rtcd, calls-offloader, docker, opensearch, nfs-server,
+                      prometheus, grafana,
                       node_exporter, postgres_exporter, nginx_exporter, opensearch_exporter, blackbox_exporter,
                       "{{ mmd_chrony_service }}"]
 # firewalld is only watched when we manage it; otherwise "not running" may be deliberate.

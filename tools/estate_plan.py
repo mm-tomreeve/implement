@@ -58,12 +58,14 @@ PROFILE_COMPONENTS = {
     "app": ["mattermost", "nginx"],
     "database": ["postgresql"],
     "calls": ["rtcd"],
+    "jobs": ["calls_offloader"],
     "search": ["opensearch"],
     "storage": ["nfs"],
     "monitoring": ["prometheus", "loki", "grafana"],
     "metrics": ["prometheus", "loki"],
     "dashboards": ["grafana"],
-    "all-in-one": ["postgresql", "mattermost", "nginx", "rtcd", "opensearch", "prometheus", "loki", "grafana"],
+    "all-in-one": ["postgresql", "mattermost", "nginx", "rtcd", "calls_offloader", "opensearch",
+                   "prometheus", "loki", "grafana"],
 }
 
 
@@ -83,6 +85,7 @@ PORT_SETTING = {
     "postgresql": "mattermost_db_port",
     "opensearch": "opensearch_port",
     "rtcd": "rtcd_api_port",
+    "calls_offloader": "calls_offloader_api_port",
     "nfs": "nfs_port",
     "loki": "loki_port",
     "prometheus": "prometheus_port",
@@ -306,6 +309,7 @@ def checks_for_node(plan, node_name):
         peers("postgresql", "the database")
         peers("opensearch", "search")
         peers("rtcd", "Calls")
+        peers("calls_offloader", "call recording")
         peers("nfs", "file storage")
     if "postgresql" in components and node.get("primary"):
         primary = by_name.get(node["primary"])
@@ -484,6 +488,7 @@ def derive_answers(plan, node_name, estate_secrets=None):
     db_primaries = [n for n in db_nodes if not n.get("primary")]
     db_primary = db_primaries[0] if db_primaries else None
     calls_nodes = nodes_with(nodes, "rtcd")
+    jobs_nodes = nodes_with(nodes, "calls_offloader")
     search_nodes = nodes_with(nodes, "opensearch")
     storage_nodes = nodes_with(nodes, "nfs")
     monitoring_nodes = nodes_with(nodes, "prometheus")
@@ -551,6 +556,17 @@ def derive_answers(plan, node_name, estate_secrets=None):
             followups.append("Calls runs inside this server, so UDP and TCP 8443 have to reach it "
                               "directly rather than through the proxy. Past about 50 people in calls, "
                               "move it to an rtcd server of its own.")
+        # Recording, transcription and live captions all come from the job service.
+        # Mattermost talks to one URL, so several of them need something in front.
+        if jobs_nodes:
+            out["mattermost_job_service_url"] = "http://%s:4545" % jobs_nodes[0]["address"]
+            if len(jobs_nodes) > 1:
+                followups.append("This plan has %d Calls job servers. Put them behind a load balancer and "
+                                  "point mattermost_job_service_url at it, or Mattermost only uses %s."
+                                  % (len(jobs_nodes), jobs_nodes[0]["name"]))
+            if plan.get("licence") not in (None, "", "enterprise"):
+                followups.append("Call recording, transcription and live captions are Enterprise features. "
+                                  "On this licence the job service installs but has nothing to do.")
         if search_nodes:
             out["mattermost_opensearch_url"] = "https://%s:9200" % search_nodes[0]["address"]
             if "mattermost_opensearch_password" not in supplied:
@@ -594,6 +610,16 @@ def derive_answers(plan, node_name, estate_secrets=None):
         followups.append("If clients reach this server through NAT or a different address, set "
                           "rtcd_ice_host_override to the address they use. Calls connect without it, "
                           "but carry no audio.")
+
+    if has("calls_offloader"):
+        if app_nodes:
+            out["calls_offloader_api_sources"] = [n["address"] for n in app_nodes]
+        followups.append("This server runs job containers, so it needs Docker. The install adds it, from "
+                          "the distribution's archive on Debian and Ubuntu and from Docker's own repository "
+                          "on RHEL. Set calls_offloader_manage_docker to false if you manage Docker here.")
+        followups.append("The job service pulls its runner images from Docker Hub the first time someone "
+                          "records a call. On a server with no route out, build the offline bundle with "
+                          "--with-job-images, or point calls_offloader_image_registry at an internal mirror.")
 
     if has("opensearch") and app_nodes:
         out["opensearch_allowed_clients"] = [n["address"] for n in app_nodes]

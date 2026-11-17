@@ -89,6 +89,15 @@
   failed_when: false
   when: mmd_rtcd_url | length > 0
 
+- name: Check the Calls job service is reachable from Mattermost
+  ansible.builtin.uri:
+    url: "{{ mmd_job_service_url | regex_replace('/+$', '') }}/version"
+    timeout: 10
+    return_content: true
+  register: _v_mm_jobs
+  failed_when: false
+  when: mmd_job_service_url | length > 0
+
 - name: Check OpenSearch is reachable from Mattermost
   ansible.builtin.uri:
     url: "{{ mmd_opensearch_url | regex_replace('/+$', '') }}/_cluster/health"
@@ -188,6 +197,29 @@
         name: rtcd reachable from Mattermost
         status: "{{ 'skip' if mmd_rtcd_url | length == 0 else ('pass' if _v_mm_rtcd.status | default(0) == 200 else 'fail') }}"
         detail: "{{ ('HTTP ' ~ (_v_mm_rtcd.status | default('none'))) if mmd_rtcd_url | length > 0 else 'no rtcd configured' }}"
+      - component: mattermost
+        name: Calls plugin points at the job service
+        status: >-
+          {{ 'skip' if mmd_job_service_url | length == 0
+             else ('pass' if (_cfg.PluginSettings.Plugins['com.mattermost.calls'].jobserviceurl | default('')) == mmd_job_service_url else 'fail') }}
+        detail: "{{ mmd_job_service_url if mmd_job_service_url | length > 0 else 'no recording or transcription' }}"
+      - component: mattermost
+        name: Job service reachable from Mattermost
+        status: "{{ 'skip' if mmd_job_service_url | length == 0 else ('pass' if _v_mm_jobs.status | default(0) == 200 else 'fail') }}"
+        detail: >-
+          {{ ('HTTP ' ~ (_v_mm_jobs.status | default('none'))) if mmd_job_service_url | length > 0
+             else 'no job service configured' }}
+      - component: mattermost
+        name: Uploads big enough for a full recording
+        severity: warning
+        status: >-
+          {{ 'skip' if not (mmd_calls_recording | bool)
+             else ('pass' if (_cfg.FileSettings.MaxFileSize | default(0) | int) >= (mmd_recording_max_mb | int) * 1048576 else 'fail') }}
+        detail: >-
+          {{ 'recording is off' if not (mmd_calls_recording | bool)
+             else ((_cfg.FileSettings.MaxFileSize | default(0) | int / 1048576) | round | int ~ ' MB allowed, '
+                   ~ mmd_recording_max_mb ~ ' MB needed for ' ~ mattermost_calls_max_recording_minutes
+                   ~ ' minutes at ' ~ mattermost_calls_recording_quality ~ ' quality') }}
       - component: mattermost
         name: OpenSearch reachable from Mattermost
         status: "{{ 'skip' if mmd_opensearch_url | length == 0 else ('pass' if _v_mm_search.status | default(0) == 200 else 'fail') }}"

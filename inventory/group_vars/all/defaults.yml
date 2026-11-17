@@ -83,6 +83,30 @@ mattermost_config_overrides: {}
 mattermost_calls_integrated: true
 mattermost_calls_port: 8443
 
+# Call recording, transcription and live captions. These need a job service
+# (calls_offloader on this host, or mattermost_job_service_url) and an Enterprise
+# licence. auto = on when both are there.
+mattermost_calls_recording: auto
+# 15 to 180. The longer this is, the bigger the file that has to upload at the end.
+mattermost_calls_max_recording_minutes: 60
+# low (720p15), medium (720p20) or high (1080p20). Higher quality means fewer
+# concurrent recordings per job server and a much bigger file.
+mattermost_calls_recording_quality: medium
+# Transcribe the recording once the call ends. Needs recording.
+mattermost_calls_transcriptions: true
+# whisper.cpp model: tiny, base or small. Bigger is more accurate and much slower:
+# on 4 threads a 60-minute call takes roughly 3m30s (tiny), 7m (base) or 23m (small).
+mattermost_calls_transcriber_model: base
+mattermost_calls_transcriber_threads: 2
+# Live captions during the call. Off by default: it is the only one of the three
+# that has to keep up in real time, and it holds a transcriber per call.
+mattermost_calls_live_captions: false
+mattermost_calls_live_captions_model: tiny
+mattermost_calls_live_captions_transcribers: 1
+# The address job containers use to reach Mattermost, when the site URL isn't one
+# they can resolve or route to. Added to AllowCorsFrom as well.
+mattermost_calls_internal_site_url: ""
+
 # Database as Mattermost sees it. The PostgreSQL role uses the same values.
 mattermost_db_host: ""          # blank = local PostgreSQL
 mattermost_db_port: 5432
@@ -113,6 +137,7 @@ mattermost_s3_path_prefix: ""
 
 # Remote services Mattermost should use when they are not on this host.
 mattermost_rtcd_url: ""         # e.g. http://rtcd01.internal:8045
+mattermost_job_service_url: ""  # e.g. http://jobs01.internal:4545 (call recording)
 mattermost_opensearch_url: ""   # e.g. https://search01.internal:9200
 mattermost_opensearch_username: mattermost
 mattermost_opensearch_password: ""
@@ -176,7 +201,9 @@ postgresql_slot_wal_keep_pct: 20
 nginx_server_name: "{{ mattermost_site_url | urlsplit('hostname') }}"
 # Mattermost app servers behind this proxy (host:port). Blank = local Mattermost.
 nginx_upstreams: []
-nginx_client_max_body_size: 101M   # Mattermost's 100 MiB MaxFileSize plus overhead
+# auto = Mattermost's MaxFileSize plus 1 MB of overhead. That is 101M normally,
+# and more where call recording is on, because a recording uploads through here.
+nginx_client_max_body_size: auto
 nginx_hsts: false
 nginx_tls_profile: compatible     # compatible = TLS 1.2 and 1.3, modern = TLS 1.3 only
 nginx_cache_dir: /var/cache/nginx/mattermost
@@ -205,6 +232,43 @@ rtcd_api_sources: []
 # Set this to false and register Mattermost through rtcd's admin API instead if
 # the API port has to be reachable more widely than that.
 rtcd_allow_self_registration: true
+
+# ---------------------------------------------------------------- calls job service
+# calls-offloader runs call recording, transcription and live captions. Each job
+# is a short-lived container, so this server needs a Docker API, which no other
+# component here does. Mattermost's starting size for it is 8 vCPU and 16 GB.
+calls_offloader_version: latest
+# With the version left at latest, re-runs keep the installed binary unless this
+# is set (install.sh --upgrade sets it too), the same as rtcd.
+calls_offloader_allow_upgrade: false
+calls_offloader_user: calls-offloader
+calls_offloader_dir: /opt/calls-offloader
+calls_offloader_conf_dir: /etc/calls-offloader
+calls_offloader_data_dir: /var/lib/calls-offloader
+calls_offloader_api_port: 4545
+# Mattermost servers allowed to reach the job service API. Empty = localhost only.
+calls_offloader_api_sources: []
+# As with rtcd: upstream ships this off, and turning it on is what lets Mattermost
+# register itself. Safe only because calls_offloader_api_sources is the access
+# control. Anyone who can reach port 4545 with this on can make this server run
+# containers, so never open it widely.
+calls_offloader_allow_self_registration: true
+# auto = from the host's CPU count and the recording quality, using Mattermost's
+# published benchmarks (8 vCPU sustains 8 low, 6 medium or 4 high recordings).
+calls_offloader_max_concurrent_jobs: auto
+calls_offloader_failed_jobs_retention: 30d
+# Where job runner images come from. Point it at an internal mirror if you have one.
+calls_offloader_image_registry: mattermost
+# Set to "host" where Docker's default bridge can't reach Mattermost (some VMs).
+calls_offloader_docker_network: ""
+# Install and manage Docker. Set it to false if you manage Docker yourself: the
+# role then checks the socket is there and usable, and installs nothing.
+calls_offloader_manage_docker: true
+# Job runner images. These follow the Calls *plugin*, not calls-offloader: the
+# plugin has the tags built in. Check them when you upgrade Mattermost, and see
+# the job service section of the README.
+calls_offloader_recorder_image: "mattermost/calls-recorder:v0.8.8"
+calls_offloader_transcriber_image: "mattermost/calls-transcriber:v0.7.1"
 
 # ---------------------------------------------------------------- opensearch
 opensearch_version: "2.19.7"

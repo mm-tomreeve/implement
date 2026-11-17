@@ -31,6 +31,7 @@ PORT_SOURCE = {
     ("mattermost", 8443): "mattermost_calls_port",
     ("rtcd", 8045): "rtcd_api_port",
     ("rtcd", 8443): "rtcd_rtc_port",
+    ("calls_offloader", 4545): "calls_offloader_api_port",
     ("opensearch", 9200): "opensearch_port",
     ("nfs", 2049): "nfs_port",
     ("prometheus", 9090): "prometheus_port",

@@ -6,6 +6,11 @@ postgres://{{ mattermost_db_user | urlencode | replace('/', '%2F') }}:{{ mmd_sec
 {% set dsn = dsn_for(mmd_db_host, mmd_db_sslmode) %}
 ServiceSettings:
   SiteURL: {{ mattermost_site_url | to_json }}
+{% if mmd_calls_recording | bool and mmd_recorder_site_url | length > 0 %}
+  # Job containers reach Mattermost on an internal address, so the browser inside
+  # the recorder sends that Origin. Without it here, every recording is refused.
+  AllowCorsFrom: {{ mmd_recorder_site_url | to_json }}
+{% endif %}
   ListenAddress: {{ ((mmd_mattermost_listen if mmd_mattermost_listen != '0.0.0.0' else '') ~ ':' ~ mattermost_port) | to_json }}
   EnableLocalMode: true
   LocalModeSocketLocation: {{ mattermost_local_socket | to_json }}
@@ -42,6 +47,14 @@ ClusterSettings:
 {% endif %}
 FileSettings:
   DriverName: {{ mattermost_file_driver | to_json }}
+{% if mmd_calls_recording | bool %}
+  # A recording is uploaded as an ordinary attachment when the call ends, so it has
+  # to fit through MaxFileSize and the proxy's body limit or it is lost at the last
+  # step. {{ mattermost_calls_max_recording_minutes }} minutes at
+  # {{ mattermost_calls_recording_quality }} quality is about {{ mmd_recording_max_mb }} MB.
+  # Raising this raises it for every upload, not just recordings.
+  MaxFileSize: {{ (mmd_recording_max_mb | int) * 1048576 }}
+{% endif %}
 {% if mattermost_file_driver == 'local' %}
   Directory: {{ (mattermost_data_dir ~ '/') | to_json }}
 {% else %}
@@ -58,10 +71,26 @@ LogSettings:
 PluginSettings:
   Directory: {{ mattermost_plugin_dir | to_json }}
   ClientDirectory: {{ mattermost_client_plugin_dir | to_json }}
-{% if mmd_rtcd_url | length > 0 %}
+{% if mmd_rtcd_url | length > 0 or mmd_job_service_url | length > 0 %}
   Plugins:
     com.mattermost.calls:
+{% if mmd_rtcd_url | length > 0 %}
       rtcdserviceurl: {{ mmd_rtcd_url | to_json }}
+{% endif %}
+{% if mmd_job_service_url | length > 0 %}
+      jobserviceurl: {{ mmd_job_service_url | to_json }}
+      enablerecordings: {{ mmd_calls_recording | bool | to_json }}
+      maxrecordingduration: {{ mattermost_calls_max_recording_minutes | int }}
+      recordingquality: {{ mattermost_calls_recording_quality | to_json }}
+      enabletranscriptions: {{ (mmd_calls_recording | bool and mattermost_calls_transcriptions | bool) | to_json }}
+      transcribeapi: "whisper.cpp"
+      transcribermodelsize: {{ mattermost_calls_transcriber_model | to_json }}
+      transcribernumthreads: {{ mattermost_calls_transcriber_threads | int }}
+      enablelivecaptions: {{ (mmd_calls_recording | bool and mattermost_calls_transcriptions | bool
+                              and mattermost_calls_live_captions | bool) | to_json }}
+      livecaptionsmodelsize: {{ mattermost_calls_live_captions_model | to_json }}
+      livecaptionsnumtranscribers: {{ mattermost_calls_live_captions_transcribers | int }}
+{% endif %}
 {% endif %}
 {% if mmd_mattermost_metrics | bool %}
 MetricsSettings:

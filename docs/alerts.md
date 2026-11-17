@@ -202,6 +202,12 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 | rtcd media errors `rtcd-errors` | > 10 | > 50 | > 200 | 0s | Check `journalctl -u rtcd` for the error types. Network paths and ICE settings are the usual cause. |
 | Calls packet loss reported by clients `rtcd-packet-loss` | > 2% | > 5% | > 10% | 10m | Users will hear choppy audio. Check bandwidth to the rtcd server and UDP buffer overflows. |
 
+### Call recording
+
+| Check | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|
+| Calls job service unreachable `jobs-api-unreachable` |  |  | < 1 | 3m | Recording, transcription and live captions stop; calls themselves carry on. Check `systemctl status calls-offloader docker` on that server, and that port 4545 is open to it. |
+
 ### NFS storage
 
 | Check | Info | Warning | Critical | For | What to do |
@@ -271,6 +277,12 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 |---|---|---|---|---|---|---|---|
 | OpenSearch ran out of heap `os-log-oom` | `opensearch` logs where line matches `java\.lang\.OutOfMemoryError` | 15m |  |  | > 0 | 0s | The JVM is unstable after this; restart OpenSearch, then raise opensearch_heap_mb or add memory. |
 | OpenSearch circuit breaker tripping `os-log-circuit-breaker` | `opensearch` logs where line matches `CircuitBreakingException` | 10m |  | > 5 |  | 0s | Searches or indexing are being refused. The heap is too small for the load; raise opensearch_heap_mb. |
+
+### Call recording log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| Recording or transcription failing `calls-job-errors` | `mattermost` logs where `level` is `error` and `plugin_id` is `com\.mattermost\.calls` and `msg` is `.*([Jj]ob\|[Rr]ecord\|[Tt]ranscri\|[Cc]aption).*` | 15m |  | > 0 | > 5 | 0s | People press record and get nothing. Check the job service is up, that its runner images are present (`docker image ls` on the job server), and that the job containers can reach this server's site URL. |
 
 ### Monitoring log checks
 

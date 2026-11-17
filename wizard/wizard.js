@@ -12,6 +12,7 @@
     app: "App server (Mattermost + Nginx)",
     database: "Database (PostgreSQL)",
     calls: "Calls (rtcd)",
+    jobs: "Recording (calls-offloader)",
     search: "Search (OpenSearch)",
     storage: "File storage (NFS)",
     monitoring: "Monitoring (Prometheus + Loki + Grafana)",
@@ -19,7 +20,7 @@
     dashboards: "Dashboards (Grafana)",
   };
   const NAME_PREFIX = { core: "core", app: "app", database: "db", calls: "calls",
-                        search: "search", storage: "files", monitoring: "mon",
+                        jobs: "jobs", search: "search", storage: "files", monitoring: "mon",
                         metrics: "metrics", dashboards: "graf" };
 
   let nodes = [];     // [{id, role, replica, primaryId, name, address}]
@@ -78,6 +79,9 @@
       lokiUrl: el("f-loki").value.trim(),
       callsMode: qs('input[name="calls"]:checked').value,
       callsServers: Math.max(1, parseInt(el("f-calls-servers").value, 10) || 1),
+      recording: el("f-recording").checked,
+      recordingPlacement: qs('input[name="recording"]:checked').value,
+      recordingServers: Math.max(1, parseInt(el("f-recording-servers").value, 10) || 1),
       search: qs('input[name="search"]:checked').value,
       ha: el("f-ha").checked,
       appServers: el("f-ha").checked ? Math.max(2, parseInt(el("f-app-servers").value, 10) || 2) : 1,
@@ -102,8 +106,9 @@
   // The answers that change the shape of the estate. Anything else (a URL, a
   // name) can be edited without throwing away the nodes already set up.
   function shapeSignature(s) {
-    return [s.seats, s.tier, s.callsMode, s.callsServers, s.observability,
-            s.monitoringLayout, s.ha, s.appServers, s.dbReplicas, s.fileStorage, s.search].join("|");
+    return [s.seats, s.tier, s.callsMode, s.callsServers, s.recording, s.recordingPlacement,
+            s.recordingServers, s.observability, s.monitoringLayout, s.ha, s.appServers,
+            s.dbReplicas, s.fileStorage, s.search].join("|");
   }
 
   function buildRecommendation(s) {
@@ -119,6 +124,11 @@
     // own. Past that Mattermost expects rtcd, so messaging doesn't pay for media.
     if (s.callsMode === "rtcd") {
       for (let i = 0; i < s.callsServers; i++) roles.push({ role: "calls" });
+    }
+    // Recording and transcription take whole CPUs for minutes at a time, and the
+    // job server runs containers as root. Both are reasons to keep it apart.
+    if (recordingOn(s) && s.recordingPlacement === "own") {
+      for (let i = 0; i < s.recordingServers; i++) roles.push({ role: "jobs" });
     }
     if (s.observability === "managed") {
       // Grafana is the only part of the stack people log in to, so by default it
@@ -255,6 +265,7 @@
     { key: "database", roles: ["database"], title: "Database" },
     { key: "search", roles: ["search"], title: "Search" },
     { key: "calls", roles: ["calls"], title: "Calls" },
+    { key: "jobs", roles: ["jobs"], title: "Recording" },
     { key: "storage", roles: ["storage"], title: "File storage" },
     { key: "monitoring", roles: ["monitoring", "metrics", "dashboards"], title: "Monitoring" },
   ];
@@ -800,7 +811,12 @@
         " directly on 8443, UDP and TCP, so behind NAT or a load balancer that port has to map " +
         "through unchanged and the ICE host override has to name the address clients use. Without " +
         "it, calls connect and carry no audio. If clients can't reach 8443 at all, Calls needs a " +
-        "TURN server, which this toolkit doesn't install.";
+        "TURN server, which this toolkit doesn't install." +
+        (nodes.some(n => nodeComponents(n).includes("calls_offloader"))
+          ? " Recording runs the other way round: the job containers connect out to Mattermost to " +
+            "join the call and to upload the file, so the job server needs a route to the app " +
+            "servers, not just an open port of its own."
+          : "");
     } else {
       note.style.display = "none";
     }
@@ -911,6 +927,20 @@
                  "Calls and messaging share the same CPU. Mattermost expects rtcd past about 50 people."]);
     }
 
+    const jobs = count("jobs");
+    const recordingOnCalls = state.s.recording && state.s.recordingPlacement === "calls" && count("calls");
+    if (jobs) {
+      rows.push([jobs > 1 ? jobs + " Calls job servers" : "Recording on its own server",
+                 "Recording, transcription and live captions run as containers, away from live media. " +
+                 (jobs > 1
+                   ? "Mattermost points at one job service URL, so these need a load balancer."
+                   : "Recording stops if it does; calls carry on.")]);
+    } else if (recordingOnCalls) {
+      rows.push(["Recording on the Calls servers",
+                 "One less server, but a transcription job takes CPU from the calls running next to it. " +
+                 "Split it out before recording becomes routine."]);
+    }
+
     if (count("monitoring") || count("metrics")) {
       rows.push([count("dashboards") ? "Grafana on its own server" : "Monitoring on one server",
                  count("dashboards")
@@ -965,6 +995,7 @@
       tls_mode: state.s.tlsMode,
       file_storage: state.s.fileStorage,
       calls: state.s.callsMode,
+      recording: recordingOn(state.s) ? state.s.recordingPlacement : "none",
       observability: state.s.observability,
       monitoring_scrape_sources: state.s.scrapeSources,
       logging_loki_url: state.s.lokiUrl,
@@ -990,6 +1021,7 @@
       "tls_mode: " + plan.tls_mode,
       "file_storage: " + plan.file_storage,
       "calls: " + plan.calls,
+      "recording: " + plan.recording,
       "observability: " + plan.observability,
     ];
     if (plan.observability === "external") {
@@ -1034,6 +1066,12 @@
       out.push("Install every app server, then check the cluster: verify warns until each peer has joined. Keep them on the same Mattermost version.");
     }
     if (hasRole("calls")) out.push("If clients reach the Calls server through NAT or a different address, fill in rtcd_ice_host_override on that server.");
+    if (hasRole("jobs") || plan.recording === "calls") {
+      out.push("Recording and transcription are Enterprise features and need the licence applied before they do anything.");
+      out.push("The job service pulls its recorder and transcriber images from Docker Hub the first time someone records a call. Build the offline bundle with --with-job-images, or point calls_offloader_image_registry at an internal mirror, if that server has no route out.");
+      out.push("Check calls_offloader_recorder_image and calls_offloader_transcriber_image after a Mattermost upgrade: those tags follow the Calls plugin, not the job service.");
+      if (plan.nodes.filter(n => n.role === "jobs").length > 1) out.push("Put a load balancer in front of the job servers and point mattermost_job_service_url at it. Mattermost only talks to one.");
+    }
     out.push("None of that is in the estate plan on purpose. Secrets and certificate files never leave your servers.");
     return out;
   }
@@ -1142,6 +1180,12 @@
     setRadio("calls", callsNodes.length ? "rtcd"
       : (["integrated", "none"].includes(plan.calls) ? plan.calls : "none"));
     el("f-calls-servers").value = Math.max(1, callsNodes.length);
+    const jobsNodes = plan.nodes.filter(n => (n.profiles || []).includes("jobs"));
+    // "calls" means the job service shares the Calls servers, so there is no node
+    // of its own to count: the plan line is the only record of it.
+    el("f-recording").checked = jobsNodes.length > 0 || plan.recording === "calls";
+    setRadio("recording", jobsNodes.length ? "own" : (plan.recording === "calls" ? "calls" : "own"));
+    el("f-recording-servers").value = Math.max(1, jobsNodes.length);
     updateCallsNote();
 
     nodes = plan.nodes.map(n => ({
@@ -1232,8 +1276,57 @@
     } else if (mode === "rtcd") {
       note.textContent = "Mattermost points at one rtcd URL, so more than one needs a load balancer in front.";
     }
+    updateRecordingNote();
+  }
+
+  // Recording, transcription and live captions are run by a separate service
+  // (calls-offloader), one container per job. Enterprise only, and only worth
+  // offering once Calls is actually switched on.
+  function recordingOn(s) {
+    return s.recording && s.tier === "enterprise" && s.callsMode !== "none";
+  }
+
+  function updateRecordingNote() {
+    const tier = el("f-tier").value;
+    const mode = qs('input[name="calls"]:checked').value;
+    const open = tier === "enterprise" && mode !== "none";
+    const box = el("f-recording");
+    el("recording-block").style.display = mode === "none" ? "none" : "";
+    box.disabled = !open;
+    if (!open) box.checked = false;
+    const on = box.checked;
+    el("recording-options").style.display = on ? "" : "none";
+
+    // With Calls inside the app servers there is no Calls server to share, so
+    // the job service either gets its own box or there is nowhere else for it.
+    const onCalls = el("f-recording-on-calls");
+    onCalls.disabled = mode !== "rtcd";
+    el("recording-on-calls-label").textContent = mode === "rtcd"
+      ? "On the Calls server" : "On the Calls server (needs dedicated Calls servers)";
+    if (onCalls.disabled && onCalls.checked) setRadio("recording", "own");
+    const placement = qs('input[name="recording"]:checked').value;
+    el("field-recording-servers").style.display = (on && placement === "own") ? "" : "none";
+
+    const note = el("recording-note");
+    if (!open) {
+      note.textContent = mode === "none" ? ""
+        : "Recording, transcription and live captions are Enterprise features.";
+      return;
+    }
+    if (!on) {
+      note.textContent = "Adds calls-offloader, which runs each recording or transcription as a container. "
+        + "It is the only server here that needs Docker.";
+      return;
+    }
+    const where = placement === "own" ? "its own server" : "the Calls server";
+    note.textContent = "Runs on " + where + ". Mattermost sizes it at 8 vCPU / 16 GB, which carries about "
+      + "six medium-quality recordings at once; transcription is slower again. Recordings upload back into "
+      + "Mattermost as attachments, so the wizard raises the upload limit on the app servers to match."
+      + (placement === "calls" ? " A transcription job will take CPU from live calls on that server." : "");
   }
   qsa('input[name="calls"]').forEach(r => r.addEventListener("change", updateCallsNote));
+  qsa('input[name="recording"]').forEach(r => r.addEventListener("change", updateRecordingNote));
+  el("f-recording").addEventListener("change", updateRecordingNote);
   el("f-tier").addEventListener("change", updateCallsNote);
 
   // The seat band proposes a shape; the Availability group is where it's decided.

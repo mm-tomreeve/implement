@@ -1,0 +1,79 @@
+---
+- name: Probe the calls-offloader service
+  ansible.builtin.command: systemctl is-active calls-offloader  # noqa: command-instead-of-module
+  register: _v_offl_service
+  changed_when: false
+  failed_when: false
+
+- name: Ask the job service for its version
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ calls_offloader_api_port }}/version"
+    return_content: true
+    timeout: 10
+  register: _v_offl_version
+  failed_when: false
+
+- name: Check the service account can reach Docker
+  ansible.builtin.command: >-
+    runuser -u {{ calls_offloader_user }} -- docker version --format {% raw %}'{{.Server.Version}}'{% endraw %}
+  register: _v_offl_docker
+  changed_when: false
+  failed_when: false
+
+- name: Measure the space left where jobs write
+  ansible.builtin.set_fact:
+    _v_offl_free_mb: >-
+      {%- set ns = namespace(size=0, mount='') -%}
+      {%- for m in ansible_facts['mounts'] | default([]) -%}
+      {%-   set prefix = m.mount.rstrip('/') ~ '/' -%}
+      {%-   if (calls_offloader_docker_root ~ '/').startswith(prefix) and prefix | length > ns.mount | length -%}
+      {%-     set ns.mount = prefix -%}{%- set ns.size = m.size_available | default(0) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ (ns.size / 1048576) | int }}
+
+- name: Keep the calls-offloader version for the report
+  ansible.builtin.set_fact:
+    mmd_versions: >-
+      {{ mmd_versions | default({}) | combine({'calls_offloader':
+           _v_offl_version.json.buildVersion | default(mmd_artifacts.calls_offloader.version | default('unknown'))}) }}
+
+- name: Record calls-offloader checks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: record_results
+  vars:
+    _missing: "{{ mmd_offloader_images | default([]) | rejectattr('present') | map(attribute='image') | list }}"
+    # Every job running at once, each writing a full-length recording.
+    _needed_mb: "{{ (mmd_offloader_max_jobs | int) * (mmd_recording_max_mb | int) }}"
+    checks:
+      - component: calls_offloader
+        name: Service is active
+        ok: "{{ _v_offl_service.stdout == 'active' }}"
+        detail: "systemctl reports {{ _v_offl_service.stdout }}"
+      - component: calls_offloader
+        name: API answers on port {{ calls_offloader_api_port }}
+        ok: "{{ _v_offl_version.status | default(0) == 200 }}"
+        detail: "{{ _v_offl_version.content | default('no answer') | truncate(120) }}"
+      - component: calls_offloader
+        name: Docker reachable as {{ calls_offloader_user }}
+        ok: "{{ _v_offl_docker.rc == 0 }}"
+        detail: >-
+          {{ ('Docker Engine ' ~ _v_offl_docker.stdout | trim) if _v_offl_docker.rc == 0
+             else 'no answer from the Docker socket, so no job can start: ' ~ (_v_offl_docker.stderr | default('') | truncate(120)) }}
+      - component: calls_offloader
+        name: Job runner images are on this server
+        severity: warning
+        ok: "{{ _missing | length == 0 }}"
+        detail: >-
+          {{ 'recorder and transcriber images present' if _missing | length == 0
+             else (_missing | join(', ') ~ ' will be pulled from ' ~ calls_offloader_image_registry
+                   ~ ' when the first job runs, which needs a route out') }}
+      - component: calls_offloader
+        name: Room for {{ mmd_offloader_max_jobs }} concurrent recordings
+        severity: warning
+        ok: "{{ (_v_offl_free_mb | int) > (_needed_mb | int) }}"
+        detail: >-
+          {{ (_v_offl_free_mb | int) }} MB free on {{ calls_offloader_docker_root }},
+          {{ _needed_mb }} MB needed at {{ mattermost_calls_recording_quality }} quality
+          for {{ mattermost_calls_max_recording_minutes }} minutes
