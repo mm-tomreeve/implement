@@ -1,0 +1,87 @@
+---
+# Give the Mattermost account its own role, with the permissions Mattermost
+# publishes and nothing else.
+#
+# These go in one object at a time through the security REST API rather than
+# through securityadmin.sh. securityadmin replaces a whole configuration type,
+# and the roles.yml the distribution ships carries the forty-odd roles the
+# bundled plugins need; pushing our own file in its place would take them all
+# away. The REST API touches only the object named in the URL.
+- name: Read the Mattermost search role
+  ansible.builtin.uri:
+    url: "{{ opensearch_security_api }}/roles/{{ opensearch_mattermost_role_name }}"
+    user: admin
+    password: "{{ mmd_secrets.opensearch_admin_password }}"
+    force_basic_auth: true
+    ca_path: "{{ opensearch_cert_dir }}/root-ca.pem"
+    status_code: [200, 404]
+    timeout: 30
+  register: _os_role_now
+  check_mode: false
+  no_log: true
+
+- name: Read the Mattermost role mapping
+  ansible.builtin.uri:
+    url: "{{ opensearch_security_api }}/rolesmapping/{{ opensearch_mattermost_role_name }}"
+    user: admin
+    password: "{{ mmd_secrets.opensearch_admin_password }}"
+    force_basic_auth: true
+    ca_path: "{{ opensearch_cert_dir }}/root-ca.pem"
+    status_code: [200, 404]
+    timeout: 30
+  register: _os_map_now
+  check_mode: false
+  no_log: true
+
+# The API gives a role back with fields we don't set (fls, masked_fields,
+# reserved, static), so comparing the whole object would rewrite it on every run.
+# Compare the parts we own, sorted, and leave the rest alone.
+- name: Work out what has drifted
+  ansible.builtin.set_fact:
+    _os_role_differs: "{{ _role_want != _role_have }}"
+    _os_map_differs: "{{ [mattermost_opensearch_username] != (_map.users | default([]) | sort) }}"
+  vars:
+    _role: "{{ (_os_role_now.json | default({}))[opensearch_mattermost_role_name] | default({}) }}"
+    _map: "{{ (_os_map_now.json | default({}))[opensearch_mattermost_role_name] | default({}) }}"
+    _role_have:
+      cluster: "{{ _role.cluster_permissions | default([]) | sort }}"
+      patterns: "{{ _role.index_permissions | default([]) | map(attribute='index_patterns') | flatten | sort }}"
+      actions: "{{ _role.index_permissions | default([]) | map(attribute='allowed_actions') | flatten | sort }}"
+    _role_want:
+      cluster: "{{ opensearch_mattermost_role.cluster_permissions | sort }}"
+      patterns: "{{ opensearch_mattermost_role.index_permissions | map(attribute='index_patterns') | flatten | sort }}"
+      actions: "{{ opensearch_mattermost_role.index_permissions | map(attribute='allowed_actions') | flatten | sort }}"
+
+# The role comes before the mapping, and both come before internal_users.yml is
+# pushed, so the account never sits in the window where its old backend role has
+# gone and the new one has not arrived.
+- name: Create or update the Mattermost search role
+  ansible.builtin.uri:
+    url: "{{ opensearch_security_api }}/roles/{{ opensearch_mattermost_role_name }}"
+    method: PUT
+    body_format: json
+    body: "{{ opensearch_mattermost_role }}"
+    user: admin
+    password: "{{ mmd_secrets.opensearch_admin_password }}"
+    force_basic_auth: true
+    ca_path: "{{ opensearch_cert_dir }}/root-ca.pem"
+    status_code: [200, 201]
+    timeout: 30
+  when: _os_role_differs | bool
+  no_log: true
+
+- name: Point the Mattermost account at it
+  ansible.builtin.uri:
+    url: "{{ opensearch_security_api }}/rolesmapping/{{ opensearch_mattermost_role_name }}"
+    method: PUT
+    body_format: json
+    body:
+      users: ["{{ mattermost_opensearch_username }}"]
+    user: admin
+    password: "{{ mmd_secrets.opensearch_admin_password }}"
+    force_basic_auth: true
+    ca_path: "{{ opensearch_cert_dir }}/root-ca.pem"
+    status_code: [200, 201]
+    timeout: 30
+  when: _os_map_differs | bool
+  no_log: true

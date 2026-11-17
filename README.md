@@ -792,7 +792,13 @@ Console.
 SELinux stays enforcing and firewalld stays on. Where fapolicyd runs, our install directories get
 trust entries so it can stay on too. Debian and Ubuntu have no SELinux or fapolicyd, so the
 toolkit leaves AppArmor as it found it and uses firewalld there too. OpenSearch uses certificates from its own
-CA, never the public demo ones. PostgreSQL uses SCRAM-SHA-256, with TLS on a self-signed
+CA, never the public demo ones, and Mattermost connects to it as an account holding one role,
+`mattermost_search`: indexing, searching and index management over its own indices, plus the cluster
+monitoring and bulk permissions Mattermost publishes. It is not a cluster administrator. That
+password is in `config.json` on every app server, so losing an app server should not cost you the
+search cluster. `opensearch_mattermost_role` holds the permissions if a future Mattermost release
+needs more, and `make e2e-search-authz` checks the boundary against a real node.
+PostgreSQL uses SCRAM-SHA-256, with TLS on a self-signed
 certificate once remote clients or replicas are allowed. Replicas log in as a separate
 `replicator` user, which pg_hba.conf only lets in for replication. Each replica makes its own
 certificate rather than keeping the copy of the primary's key. Generated passwords live in

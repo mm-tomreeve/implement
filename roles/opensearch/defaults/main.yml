@@ -9,3 +9,41 @@ opensearch_node_dn: "CN={{ ansible_facts['fqdn'] }},OU=mattermost-parthenon,O=Ma
 opensearch_env:
   OPENSEARCH_PATH_CONF: "{{ opensearch_conf_dir }}"
   OPENSEARCH_JAVA_HOME: "{{ opensearch_dir }}/jdk"
+
+# The security plugin's REST API, on the node itself.
+opensearch_security_api: "https://127.0.0.1:{{ opensearch_port }}/_plugins/_security/api"
+
+# What the Mattermost account may do. The role's name and the index prefix it
+# covers are in group_vars, with the rest of the settings an answer file can set.
+#
+# Straight from Mattermost's "Required permissions for the Mattermost service
+# account": https://docs.mattermost.com/deployment-guide/scale/enterprise-search.html
+#
+# The two indices: entries under cluster_permissions are not a mistake. Bulk
+# writes and index-template creation are dispatched before any one index is
+# settled, so OpenSearch authorises them against the cluster rather than against
+# an index pattern. indices:admin/template/put is the older _template API, which
+# is the one Mattermost uses; the composable _index_template API is a separate
+# permission and is deliberately not here.
+#
+# The last two lines are ours rather than Mattermost's. Without them _stats,
+# _cat/indices, _settings and _refresh all answer 403, which is what a purge from
+# the System Console runs into. Both are read or refresh on indices this role
+# already writes to, so they give away nothing the lines above don't.
+opensearch_mattermost_role:
+  cluster_permissions:
+    - "cluster:monitor/*"
+    - "indices:admin/template/put"
+    - "indices:data/write/bulk"
+  index_permissions:
+    - index_patterns: ["{{ opensearch_mattermost_index_prefix }}*"]
+      allowed_actions:
+        - "indices:admin/get"
+        - "indices:admin/create"
+        - "indices:admin/delete"
+        - "indices:admin/mapping/put"
+        - "indices:admin/mappings/fields/get*"
+        - "indices:data/read*"
+        - "indices:data/write*"
+        - "indices:monitor/*"
+        - "indices:admin/refresh*"

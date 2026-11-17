@@ -218,6 +218,16 @@ opensearch_heap_mb: auto
 # Mattermost servers allowed to connect. Non-empty turns the security plugin on.
 opensearch_allowed_clients: []
 opensearch_admin_password: ""
+# Mattermost connects as its own account holding this role, not as a cluster
+# administrator: its password is on every app server. roles/opensearch/defaults
+# has the permissions, which are Mattermost's own published set.
+opensearch_mattermost_role_name: mattermost_search
+# Which indices that role covers. This node is built for Mattermost alone, so
+# empty (every index) is still only Mattermost's own data. If you ever point
+# something else at this cluster, set a prefix here and the same value in
+# ElasticsearchSettings.IndexPrefix on the app servers, through
+# mattermost_config_overrides. They have to match or searching finds nothing.
+opensearch_mattermost_index_prefix: ""
 
 # ---------------------------------------------------------------- nfs storage
 # An NFS server for Mattermost's data directory, so several app servers can share

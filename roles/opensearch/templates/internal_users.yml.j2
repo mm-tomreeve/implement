@@ -11,9 +11,11 @@ admin:
     - "admin"
   description: "Cluster administrator (mattermost-parthenon)"
 
-mattermost:
-  hash: "{{ _os_hash_store.mattermost.hash }}"
+# No backend_roles: this account is given the {{ opensearch_mattermost_role_name }} role
+# instead, which is created through the security API in tasks/authz.yml. The
+# admin backend role would make it a cluster administrator, and its password is
+# on every Mattermost app server.
+{{ mattermost_opensearch_username }}:
+  hash: "{{ _os_hash_store[mattermost_opensearch_username].hash }}"
   reserved: false
-  backend_roles:
-    - "admin"
   description: "Mattermost server connection (mattermost-parthenon)"

@@ -70,9 +70,9 @@
 - name: Settle which users need a new hash
   ansible.builtin.set_fact:
     _os_hash_store: "{{ (_os_hash_raw.content | b64decode | from_json) if _os_hash_raw.content is defined else {} }}"
-    _os_users_wanted:
-      admin: "{{ mmd_secrets.opensearch_admin_password }}"
-      mattermost: "{{ mmd_secrets.opensearch_mattermost_password }}"
+    _os_users_wanted: >-
+      {{ {'admin': mmd_secrets.opensearch_admin_password,
+          mattermost_opensearch_username: mmd_secrets.opensearch_mattermost_password} }}
   no_log: true
 
 - name: Hash new or changed passwords

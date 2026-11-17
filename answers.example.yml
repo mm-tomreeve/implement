@@ -175,6 +175,18 @@ opensearch_heap_mb: auto
 # generated on this server.
 opensearch_allowed_clients: []
 opensearch_admin_password: ""
+# Mattermost connects as its own account holding this role, not as a cluster
+# administrator: indexing, searching and index management, and nothing else. Its
+# password is on every app server, so losing one shouldn't cost you the cluster.
+# roles/opensearch/defaults/main.yml has the permissions if you need to widen them,
+# and `make e2e-search-authz` checks what the role can and cannot reach.
+opensearch_mattermost_role_name: mattermost_search
+# Which indices that role covers. Empty is every index, which is right while this
+# server runs nothing but Mattermost's search. Point anything else at this cluster
+# and you want a prefix here, with the same value in ElasticsearchSettings.IndexPrefix
+# on the app servers (mattermost_config_overrides). They have to match or searching
+# finds nothing.
+opensearch_mattermost_index_prefix: ""
 
 # ---------------------------------------------------------------- nfs storage
 # An NFS share for Mattermost's data directory, so several app servers see the
