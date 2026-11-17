@@ -203,7 +203,13 @@
     </details>
 
     <h3 style="margin-top:22px;">Diagram</h3>
-    <div class="diagram"><pre class="mermaid" id="mermaid-out"></pre></div>
+    <p class="hint">Every arrow is a firewall rule, pointing the way the connection is opened. Dotted is monitoring
+       and logging, thick is call media, which goes straight to the server and never through the proxy.</p>
+    <div class="diagram-head">
+      <label class="diagram-toggle"><input type="checkbox" id="show-monitoring" checked> Monitoring flows</label>
+      <button type="button" class="secondary small" id="expand-diagram" aria-expanded="false">Expand</button>
+    </div>
+    <div class="diagram" id="diagram-pane"><pre class="mermaid" id="mermaid-out"></pre></div>
 
     <h3 style="margin-top:22px;">Suggested install order</h3>
     <ol class="install-order" id="install-order"></ol>
@@ -241,13 +247,13 @@
     </div>
 
     <div class="copy-row">
-      <div>
-        <label for="blob-out">The plan, encoded</label>
-        <code class="blob" id="blob-out"></code>
-      </div>
       <div class="row-actions">
         <button class="primary small" id="copy-blob">Copy</button>
         <button class="secondary small" id="download-blob">Download</button>
+      </div>
+      <div>
+        <label for="blob-out">The plan, encoded</label>
+        <code class="blob" id="blob-out"></code>
       </div>
     </div>
 
@@ -258,11 +264,11 @@
       <summary>Design decisions <span class="count" id="count-decisions"></span></summary>
       <p class="hint">What this shape gives you, and what it doesn't.</p>
       <div class="copy-row">
+        <button class="secondary small" id="copy-decisions">Copy as Markdown</button>
         <div class="table-wrap"><table class="nodes" id="decisions-table">
           <thead><tr><th>Decision</th><th>What it means</th></tr></thead>
           <tbody></tbody>
         </table></div>
-        <button class="secondary small" id="copy-decisions">Copy as Markdown</button>
       </div>
     </details>
 
@@ -271,11 +277,11 @@
       <p class="hint">For the network team. <strong class="product">Mattermost Parthenon</strong> opens these on each server. Anything
          between your own network segments is theirs to open.</p>
       <div class="copy-row">
+        <button class="secondary small" id="copy-firewall">Copy as Markdown</button>
         <div class="table-wrap"><table class="nodes" id="firewall-table">
           <thead><tr><th>Source</th><th>Destination</th><th>Port</th><th>Protocol</th><th>What it carries</th></tr></thead>
           <tbody></tbody>
         </table></div>
-        <button class="secondary small" id="copy-firewall">Copy as Markdown</button>
       </div>
       <div class="note" id="calls-note" style="display:none"></div>
 
@@ -283,11 +289,11 @@
       <p class="hint">Connections these servers have to be able to make. <strong class="product">Mattermost Parthenon</strong> cannot
          open these for you, because they leave your network.</p>
       <div class="copy-row">
+        <button class="secondary small" id="copy-outbound">Copy as Markdown</button>
         <div class="table-wrap"><table class="nodes" id="outbound-table">
           <thead><tr><th>Source</th><th>Destination</th><th>Port</th><th>Protocol</th><th>What it carries</th><th>When</th></tr></thead>
           <tbody></tbody>
         </table></div>
-        <button class="secondary small" id="copy-outbound">Copy as Markdown</button>
       </div>
       <p class="hint" id="outbound-note"></p>
     </details>
@@ -296,11 +302,11 @@
       <summary>Infrastructure requirements <span class="count" id="count-infra"></span></summary>
       <p class="hint">For the server team. Mattermost's published figures for this size, per server.</p>
       <div class="copy-row">
+        <button class="secondary small" id="copy-infra">Copy as Markdown</button>
         <div class="table-wrap"><table class="nodes" id="infra-table">
           <thead><tr><th>Server</th><th>Runs</th><th>vCPU</th><th>RAM</th><th>Disk</th><th>Notes</th></tr></thead>
           <tbody></tbody>
         </table></div>
-        <button class="secondary small" id="copy-infra">Copy as Markdown</button>
       </div>
       <p class="hint" id="sizing-source"></p>
       <p class="hint" id="storage-formula"></p>
@@ -316,11 +322,11 @@
     <details class="section">
       <summary>The plan as YAML</summary>
       <div class="copy-row">
-        <div><textarea id="yaml-out" rows="14" readonly></textarea></div>
         <div class="row-actions">
           <button class="secondary small" id="copy-yaml">Copy</button>
           <button class="secondary small" id="download-yaml">Download</button>
         </div>
+        <div><textarea id="yaml-out" rows="14" readonly></textarea></div>
       </div>
     </details>
 

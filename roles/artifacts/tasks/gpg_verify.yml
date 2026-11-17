@@ -1,25 +1,35 @@
 ---
 # Check a detached signature against a key we ship in the repo. Trust comes from
 # the key and fingerprint in this repo, never from the download source.
-- name: Create a throwaway GnuPG home
+#
+# gpgv, not gpg: it verifies and nothing else. gpg wants a keyring to import
+# into and starts a gpg-agent daemon to hold secret keys, neither of which a
+# signature check has any use for, and the sockets that agent left behind raced
+# with the cleanup that removed the keyring it was still sitting in.
+- name: Make a keyring from the key we ship
   ansible.builtin.tempfile:
-    state: directory
-    suffix: -mmd-gnupg
-  register: _gnupg_home
+    state: file
+    suffix: -mmd-keyring.gpg
+  register: _gnupg_keyring
   changed_when: false
 
-- name: Import the vendor key
+# The keys in this repo are ASCII-armoured so they can be read and reviewed.
+# gpgv wants the binary form, and --dearmor is a plain decode: no keyring, no
+# agent, nothing to clean up but the one file.
+- name: Decode the vendor key into the keyring
   ansible.builtin.command:
-    argv: [gpg, --batch, --homedir, "{{ _gnupg_home.path }}", --import, "{{ _gpg_key }}"]
+    argv: [gpg, --batch, --yes, --dearmor, --output, "{{ _gnupg_keyring.path }}", "{{ _gpg_key }}"]
   changed_when: false
 
 - name: Verify the signature
   ansible.builtin.command:
-    argv: [gpg, --batch, --homedir, "{{ _gnupg_home.path }}", --status-fd, "1", --verify, "{{ _gpg_sig }}", "{{ _gpg_file }}"]
+    argv: [gpgv, --keyring, "{{ _gnupg_keyring.path }}", --status-fd, "1", "{{ _gpg_sig }}", "{{ _gpg_file }}"]
   register: _gpg_out
   changed_when: false
   failed_when: false
 
+# A good signature is not enough on its own: it has to be the key we meant, so
+# the primary key fingerprint has to match the one pinned in this repo.
 - name: Check the primary key fingerprint
   ansible.builtin.set_fact:
     _gpg_ok: >-
@@ -28,8 +38,8 @@
           | map('split') | map('last') | map('upper') | list
           | intersect([_gpg_fpr | upper]) | length > 0) }}
 
-- name: Remove the GnuPG home
+- name: Remove the keyring
   ansible.builtin.file:
-    path: "{{ _gnupg_home.path }}"
+    path: "{{ _gnupg_keyring.path }}"
     state: absent
   changed_when: false
