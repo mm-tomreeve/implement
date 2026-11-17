@@ -838,7 +838,7 @@ LOG_CATALOGUE = [
         "id": "calls-job-errors", "module": "calls_offloader", "title": "Recording or transcription failing",
         "source": "mattermost", "parser": "json",
         "match": [("level", "error"), ("plugin_id", r"com\.mattermost\.calls"),
-                  ("msg", r"(?i).*(job|record|transcri|caption).*")],
+                  ("msg", r".*([Jj]ob|[Rr]ecord|[Tt]ranscri|[Cc]aption).*")],
         "window": "15m", "direction": "above", "tiers": {"warning": 0, "critical": 5}, "for": "0s", "unit": "",
         "summary": "Calls on {{ $labels.host_name }} logged {{ printf \"%.0f\" $values.A.Value }} job errors in 15 minutes",
         "action": "People press record and get nothing. Check the job service is up, that its runner images are "

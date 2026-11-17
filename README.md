@@ -1235,6 +1235,12 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 | OpenSearch ran out of heap `os-log-oom` | `opensearch` logs where line matches `java\.lang\.OutOfMemoryError` | 15m |  |  | > 0 | 0s | The JVM is unstable after this; restart OpenSearch, then raise opensearch_heap_mb or add memory. |
 | OpenSearch circuit breaker tripping `os-log-circuit-breaker` | `opensearch` logs where line matches `CircuitBreakingException` | 10m |  | > 5 |  | 0s | Searches or indexing are being refused. The heap is too small for the load; raise opensearch_heap_mb. |
 
+#### Call recording log checks
+
+| Check | Watches for | Window | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|---|---|
+| Recording or transcription failing `calls-job-errors` | `mattermost` logs where `level` is `error` and `plugin_id` is `com\.mattermost\.calls` and `msg` is `.*([Jj]ob\|[Rr]ecord\|[Tt]ranscri\|[Cc]aption).*` | 15m |  | > 0 | > 5 | 0s | People press record and get nothing. Check the job service is up, that its runner images are present (`docker image ls` on the job server), and that the job containers can reach this server's site URL. |
+
 #### Monitoring log checks
 
 | Check | Watches for | Window | Info | Warning | Critical | For | What to do |
