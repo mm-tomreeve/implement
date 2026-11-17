@@ -317,56 +317,156 @@
     renderDiagram();
   });
 
+  // How a port reads on an edge: the protocol a network engineer would type into
+  // a firewall rule, then the port. "tcp and udp" is one rule to them, so it is
+  // one label here.
+  function portLabel(port, proto) {
+    const p = proto === "tcp and udp" ? "TCP+UDP" : String(proto).toUpperCase();
+    return p + "/" + port;
+  }
+
+  // Every port on the arrow, because a rule you can't read is no use to the
+  // person opening it. Long lists stack two to a line rather than running off
+  // across the diagram.
+  function edgeLabel(ports) {
+    const lines = [];
+    for (let i = 0; i < ports.length; i += 2) lines.push(ports.slice(i, i + 2).join(", "));
+    return lines.join("<br/>");
+  }
+
+  // The size the seat band asks for, so the diagram carries what someone has to
+  // go and buy. Same figures as the infrastructure table on the last step.
+  function nodeSpecLine(n) {
+    const spec = ((state.band && state.band.sizing) || {})[n.role] || {};
+    const bits = [];
+    if (spec.vcpu) bits.push(spec.vcpu + " vCPU");
+    if (spec.ram_gb) bits.push(spec.ram_gb + " GB RAM");
+    if (spec.disk_gb) bits.push(spec.disk_gb + " GB disk");
+    return bits.join(" · ");
+  }
+
+  // Every arrow is a firewall rule, taken from the same model as the table on the
+  // last step, so the two can never drift apart. An arrow points the way the
+  // connection is opened: from the side that connects to the side that listens.
   function buildMermaid() {
     const idFor = n => "n" + n.id;
+    const byName = new Map(nodes.map(n => [n.name, n]));
+    const externals = new Map();   // name -> { id, shape }
     const lines = ["flowchart LR"];
-    for (const n of nodes) {
-      lines.push(`  ${idFor(n)}["${n.name}<br/>${shortLabel(n.role)}"]`);
-    }
-    const byRole = r => nodes.filter(n => n.role === r);
-    const clients = byRole("app").concat(byRole("core"));
-    const primaryDbs = nodes.filter(n => n.role === "database" && !n.replica);
 
-    // Where the users come in. Call media is drawn thick because it goes straight
-    // to whatever runs rtcd, never through the proxy, and that catches people out.
-    if (clients.length) {
-      lines.push('  users(["Users"])');
-      for (const c of clients) lines.push(`  users -->|"HTTPS 443"| ${idFor(c)}`);
-      const callsNodes = byRole("calls");
-      if (callsNodes.length) {
-        for (const x of callsNodes) lines.push(`  users ==>|"Calls media 8443 UDP and TCP"| ${idFor(x)}`);
-      } else if (state.s.callsMode === "integrated") {
-        for (const c of clients) lines.push(`  users ==>|"Calls media 8443 UDP and TCP"| ${idFor(c)}`);
+    function idForName(name) {
+      const node = byName.get(name);
+      if (node) return idFor(node);
+      if (!externals.has(name)) {
+        const id = name === "Internet / users" ? "users"
+                 : name === "Your Mattermost admins" ? "admins"
+                 : "ext" + (externals.size + 1);
+        externals.set(name, { id, label: name === "Your Mattermost admins" ? "Admins" : name });
+      }
+      return externals.get(name).id;
+    }
+
+    // One arrow per pair of servers, carrying every port that runs between them.
+    const showMonitoring = !el("show-monitoring") || el("show-monitoring").checked;
+    const edges = new Map();
+    for (const g of firewallGroups()) {
+      if (!showMonitoring && g.rank === 2) continue;
+      for (const from of g.froms) {
+        for (const to of g.tos) {
+          if (from === to) continue;   // a server reaching itself is not a flow
+          const key = from + "\u0000" + to;
+          if (!edges.has(key)) edges.set(key, { from, to, ports: [], rank: g.rank, media: false });
+          const e = edges.get(key);
+          const label = portLabel(g.port, g.proto);
+          if (!e.ports.includes(label)) e.ports.push(label);
+          e.rank = Math.min(e.rank, g.rank);
+          if (String(g.port) === "8443") e.media = true;
+        }
       }
     }
 
-    for (const c of clients) {
-      for (const d of primaryDbs) lines.push(`  ${idFor(c)} -->|SQL| ${idFor(d)}`);
-      for (const x of byRole("calls")) lines.push(`  ${idFor(c)} -->|Calls| ${idFor(x)}`);
-      for (const x of byRole("search")) lines.push(`  ${idFor(c)} -->|Search| ${idFor(x)}`);
-      for (const x of byRole("storage")) lines.push(`  ${idFor(c)} -->|Files| ${idFor(x)}`);
+    for (const n of nodes) {
+      const spec = nodeSpecLine(n);
+      lines.push(`  ${idFor(n)}["${n.name}<br/>${shortLabel(n.role)}${spec ? "<br/>" + spec : ""}"]`);
     }
-    for (const d of nodes.filter(n => n.role === "database" && n.replica)) {
-      const primary = nodes.find(n => n.id === d.primaryId);
-      if (primary) lines.push(`  ${idFor(primary)} -.->|replicates to| ${idFor(d)}`);
+
+    // Gossip between app servers is the same ports in both directions, so it is
+    // drawn once with a head at each end rather than as two arrows crossing.
+    const drawn = new Set();
+    for (const e of edges.values()) {
+      const key = e.from + "\u0000" + e.to;
+      if (drawn.has(key)) continue;
+      drawn.add(key);
+      const back = edges.get(e.to + "\u0000" + e.from);
+      const bidi = back && back.ports.join() === e.ports.join();
+      if (bidi) drawn.add(e.to + "\u0000" + e.from);
+      const label = edgeLabel(e.ports);
+      // Dotted for monitoring and logging, thick for call media, which goes
+      // straight to whatever runs rtcd and never through the proxy.
+      const arrow = bidi ? "<-->" : e.media ? "==>" : e.rank === 2 ? "-.->" : "-->";
+      lines.push(`  ${idForName(e.from)} ${arrow}|"${label}"| ${idForName(e.to)}`);
     }
-    const store = nodes.find(n => roleHas(n, "prometheus")) || nodes.find(n => roleHas(n, "loki"));
-    if (store) {
-      for (const n of nodes) if (n.id !== store.id) lines.push(`  ${idFor(n)} -.->|metrics/logs| ${idFor(store)}`);
-      const grafana = nodes.find(n => roleHas(n, "grafana") && !roleHas(n, "prometheus"));
-      if (grafana) lines.push(`  ${idFor(grafana)} -->|queries| ${idFor(store)}`);
+
+    for (const ext of externals.values()) {
+      lines.push(`  ${ext.id}(["${ext.label}"])`);
     }
+
+    // One colour per tier, so the servers you are buying stand out from the
+    // people and the systems that are not yours: sunglow for the app tier that
+    // serves the traffic, sapphire for the data behind it, grey for the rest.
+    const dark = document.documentElement.dataset.theme === "dark";
+    const c = dark
+      ? { data: "#1f2a44,stroke:#6b9bff,stroke-width:2px,color:#dbe5fb",
+          grey: "#252b39,stroke:#5c6270", people: "#1a1e28,stroke:#dbe5fb,stroke-width:2px,color:#e6e8ee" }
+      : { data: "#dce7fb,stroke:#1c58d9,stroke-width:2px,color:#1e325c",
+          grey: "#eef0f3,stroke:#9aa2b2", people: "#ffffff,stroke:#1e325c,stroke-width:2px,color:#1e325c" };
+    const greyText = dark ? ",color:#9aa2b2" : ",color:#3d4250";
+    lines.push("  classDef app fill:#ffbc1f,stroke:#e0a000,stroke-width:2px,color:#1b1d22");
+    lines.push("  classDef data fill:" + c.data);
+    lines.push("  classDef obs fill:" + c.grey + ",stroke-dasharray:5 4" + greyText);
+    lines.push("  classDef edge fill:" + c.grey + ",stroke-dasharray:5 4" + greyText);
+    lines.push("  classDef users fill:" + c.people);
+    const obsRoles = ["monitoring", "metrics", "dashboards"];
+    const appNodes = nodes.filter(n => nodeComponents(n).includes("mattermost"));
+    const obs = nodes.filter(n => obsRoles.includes(n.role));
+    const data = nodes.filter(n => !obsRoles.includes(n.role) && !nodeComponents(n).includes("mattermost"));
+    if (appNodes.length) lines.push("  class " + appNodes.map(idFor).join(",") + " app");
+    if (data.length) lines.push("  class " + data.map(idFor).join(",") + " data");
+    if (obs.length) lines.push("  class " + obs.map(idFor).join(",") + " obs");
+    const people = [], offEstate = [];
+    for (const [name, ext] of externals) {
+      (name === "Internet / users" || name === "Your Mattermost admins" ? people : offEstate).push(ext.id);
+    }
+    if (people.length) lines.push("  class " + people.join(",") + " users");
+    if (offEstate.length) lines.push("  class " + offEstate.join(",") + " edge");
     return lines.join("\n");
+  }
+
+  function mermaidTheme() {
+    const dark = document.documentElement.dataset.theme === "dark";
+    const v = dark
+      ? { card: "#1a1e28", ink: "#e6e8ee", line: "#9aa2b2", border: "#2f4272", tint: "#1f2a44" }
+      : { card: "#ffffff", ink: "#1e325c", line: "#5c6270", border: "#d3e0fb", tint: "#eef3ff" };
+    return {
+      startOnLoad: false, theme: "base",
+      flowchart: { padding: 16, nodeSpacing: 40, rankSpacing: 70, curve: "basis" },
+      themeVariables: {
+        fontFamily: getComputedStyle(document.body).fontFamily, fontSize: "14px",
+        primaryColor: v.card, primaryTextColor: v.ink, primaryBorderColor: v.border,
+        lineColor: v.line, secondaryColor: v.tint, tertiaryColor: v.tint,
+        edgeLabelBackground: v.tint, textColor: v.ink,
+      },
+    };
   }
 
   // Editing a node redraws the diagram, and drawing is asynchronous, so a slow
   // render can land after a newer one. Each render carries a token and only the
   // newest is allowed to reach the page; the rest are dropped.
-  let mermaidReady = false;
   let diagramToken = 0;
   function renderDiagram() {
     renderInstallOrder("install-order");
     const host = el("mermaid-out");
+    if (!host) return;   // a half-cached page: no diagram, but the rest still works
     const token = ++diagramToken;
     if (!nodes.length) {
       host.textContent = "Add a node above to see the diagram.";
@@ -374,10 +474,7 @@
     }
     const src = buildMermaid();
     if (!window.mermaid) { host.textContent = src; return; }
-    if (!mermaidReady) {
-      window.mermaid.initialize({ startOnLoad: false, theme: "neutral" });
-      mermaidReady = true;
-    }
+    window.mermaid.initialize(mermaidTheme());
     window.mermaid.render("estate-diagram-" + token, src)
       .then(result => { if (token === diagramToken) host.innerHTML = result.svg; })
       .catch(() => { if (token === diagramToken) host.textContent = src; });
@@ -578,7 +675,7 @@
     }
   }
 
-  function buildFirewallRows() {
+  function firewallGroups() {
     const groups = new Map();
     const add = (froms, to, port, proto, purpose, rank) => {
       if (!froms.length) return;
@@ -622,9 +719,16 @@
       for (const t of g.tos) if (!m.tos.includes(t)) m.tos.push(t);
     }
 
-    return Array.from(merged.values())
-      .sort((a, b) => a.rank - b.rank)
-      .map(g => ({ from: g.froms.join(", "), to: g.tos.join(", "), port: String(g.port), proto: g.proto, purpose: g.purpose }));
+    return Array.from(merged.values()).sort((a, b) => a.rank - b.rank);
+  }
+
+  // The table wants one flat row per rule. The diagram wants the same rules with
+  // the source and destination lists intact, so both read from firewallGroups().
+  function buildFirewallRows() {
+    return firewallGroups().map(g => ({
+      from: g.froms.join(", "), to: g.tos.join(", "),
+      port: String(g.port), proto: g.proto, purpose: g.purpose,
+    }));
   }
 
   // ---------------------------------------------------------------- outbound
@@ -1348,8 +1452,49 @@
     else delete document.documentElement.dataset.theme;
     try { localStorage.setItem("wizard-theme", dark ? "dark" : "light"); } catch (e) { /* storage blocked */ }
     syncThemeButton();
+    if (nodes.length && el("step-2").style.display !== "none") renderDiagram();
   });
   syncThemeButton();
+
+  // Expanding the diagram: a nine-server estate does not fit in a column of text.
+  const expandBtn = el("expand-diagram");
+  const pane = el("diagram-pane");
+  let backdrop = null;
+  let closeBtn = null;
+  function collapseDiagram() {
+    if (!backdrop) return;
+    pane.classList.remove("expanded");
+    backdrop.remove();
+    backdrop = null;
+    if (closeBtn) { closeBtn.remove(); closeBtn = null; }
+    document.body.classList.remove("diagram-open");
+    expandBtn.setAttribute("aria-expanded", "false");
+    expandBtn.focus();
+  }
+  function expandDiagram() {
+    backdrop = document.createElement("div");
+    backdrop.className = "diagram-backdrop";
+    backdrop.addEventListener("click", collapseDiagram);
+    pane.parentNode.insertBefore(backdrop, pane);
+    pane.classList.add("expanded");
+    document.body.classList.add("diagram-open");
+    // The page's own Expand button is behind the overlay, so the way back has to
+    // live inside it.
+    closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "secondary small diagram-close";
+    closeBtn.textContent = "Close diagram";
+    closeBtn.addEventListener("click", collapseDiagram);
+    pane.appendChild(closeBtn);
+    closeBtn.focus();
+    expandBtn.setAttribute("aria-expanded", "true");
+  }
+  const monitoringToggle = el("show-monitoring");
+  if (monitoringToggle) monitoringToggle.addEventListener("change", renderDiagram);
+  if (expandBtn && pane) {
+    expandBtn.addEventListener("click", () => (backdrop ? collapseDiagram() : expandDiagram()));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") collapseDiagram(); });
+  }
 
   showStep(1);
 })();

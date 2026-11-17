@@ -59,7 +59,6 @@
   color-scheme: dark;
 }
 :root[data-theme="dark"] button.primary { background: #2f66e8; color: #fff; }
-:root[data-theme="dark"] .diagram svg { filter: invert(.92) hue-rotate(180deg); }
 
 .theme-toggle {
   float: right;
@@ -213,9 +212,14 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 .actions { display: flex; justify-content: space-between; margin-top: 20px; gap: 10px; }
 
-table.nodes { width: 100%; border-collapse: collapse; font-size: .88rem; }
-table.nodes th, table.nodes td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
-table.nodes th { color: var(--dim); font-weight: 600; font-size: .8rem; }
+/* Table look follows the Mattermost docs "bill of materials" tables. */
+table.nodes { width: 100%; border-collapse: collapse; font-size: .85rem; }
+table.nodes th, table.nodes td { text-align: left; vertical-align: top; padding: .55rem .75rem; border-bottom: 1px solid var(--line); }
+table.nodes th {
+  text-transform: uppercase; letter-spacing: .08em; font-size: .7rem; font-weight: 700;
+  color: var(--heading); background: rgba(30, 50, 92, .04); border-bottom: 2px solid var(--denim);
+}
+:root[data-theme="dark"] table.nodes th { color: #fff; background: rgba(255, 255, 255, .03); border-bottom-color: var(--tint-line); }
 table.nodes select, table.nodes input { padding: 6px 8px; font-size: .85rem; }
 
 .rationale {
@@ -244,7 +248,27 @@ table.nodes select, table.nodes input { padding: 6px 8px; font-size: .85rem; }
   margin: 12px 0;
 }
 
-.diagram { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.diagram-head { display: flex; justify-content: flex-end; align-items: center; gap: 14px; margin-bottom: 8px; }
+.diagram-toggle { display: flex; align-items: center; gap: 6px; font-size: .84rem; color: var(--dim); }
+.diagram-toggle input { margin: 0; }
+.diagram { overflow: auto; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+
+/* Expanded: the diagram takes the window, because a real estate does not fit in
+   a column of text. */
+body.diagram-open { overflow: hidden; }
+.diagram.expanded {
+  position: fixed; inset: 16px; z-index: 50; margin: 0;
+  background: var(--card); box-shadow: var(--shadow); padding: 24px;
+  overflow: hidden;
+}
+.diagram.expanded .mermaid { height: 100%; margin: 0; }
+.diagram.expanded svg { width: 100%; height: 100%; }
+.diagram-close { position: absolute; top: 12px; right: 12px; z-index: 1; }
+.diagram-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(20, 24, 38, .45); }
+.diagram svg { max-width: none; font-family: inherit; }
+.diagram .edgeLabel, .diagram .edgeLabel p { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--dim); background: var(--tint); }
+.diagram .edgeLabel { border-radius: 3px; }
+
 
 .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600; }
 .badge.never { background: var(--badge-never-bg); color: var(--dim); }
@@ -265,9 +289,10 @@ code.blob {
   overflow: auto;
 }
 
-.copy-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; }
-.copy-row > div { flex: 1; min-width: 0; }
-.copy-row .row-actions { flex: none; display: flex; flex-direction: column; gap: 6px; }
+.copy-row { display: flex; flex-direction: column; gap: 8px; align-items: stretch; margin-bottom: 16px; }
+.copy-row > button { align-self: flex-end; }
+.copy-row > div { min-width: 0; }
+.copy-row .row-actions { flex: none; display: flex; flex-direction: row; justify-content: flex-end; gap: 6px; }
 .copy-row .row-actions button { white-space: nowrap; }
 
 .followups { font-size: .88rem; padding-left: 20px; }
