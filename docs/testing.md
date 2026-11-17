@@ -74,6 +74,7 @@ make smoke    # the core profile in an AlmaLinux 9 systemd container
 make smoke-debian  # the same in Debian 12 and Ubuntu 24.04 containers
 make e2e      # five containers, one per role, wired together, plus a functional test
 make e2e-replica  # a PostgreSQL primary and a read replica in two containers
+make e2e-search-authz  # what Mattermost's OpenSearch account can and cannot do
 ```
 
 The unit tests run against a saved copy of Mattermost's version archive page
@@ -164,3 +165,22 @@ replica (pg02) in two containers, each with `install.sh` and the database profil
 Then it runs both installs again, and finally rebuilds pg02 from scratch (stop it, move the data
 directory aside, run `install.sh`) and checks it streams again. Logs land in `tests/e2e/out/replica/`.
 It takes the same `IMAGE` and `KEEP` settings as the main end-to-end test.
+
+## Search permissions test
+
+`make e2e-search-authz` (or `tests/e2e/opensearch_authz.sh`) runs one OpenSearch container with the
+security plugin on, applies the account, role and mapping the OpenSearch role creates, and checks
+both halves of what that role is for:
+
+- everything Mattermost does in normal use works: create an index, put a mapping, index a document,
+  bulk index, put an index template, refresh, search, read field mappings, settings, stats and
+  `_cat/indices`, read cluster health, and delete an index the way a purge does,
+- the things it has no business doing come back refused: the security API, widening its own role,
+  writing cluster settings, adding a snapshot repository, rerouting the cluster, and a search of the
+  security index, which system-index protection empties rather than refuses,
+- `admin` still reads the security API and cluster state.
+
+The role is read out of `roles/opensearch/defaults/main.yml` while the test runs, so it checks the
+permissions the installer really grants. Widen `opensearch_mattermost_role` and the test tells you
+what that bought and what it cost. It needs no `install.sh` run and finishes in about a minute.
+`IMAGE`, `ENGINE`, `NAME` and `PORT` all override.

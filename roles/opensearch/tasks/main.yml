@@ -158,6 +158,10 @@
   delay: 5
   no_log: true
 
+- name: Give the Mattermost account its own role
+  ansible.builtin.include_tasks: authz.yml
+  when: mmd_opensearch_security | bool
+
 - name: Push changed users into the security index
   ansible.builtin.command:
     argv:

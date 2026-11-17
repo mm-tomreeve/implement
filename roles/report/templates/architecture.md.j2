@@ -505,7 +505,14 @@ Single node, heap {{ _os_heap_mb | default('auto') }} MB, with the analysis-icu 
 {% if mmd_opensearch_security %}
 The security plugin is on with a CA we generated (`{{ opensearch_conf_dir }}/certs/root-ca.pem`;
 copy it to each Mattermost server and set `mattermost_opensearch_ca_file`). Users are `admin` and
-`mattermost`. The demo users and certificates that ship with OpenSearch are not used.
+`{{ mattermost_opensearch_username }}`. The demo users and certificates that ship with OpenSearch
+are not used.
+
+`{{ mattermost_opensearch_username }}` holds one role, `{{ opensearch_mattermost_role_name }}`: bulk indexing, index
+templates, cluster monitoring, and read and write on `{{ opensearch_mattermost_index_prefix }}*`. It is not a cluster
+administrator. Its password sits in `config.json` on every app server, so losing an app server
+should not cost you the cluster. The permissions are the set Mattermost publishes; widen them in
+`opensearch_mattermost_role` if a future release needs more.
 {% else %}
 Bound to 127.0.0.1 with the security plugin off, which is fine while only the local Mattermost uses it.
 {% endif %}

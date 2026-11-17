@@ -31,6 +31,36 @@
   failed_when: false
   when: mmd_opensearch_security | bool
 
+# Both sides of the Mattermost account's role: that it can do its job, and that
+# it can't do anything else. A search over its own index pattern answers 200 even
+# with no indices yet, so this works on a node that has never been indexed.
+- name: Search as the Mattermost account
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ opensearch_port }}/{{ opensearch_mattermost_index_prefix }}*/_search?size=0"
+    user: "{{ mattermost_opensearch_username }}"
+    password: "{{ mmd_secrets.opensearch_mattermost_password }}"
+    force_basic_auth: true
+    ca_path: "{{ opensearch_cert_dir }}/root-ca.pem"
+    timeout: 10
+  register: _v_os_mm_search
+  failed_when: false
+  when: mmd_opensearch_security | bool
+  no_log: true
+
+- name: Try the security API as the Mattermost account
+  ansible.builtin.uri:
+    url: "{{ opensearch_security_api }}/internalusers"
+    user: "{{ mattermost_opensearch_username }}"
+    password: "{{ mmd_secrets.opensearch_mattermost_password }}"
+    force_basic_auth: true
+    ca_path: "{{ opensearch_cert_dir }}/root-ca.pem"
+    status_code: [200, 401, 403]
+    timeout: 10
+  register: _v_os_mm_admin
+  failed_when: false
+  when: mmd_opensearch_security | bool
+  no_log: true
+
 - name: Keep the OpenSearch version for the report
   ansible.builtin.set_fact:
     mmd_versions: "{{ mmd_versions | default({}) | combine({'opensearch': _v_os_api.results[0].json.version.number | default('unknown')}) }}"
@@ -62,3 +92,21 @@
         detail: >-
           {{ ('HTTP ' ~ (_v_os_anon.status | default('none')) ~ ' without credentials') if mmd_opensearch_security
              else 'security plugin off; bound to 127.0.0.1 only' }}
+      - component: opensearch
+        name: Mattermost's account can search its indices
+        status: "{{ ('pass' if _v_os_mm_search.status | default(0) == 200 else 'fail') if mmd_opensearch_security else 'skip' }}"
+        detail: >-
+          {{ ('HTTP ' ~ (_v_os_mm_search.status | default('none')) ~ ' searching '
+              ~ (opensearch_mattermost_index_prefix ~ '*') ~ ' as ' ~ mattermost_opensearch_username
+              ~ ('. The ' ~ opensearch_mattermost_role_name ~ ' role is missing or too narrow.'
+                 if _v_os_mm_search.status | default(0) != 200 else ''))
+             if mmd_opensearch_security else 'security plugin off; no accounts to check' }}
+      - component: opensearch
+        name: Mattermost's account cannot administer the cluster
+        status: "{{ ('pass' if _v_os_mm_admin.status | default(0) in [401, 403] else 'fail') if mmd_opensearch_security else 'skip' }}"
+        detail: >-
+          {{ ('HTTP ' ~ (_v_os_mm_admin.status | default('none')) ~ ' on the security API as '
+              ~ mattermost_opensearch_username
+              ~ ('. It still has more than it needs: that password is on every app server.'
+                 if _v_os_mm_admin.status | default(0) == 200 else ''))
+             if mmd_opensearch_security else 'security plugin off; no accounts to check' }}
