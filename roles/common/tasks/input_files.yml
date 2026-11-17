@@ -56,13 +56,19 @@
     label: "{{ item.setting }}: {{ item.path }}"
   register: _input_stat
 
+# `that` is a conditional, so Ansible wraps it in {% if %} before Jinja sees it.
+# A bare "A if C else B" written there is a second if inside that wrapper, which
+# Jinja refuses, and the task then errors on every file instead of checking any
+# of them. Choosing the stat field in a var keeps `that` a plain expression.
 - name: Stop if a file the answer file points at is missing
   ansible.builtin.assert:
-    that: item.stat.isdir | default(false) if item.item.dir else item.stat.isreg | default(false)
+    that: item.stat[_want] | default(false)
     fail_msg: >-
       {{ item.item.setting }} is {{ item.item.path }}, but there's no {{ 'directory' if item.item.dir else 'file' }}
       there. {{ item.item.hint }}
     quiet: true
+  vars:
+    _want: "{{ 'isdir' if item.item.dir else 'isreg' }}"
   loop: "{{ _input_stat.results }}"
   loop_control:
     label: "{{ item.item.setting }}: {{ item.item.path }}"
