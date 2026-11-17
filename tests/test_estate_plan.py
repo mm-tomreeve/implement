@@ -512,5 +512,68 @@ class DeriveNfsStorage(unittest.TestCase):
         self.assertTrue(any("files01" in f and "Mount" in f for f in followups))
 
 
+class DeriveLabServer(unittest.TestCase):
+    """A lab plan from the wizard: every role the wizard was asked for, one box.
+
+    The wizard writes several profiles on the one node rather than the all-in-one
+    profile, so a lab that leaves OpenSearch or Calls out says so in the plan.
+    Either way it is one server talking to itself, and that is what makes a lab
+    different: every address it derives has to be its own.
+    """
+
+    PLAN = {
+        "estate_version": 1,
+        "name": "chat-lab",
+        "deployment": "lab",
+        "mattermost_edition": "enterprise",
+        "mattermost_site_url": "https://lab.acme.example",
+        "tls_mode": "later",
+        "file_storage": "local",
+        "calls": "rtcd",
+        "recording": "own",
+        "observability": "managed",
+        "nodes": [
+            {"name": "lab01", "address": "10.0.0.50",
+             "profiles": ["core", "search", "calls", "jobs", "monitoring"]},
+        ],
+    }
+
+    def test_the_plan_is_valid(self):
+        self.assertEqual(ep.plan_problems(self.PLAN), [])
+
+    def test_every_component_lands_on_the_one_node(self):
+        components = ep.expand_components(self.PLAN["nodes"][0]["profiles"])
+        for name in ("postgresql", "mattermost", "nginx", "opensearch", "rtcd",
+                     "calls_offloader", "prometheus", "loki", "grafana"):
+            self.assertIn(name, components)
+
+    def test_all_in_one_is_the_same_set_of_components(self):
+        self.assertEqual(sorted(ep.expand_components(self.PLAN["nodes"][0]["profiles"])),
+                         sorted(ep.PROFILE_COMPONENTS["all-in-one"]))
+
+    def test_everything_is_wired_to_itself(self):
+        answers, _followups = ep.derive_answers(self.PLAN, "lab01")
+        self.assertEqual(answers["mattermost_db_host"], "10.0.0.50")
+        self.assertEqual(answers["mattermost_rtcd_url"], "http://10.0.0.50:8045")
+        self.assertEqual(answers["mattermost_job_service_url"], "http://10.0.0.50:4545")
+        self.assertEqual(answers["mattermost_opensearch_url"], "https://10.0.0.50:9200")
+        # Nothing else to watch, so the monitoring server has an empty estate.
+        self.assertEqual(answers["monitoring_estate"], [])
+
+    def test_nothing_is_checked_over_the_network(self):
+        checks = ep.checks_for_node(self.PLAN, "lab01")
+        self.assertEqual([c for c in checks if c["kind"] in ("tcp", "resolve")], [])
+
+    # The wizard shows this figure before anyone buys the box, by adding up the
+    # same catalogue floors. If the two ever part company the wizard is promising
+    # a server install.sh will then refuse to be happy with.
+    def test_sizing_is_the_sum_of_the_catalogue_floors(self):
+        checks = ep.checks_for_node(self.PLAN, "lab01")
+        catalogue = ep.catalogue()
+        installed = ep.installed_components(self.PLAN, self.PLAN["nodes"][0])
+        ram = next(c for c in checks if c["kind"] == "ram")
+        self.assertEqual(ram["target"], sum(catalogue[c]["min_ram_mb"] for c in installed))
+
+
 if __name__ == "__main__":
     unittest.main()

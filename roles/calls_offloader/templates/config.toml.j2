@@ -1,0 +1,41 @@
+# {{ ansible_managed }}
+[api]
+http.listen_address = "{{ '127.0.0.1' if calls_offloader_api_sources | length == 0 else '' }}:{{ calls_offloader_api_port }}"
+http.tls.enable = false
+http.tls.cert_file = ""
+http.tls.cert_key = ""
+# calls-offloader ships with self-registration off, and Mattermost's guidance is
+# to enable it only on a private network with access control. That is the case
+# here: the API port is bound to loopback until calls_offloader_api_sources is
+# set, and then opened to those addresses alone. A job is a container on this
+# server, so this port matters more than most. Set
+# calls_offloader_allow_self_registration to false and register Mattermost
+# through the admin API instead if that isn't good enough for your network.
+security.allow_self_registration = {{ calls_offloader_allow_self_registration | bool | lower }}
+security.enable_admin = false
+security.admin_secret_key = ""
+security.session_cache.expiration_minutes = 1440
+
+[store]
+data_source = "{{ calls_offloader_data_dir }}/db"
+
+[jobs]
+api_type = "docker"
+# {{ mattermost_calls_recording_quality }} quality on {{ ansible_facts['processor_vcpus'] }} vCPUs.
+# Mattermost's benchmarks put 8 vCPUs at 8 low, 6 medium or 4 high concurrent
+# recordings at around 70% CPU. Past that, calls start to suffer on this server.
+max_concurrent_jobs = {{ mmd_offloader_max_jobs | int }}
+# Successful jobs are deleted as soon as they finish. This is how long a failed
+# one is kept, with its volume, so you can read its logs.
+failed_jobs_retention_time = "{{ calls_offloader_failed_jobs_retention }}"
+image_registry = "{{ calls_offloader_image_registry }}"
+
+[logger]
+enable_console = true
+console_json = false
+console_level = "INFO"
+enable_file = false
+file_json = true
+file_level = "INFO"
+file_location = "{{ calls_offloader_data_dir }}/calls-offloader.log"
+enable_color = false

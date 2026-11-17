@@ -8,28 +8,46 @@
   const SPECS = DATA.components;
 
   const ROLE_LABEL = {
+    lab: "Lab server (everything on one box)",
     core: "Core (PostgreSQL + Mattermost + Nginx)",
     app: "App server (Mattermost + Nginx)",
     database: "Database (PostgreSQL)",
     calls: "Calls (rtcd)",
+    jobs: "Recording (calls-offloader)",
     search: "Search (OpenSearch)",
     storage: "File storage (NFS)",
     monitoring: "Monitoring (Prometheus + Loki + Grafana)",
     metrics: "Metrics and logs (Prometheus + Loki)",
     dashboards: "Dashboards (Grafana)",
   };
-  const NAME_PREFIX = { core: "core", app: "app", database: "db", calls: "calls",
-                        search: "search", storage: "files", monitoring: "mon",
+  const NAME_PREFIX = { lab: "lab", core: "core", app: "app", database: "db", calls: "calls",
+                        jobs: "jobs", search: "search", storage: "files", monitoring: "mon",
                         metrics: "metrics", dashboards: "graf" };
 
-  let nodes = [];     // [{id, role, replica, primaryId, name, address}]
+  // install.sh and estate plans both take several profiles on one server, which is
+  // what a lab build is. Expanding it here means the wizard can read a plan that
+  // was written by hand or chosen from install.sh's own menu.
+  const ALL_IN_ONE = ["core", "search", "calls", "jobs", "monitoring"];
+
+  let nodes = [];     // [{id, role, profiles, replica, primaryId, name, address}]
   let nextId = 1;
   let state = {};
 
   // ---------------------------------------------------------------- helpers
 
   function el(id) { return document.getElementById(id); }
-  function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+  // Quotes matter as much as angle brackets here: server names go into attribute
+  // values, where a bare " ends the attribute and anything after it becomes more
+  // attributes. A plan is made to be passed around, so treat a loaded one as
+  // someone else's text.
+  const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => HTML_ESCAPES[c]); }
+
+  // Mermaid labels are quoted strings that may hold a little HTML, so a " ends
+  // the label early and a < starts a tag. Mermaid reads its own #-entities back
+  // as the plain character, which keeps the name looking the way it was typed.
+  const MERMAID_ESCAPES = { '"': "#quot;", "<": "#lt;", ">": "#gt;", "#": "#35;" };
+  function mermaidLabel(s) { return String(s).replace(/[#"<>]/g, c => MERMAID_ESCAPES[c]); }
   function qs(sel, root) { return (root || document).querySelector(sel); }
   function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
   function shortLabel(role) { return ROLE_LABEL[role].split(" (")[0]; }
@@ -37,7 +55,21 @@
     const input = qs('input[name="' + name + '"][value="' + value + '"]');
     if (input) input.checked = true;
   }
-  function roleHas(node, component) { return (DATA.profile_components[node.role] || []).includes(component); }
+  // A node carries a list of profiles, not one role. For every node the wizard
+  // recommends that list is a single profile; a lab server is the one that holds
+  // several, which is how install.sh and estate plans have always described a box.
+  function nodeProfiles(n) { return (n.profiles && n.profiles.length) ? n.profiles : [n.role]; }
+  function profileComponents(profiles) {
+    const out = [];
+    for (const profile of profiles) {
+      for (const component of DATA.profile_components[profile] || []) {
+        if (!out.includes(component)) out.push(component);
+      }
+    }
+    return out;
+  }
+  function roleHas(node, component) { return profileComponents(nodeProfiles(node)).includes(component); }
+  function isLab() { return qs('input[name="deployment"]:checked').value === "lab"; }
 
   function showStep(n) {
     for (let i = 1; i <= 4; i++) {
@@ -65,7 +97,12 @@
   }
 
   function readState() {
+    // A lab is one box, so the answers that spread work over several servers are
+    // not asked and are not read: no clustering, no replicas, one of everything.
+    const lab = isLab();
+    const ha = !lab && el("f-ha").checked;
     return {
+      mode: lab ? "lab" : "estate",
       name: el("f-name").value.trim() || "mattermost",
       siteUrl: el("f-site").value.trim(),
       tier: el("f-tier").value,
@@ -77,11 +114,14 @@
       scrapeSources: el("f-scrape").value.split(",").map(s => s.trim()).filter(Boolean),
       lokiUrl: el("f-loki").value.trim(),
       callsMode: qs('input[name="calls"]:checked').value,
-      callsServers: Math.max(1, parseInt(el("f-calls-servers").value, 10) || 1),
+      callsServers: lab ? 1 : Math.max(1, parseInt(el("f-calls-servers").value, 10) || 1),
+      recording: el("f-recording").checked,
+      recordingPlacement: lab ? "own" : qs('input[name="recording"]:checked').value,
+      recordingServers: lab ? 1 : Math.max(1, parseInt(el("f-recording-servers").value, 10) || 1),
       search: qs('input[name="search"]:checked').value,
-      ha: el("f-ha").checked,
-      appServers: el("f-ha").checked ? Math.max(2, parseInt(el("f-app-servers").value, 10) || 2) : 1,
-      dbReplicas: el("f-ha").checked ? Math.max(0, parseInt(el("f-db-replicas").value, 10) || 0) : 0,
+      ha: ha,
+      appServers: ha ? Math.max(2, parseInt(el("f-app-servers").value, 10) || 2) : 1,
+      dbReplicas: ha ? Math.max(0, parseInt(el("f-db-replicas").value, 10) || 0) : 0,
       tlsMode: el("f-tls").value,
       fileStorage: el("f-storage").value,
     };
@@ -102,12 +142,28 @@
   // The answers that change the shape of the estate. Anything else (a URL, a
   // name) can be edited without throwing away the nodes already set up.
   function shapeSignature(s) {
-    return [s.seats, s.tier, s.callsMode, s.callsServers, s.observability,
-            s.monitoringLayout, s.ha, s.appServers, s.dbReplicas, s.fileStorage, s.search].join("|");
+    return [s.mode, s.seats, s.tier, s.callsMode, s.callsServers, s.recording, s.recordingPlacement,
+            s.recordingServers, s.observability, s.monitoringLayout, s.ha, s.appServers,
+            s.dbReplicas, s.fileStorage, s.search].join("|");
+  }
+
+  // What a lab box runs. The same answers as an estate, except every one of them
+  // lands on the one server instead of buying another, so "on its own server"
+  // becomes "also on this box". Mattermost, Nginx and PostgreSQL are always there,
+  // because without them there is nothing to try.
+  function labProfiles(s) {
+    const out = [(DATA.lab || {}).profile || "core"];
+    if (s.tier === "enterprise" && s.search === "opensearch") out.push("search");
+    if (s.callsMode === "rtcd") out.push("calls");
+    if (recordingOn(s)) out.push("jobs");
+    if (s.fileStorage === "nfs") out.push("storage");
+    if (s.observability === "managed") out.push("monitoring");
+    return out;
   }
 
   function buildRecommendation(s) {
     const band = pickBand(s.seats);
+    if (s.mode === "lab") return { band, roles: [{ role: "lab", profiles: labProfiles(s) }] };
     // The database always gets its own server, at every size.
     const roles = [{ role: "database" }];
     for (let i = 0; i < s.dbReplicas; i++) roles.push({ role: "database", replica: true });
@@ -119,6 +175,11 @@
     // own. Past that Mattermost expects rtcd, so messaging doesn't pay for media.
     if (s.callsMode === "rtcd") {
       for (let i = 0; i < s.callsServers; i++) roles.push({ role: "calls" });
+    }
+    // Recording and transcription take whole CPUs for minutes at a time, and the
+    // job server runs containers as root. Both are reasons to keep it apart.
+    if (recordingOn(s) && s.recordingPlacement === "own") {
+      for (let i = 0; i < s.recordingServers; i++) roles.push({ role: "jobs" });
     }
     if (s.observability === "managed") {
       // Grafana is the only part of the stack people log in to, so by default it
@@ -158,7 +219,8 @@
   function setNodesFromRoles(roles) {
     const addresses = new Map(nodes.map(n => [n.name, n.address]));
     nodes = roles.map(r => ({
-      id: nextId++, role: r.role, replica: !!r.replica, primaryId: null,
+      id: nextId++, role: r.role, profiles: (r.profiles || [r.role]).slice(),
+      replica: !!r.replica, primaryId: null,
       name: "", address: "", nameTouched: false,
     }));
     recomputePrimaries();
@@ -174,7 +236,7 @@
   // Everything installed on a node: the profile's own components, plus the
   // exporters and log collector the toolkit adds next to what they watch.
   function nodeComponents(n) {
-    const out = (DATA.profile_components[n.role] || []).slice();
+    const out = profileComponents(nodeProfiles(n));
     const auto = DATA.auto_components;
     const scraped = state.s.observability === "managed" || state.s.scrapeSources.length > 0;
     const shipsLogs = state.s.observability === "managed" || state.s.lokiUrl.length > 0;
@@ -198,6 +260,7 @@
   // primary exists, then app servers once what they talk to is up, monitoring last
   // since it needs the whole estate. Matches README's own install-order guidance.
   function installRank(n) {
+    if (n.role === "lab") return 1;   // the only server there is
     if (n.role === "database" && n.replica) return 2;
     if (n.role === "app") return 3;
     if (n.role === "monitoring" || n.role === "metrics") return 4;
@@ -234,27 +297,43 @@
 
   function renderStep2() {
     const band = state.band;
-    el("rationale").textContent = band.label + " users, sized from " + band.reference + ", " +
-      (nodes.length === 1 ? "one server" : nodes.length + " servers");
-    const text = band.note || "";
+    const lab = state.s.mode === "lab";
+    let text;
+    if (lab) {
+      const node = nodes.find(n => n.role === "lab") || nodes[0];
+      const runs = node ? profileComponents(nodeProfiles(node)).map(componentTitle) : [];
+      el("rationale").textContent = "One server running " + (runs.length ? andList(runs) : "nothing yet") + ".";
+      text = (DATA.lab || {}).warning || "";
+    } else {
+      el("rationale").textContent = band.label + " users, sized from " + band.reference + ", " +
+        (nodes.length === 1 ? "one server" : nodes.length + " servers");
+      text = band.note || "";
+    }
+    el("add-node-box").style.display = lab ? "none" : "";
     el("scale-note").style.display = text ? "" : "none";
     el("scale-note").textContent = text;
     renderEstateSummary();
     renderDiagram();
   }
 
+  // A lab server isn't on offer here: it is the whole estate, not one more box
+  // to bolt on, and it comes from the choice at the top of the first page.
   function roleOptions(selected) {
-    return Object.keys(ROLE_LABEL).map(r =>
+    return Object.keys(ROLE_LABEL).filter(r => r !== "lab").map(r =>
       `<option value="${r}" ${r === selected ? "selected" : ""}>${ROLE_LABEL[r]}</option>`).join("");
   }
+
+  function componentTitle(component) { return (SPECS[component] || {}).title || component; }
 
   // The estate grouped by what each tier is for, rather than a row of dropdowns.
   // What a server is gets decided on the first page; this is where you see it.
   const TIERS = [
+    { key: "lab", roles: ["lab"], title: "Lab server" },
     { key: "app", roles: ["app", "core"], title: "Application" },
     { key: "database", roles: ["database"], title: "Database" },
     { key: "search", roles: ["search"], title: "Search" },
     { key: "calls", roles: ["calls"], title: "Calls" },
+    { key: "jobs", roles: ["jobs"], title: "Recording" },
     { key: "storage", roles: ["storage"], title: "File storage" },
     { key: "monitoring", roles: ["monitoring", "metrics", "dashboards"], title: "Monitoring" },
   ];
@@ -263,14 +342,15 @@
   function tierComponents(members) {
     const out = [];
     for (const n of members) {
-      for (const component of DATA.profile_components[n.role] || []) {
+      for (const component of profileComponents(nodeProfiles(n))) {
         if (!out.includes(component)) out.push(component);
       }
     }
-    return out.map(c => (SPECS[c] || {}).title || c).join(", ");
+    return out.map(componentTitle).join(", ");
   }
 
   function describeNode(n) {
+    if (n.role === "lab") return "profiles: " + nodeProfiles(n).join(", ");
     if (n.role !== "database") return ROLE_LABEL[n.role].replace(/ \(.*\)$/, "");
     if (!n.replica) return "primary";
     const primary = nodes.find(p => p.id === n.primaryId);
@@ -296,7 +376,11 @@
         <p class="hint" style="margin:4px 0 0;">${escapeHtml(tierComponents(members))}</p>
         <ul>${members.map(n =>
           `<li><strong>${escapeHtml(n.name)}</strong> <span class="role-note">${escapeHtml(describeNode(n))}</span>` +
-          `<button class="link small remove-node" data-id="${n.id}">remove</button></li>`).join("")}</ul>`;
+          // Removing the only server a lab has leaves nothing to install, and the
+          // way to change what it runs is the questions on the page before this.
+          (n.role === "lab" ? ""
+            : `<button class="link small remove-node" data-id="${n.id}">remove</button>`) +
+          `</li>`).join("")}</ul>`;
       host.appendChild(block);
     }
     if (!nodes.length) {
@@ -337,12 +421,39 @@
   // The size the seat band asks for, so the diagram carries what someone has to
   // go and buy. Same figures as the infrastructure table on the last step.
   function nodeSpecLine(n) {
-    const spec = ((state.band && state.band.sizing) || {})[n.role] || {};
+    const spec = nodeSizing(n);
     const bits = [];
     if (spec.vcpu) bits.push(spec.vcpu + " vCPU");
-    if (spec.ram_gb) bits.push(spec.ram_gb + " GB RAM");
+    if (spec.ram) bits.push(spec.ram + " RAM");
     if (spec.disk_gb) bits.push(spec.disk_gb + " GB disk");
     return bits.join(" · ");
+  }
+
+  // A lab box is not sized by load, so a seat band's figures say nothing about
+  // it. What it does have to clear is the floor each component needs to start:
+  // the same sum of catalogue.yml minimums that install.sh --preflight checks,
+  // so the wizard and the installer can never tell you different numbers.
+  function labSizing(n) {
+    const mins = DATA.minimums || {};
+    let ram = 0, cpus = 0;
+    for (const component of nodeComponents(n)) {
+      const min = mins[component] || {};
+      ram += min.ram_mb || 0;
+      cpus += min.cpus || 0;
+    }
+    return { vcpu: Math.max(1, cpus), ram_mb: ram, ram: formatRam(ram), disk_gb: (DATA.lab || {}).disk_gb || null };
+  }
+
+  function formatRam(mb) {
+    const gb = mb / 1024;
+    return (Number.isInteger(gb) ? gb : Math.round(gb * 10) / 10) + " GB";
+  }
+
+  function nodeSizing(n) {
+    if (n.role === "lab") return labSizing(n);
+    const spec = ((state.band && state.band.sizing) || {})[n.role] || {};
+    return { vcpu: spec.vcpu || 0, ram_mb: (spec.ram_gb || 0) * 1024,
+             ram: spec.ram_gb ? spec.ram_gb + " GB" : "", disk_gb: spec.disk_gb || null };
   }
 
   // Every arrow is a firewall rule, taken from the same model as the table on the
@@ -387,7 +498,7 @@
 
     for (const n of nodes) {
       const spec = nodeSpecLine(n);
-      lines.push(`  ${idFor(n)}["${n.name}<br/>${shortLabel(n.role)}${spec ? "<br/>" + spec : ""}"]`);
+      lines.push(`  ${idFor(n)}["${mermaidLabel(n.name)}<br/>${shortLabel(n.role)}${spec ? "<br/>" + spec : ""}"]`);
     }
 
     // Gossip between app servers is the same ports in both directions, so it is
@@ -408,7 +519,7 @@
     }
 
     for (const ext of externals.values()) {
-      lines.push(`  ${ext.id}(["${ext.label}"])`);
+      lines.push(`  ${ext.id}(["${mermaidLabel(ext.label)}"])`);
     }
 
     // One colour per tier, so the servers you are buying stand out from the
@@ -559,7 +670,10 @@
     add("field-version", s.channel === "pinned" && !/^\d+\.\d+\.\d+$/.test(s.version)
       ? "A full version such as 11.7.14." : "");
 
-    add("field-seats", parseInt(el("f-seats").value, 10) > 0 ? "" : "A number above zero.");
+    // Seats size an estate's servers. A lab box is sized by what it takes to
+    // start, so the question isn't asked and there is nothing to check.
+    add("field-seats", s.mode === "lab" || parseInt(el("f-seats").value, 10) > 0
+      ? "" : "A number above zero.");
 
     // More than one app server and local disk means each one holds different files.
     add("field-storage", s.appServers > 1 && s.fileStorage === "local"
@@ -800,7 +914,12 @@
         " directly on 8443, UDP and TCP, so behind NAT or a load balancer that port has to map " +
         "through unchanged and the ICE host override has to name the address clients use. Without " +
         "it, calls connect and carry no audio. If clients can't reach 8443 at all, Calls needs a " +
-        "TURN server, which this toolkit doesn't install.";
+        "TURN server, which this toolkit doesn't install." +
+        (nodes.some(n => nodeComponents(n).includes("calls_offloader"))
+          ? " Recording runs the other way round: the job containers connect out to Mattermost to " +
+            "join the call and to upload the file, so the job server needs a route to the app " +
+            "servers, not just an open port of its own."
+          : "");
     } else {
       note.style.display = "none";
     }
@@ -813,22 +932,53 @@
   // floor in the catalogue says what it takes to start, which is the same at
   // 200 seats and 20,000, and is no use to anyone buying servers.
   function buildInfraRows() {
-    const sizing = (state.band && state.band.sizing) || {};
     const notes = DATA.sizing_notes || {};
     return nodes.map(n => {
-      const spec = sizing[n.role] || {};
+      const spec = nodeSizing(n);
       const components = nodeComponents(n);
-      const named = (DATA.profile_components[n.role] || []).map(c => (SPECS[c] || {}).title || c);
+      const named = profileComponents(nodeProfiles(n)).map(componentTitle);
       const extras = components.length - named.length;
       return {
         name: n.name,
         runs: named.join(", ") + (extras > 0 ? `, plus ${extras} exporter${extras === 1 ? "" : "s"}` : ""),
         cpus: spec.vcpu ? String(spec.vcpu) : "",
-        ram: spec.ram_gb ? spec.ram_gb + " GB" : "",
+        ram: spec.ram || "",
         disk: spec.disk_gb ? spec.disk_gb + " GB" : "your own data",
-        note: notes[n.role] || "",
+        note: n.role === "lab" ? ((DATA.lab || {}).note || "") : (notes[n.role] || ""),
       };
     });
+  }
+
+  // ---------------------------------------------------------------- colocation
+
+  // The advice install.sh prints when components share a server, worked out here
+  // from the same rules (inventory/group_vars/all/catalogue.yml, mmd_colocation_rules)
+  // so the wizard warns you before you buy the box rather than after. A one-role-
+  // per-server estate trips none of these; a lab trips most of them.
+  function colocationRules(node) {
+    const components = nodeComponents(node);
+    const major = (DATA.major_components || []).filter(c => components.includes(c));
+    const has = c => components.includes(c);
+    return (DATA.colocation || []).filter(rule => {
+      if (rule.when_all && rule.when_all.every(has)) return true;
+      if (rule.when_count_at_least && major.length >= rule.when_count_at_least) return true;
+      if (rule.when_any_with && rule.when_any_with.some(has) && (rule.workloads || []).some(has)) return true;
+      return false;
+    });
+  }
+
+  const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
+
+  function colocationFindings() {
+    const found = new Map();
+    for (const node of nodes) {
+      for (const rule of colocationRules(node)) {
+        if (!found.has(rule.id)) found.set(rule.id, { rule, names: [] });
+        found.get(rule.id).names.push(node.name);
+      }
+    }
+    return Array.from(found.values()).sort(
+      (a, b) => (SEVERITY_ORDER[a.rule.severity] ?? 3) - (SEVERITY_ORDER[b.rule.severity] ?? 3));
   }
 
   function renderInfraTable() {
@@ -844,14 +994,43 @@
       }
       tbody.appendChild(tr);
     }
-    el("sizing-source").textContent = DATA.sizing_source || "";
+    const lab = state.s.mode === "lab";
+    el("infra-lead").textContent = lab
+      ? "For whoever is building the box. What every part of it needs just to start."
+      : "For the server team. Mattermost's published figures for this size, per server.";
+    el("sizing-source").textContent = sizingSource();
     el("storage-formula").textContent = DATA.storage_formula || "";
+    el("storage-formula").style.display = lab ? "none" : "";
     return rows;
+  }
+
+  function sizingSource() {
+    return state.s.mode === "lab"
+      ? ((DATA.lab || {}).sizing_note || "")
+      : (DATA.sizing_source || "");
   }
 
   // ---------------------------------------------------------------- design decisions
 
   function buildDecisions() {
+    return (state.s.mode === "lab" ? labDecisions() : estateDecisions())
+      // Where components share a server, say so with the same words install.sh
+      // will use when it gets there. Usually nothing in an estate, plenty in a lab.
+      .concat(colocationFindings().map(f => [
+        f.rule.message + (nodes.length > 1 ? " (" + andList(f.names) + ")" : ""), f.rule.advice]))
+      .concat(state.s.tlsMode === "later"
+        ? [["TLS not configured yet", "Plain HTTP until a certificate is in place."]] : []);
+  }
+
+  function labDecisions() {
+    const node = nodes.find(n => n.role === "lab") || nodes[0];
+    const runs = node ? profileComponents(nodeProfiles(node)).map(componentTitle) : [];
+    return [["Everything on one server",
+             (runs.length ? andList(runs) + " share " : "Every component shares ")
+             + "one box's CPU, memory and disk. " + ((DATA.lab || {}).warning || "")]];
+  }
+
+  function estateDecisions() {
     const rows = [];
     const count = role => nodes.filter(n => n.role === role).length;
     const apps = count("app") + count("core");
@@ -911,6 +1090,20 @@
                  "Calls and messaging share the same CPU. Mattermost expects rtcd past about 50 people."]);
     }
 
+    const jobs = count("jobs");
+    const recordingOnCalls = state.s.recording && state.s.recordingPlacement === "calls" && count("calls");
+    if (jobs) {
+      rows.push([jobs > 1 ? jobs + " Calls job servers" : "Recording on its own server",
+                 "Recording, transcription and live captions run as containers, away from live media. " +
+                 (jobs > 1
+                   ? "Mattermost points at one job service URL, so these need a load balancer."
+                   : "Recording stops if it does; calls carry on.")]);
+    } else if (recordingOnCalls) {
+      rows.push(["Recording on the Calls servers",
+                 "One less server, but a transcription job takes CPU from the calls running next to it. " +
+                 "Split it out before recording becomes routine."]);
+    }
+
     if (count("monitoring") || count("metrics")) {
       rows.push([count("dashboards") ? "Grafana on its own server" : "Monitoring on one server",
                  count("dashboards")
@@ -920,9 +1113,6 @@
       rows.push(["Monitoring handled elsewhere", "Alerting and retention are yours."]);
     }
 
-    if (state.s.tlsMode === "later") {
-      rows.push(["TLS not configured yet", "Plain HTTP until a certificate is in place."]);
-    }
     return rows;
   }
 
@@ -955,6 +1145,7 @@
   function buildPlanObject() {
     return {
       name: state.s.name,
+      deployment: state.s.mode,
       seats: state.s.seats,
       licence: state.s.tier,
       // Professional runs the Enterprise binary; only Team Edition is different.
@@ -965,12 +1156,14 @@
       tls_mode: state.s.tlsMode,
       file_storage: state.s.fileStorage,
       calls: state.s.callsMode,
+      recording: recordingOn(state.s) ? state.s.recordingPlacement : "none",
       observability: state.s.observability,
       monitoring_scrape_sources: state.s.scrapeSources,
       logging_loki_url: state.s.lokiUrl,
       nodes: nodes.map(n => {
         const primary = n.replica ? nodes.find(p => p.id === n.primaryId) : null;
-        return { name: n.name, address: n.address, role: n.role, primary: primary ? primary.name : null };
+        return { name: n.name, address: n.address, role: n.role, profiles: nodeProfiles(n).slice(),
+                 primary: primary ? primary.name : null };
       }),
     };
   }
@@ -981,6 +1174,7 @@
       "# Suggested install order: " + order,
       "estate_version: 1",
       "name: " + esc(plan.name),
+      "deployment: " + plan.deployment,
       "seats: " + plan.seats,
       "licence: " + plan.licence,
       "mattermost_edition: " + plan.mattermost_edition,
@@ -990,6 +1184,7 @@
       "tls_mode: " + plan.tls_mode,
       "file_storage: " + plan.file_storage,
       "calls: " + plan.calls,
+      "recording: " + plan.recording,
       "observability: " + plan.observability,
     ];
     if (plan.observability === "external") {
@@ -1000,13 +1195,18 @@
     for (const n of plan.nodes) {
       lines.push("  - name: " + esc(n.name));
       lines.push("    address: " + esc(n.address));
-      lines.push("    profiles: [" + esc(n.role) + "]");
+      lines.push("    profiles: [" + n.profiles.map(esc).join(", ") + "]");
       if (n.primary) lines.push("    primary: " + esc(n.primary));
     }
     return lines.join("\n") + "\n";
   }
 
+  // The short line is a convenience, not the plan: install.sh --estate reads the
+  // plain YAML just as happily. So if the compressor didn't load, say so and
+  // leave the YAML below as the way to carry the plan, rather than failing the
+  // whole step over the nicer of two formats.
   function encodePlan(yamlText) {
+    if (!window.pako) return "";
     const bytes = new TextEncoder().encode(yamlText);
     const gz = window.pako.gzip(bytes);
     let binary = "";
@@ -1014,26 +1214,56 @@
     return "MME1:" + btoa(binary);
   }
 
+  const NO_ENCODER = "The compressor didn't load, so there's no short line this time. "
+    + "Use the plain YAML further down: install.sh --estate takes either.";
+  const LIB_MISSING = "This page couldn't load the library that reads a plan. Check that the "
+    + "wizard/vendor folder came with this page. You can also pass the plan straight to "
+    + "install.sh --estate, which reads it without any of this.";
+
+  // An error whose message already tells the reader what to do, so the import
+  // handler doesn't tack its generic advice on the end.
+  function planError(message) {
+    const err = new Error(message);
+    err.explained = true;
+    return err;
+  }
+
   function buildFollowups(plan) {
     const out = [];
-    const hasRole = r => plan.nodes.some(n => n.role === r);
-    if (hasRole("app")) {
-      if (hasRole("database")) out.push("Copy the database password from the database server's secrets.yml into mattermost_db_password on each app server, or use an estate secrets file (see the README).");
-      if (hasRole("search")) {
+    // What has to be copied between servers depends on whether the two ends are
+    // actually different servers. On a lab box they never are, so the installer
+    // wires it to itself and most of this list falls away.
+    const comps = n => profileComponents(n.profiles || [n.role]);
+    const appNodes = plan.nodes.filter(n => comps(n).includes("mattermost"));
+    const apart = component => plan.nodes.some(n => comps(n).includes(component) && !appNodes.includes(n));
+    const anywhere = component => plan.nodes.some(n => comps(n).includes(component));
+    if (appNodes.length) {
+      if (apart("postgresql")) out.push("Copy the database password from the database server's secrets.yml into mattermost_db_password on each app server, or use an estate secrets file (see the README).");
+      if (apart("opensearch")) {
         out.push("Copy the OpenSearch 'mattermost' user's password from the search server's secrets.yml into mattermost_opensearch_password on each app server.");
         out.push("Copy /etc/opensearch/certs/root-ca.pem from the search server to each app server, then point mattermost_opensearch_ca_file at it.");
       }
       if (plan.tls_mode === "provided") out.push("Put the certificate and key on each app server, then run install.sh --edit to add their paths.");
-      if (plan.file_storage === "nfs" && hasRole("storage")) out.push("Mount the storage server's NFS share before installing Mattermost on each app server.");
+      if (plan.file_storage === "nfs" && apart("nfs")) out.push("Mount the storage server's NFS share before installing Mattermost on each app server.");
       if (plan.file_storage === "amazons3") out.push("Fill in the S3 bucket, region and keys on each app server. They're not part of the estate plan.");
     }
     if (plan.nodes.some(n => n.primary)) out.push("Copy the db_password and replication_password from the primary's secrets.yml into the replica's answers.");
-    if (plan.nodes.filter(n => n.role === "app" || n.role === "core").length > 1) {
+    if (appNodes.length > 1) {
       out.push("Put a load balancer in front of the app servers and health-check /api/v4/system/ping on each.");
       out.push("Apply the Enterprise licence on every app server and set mattermost_license_file. Clustering is on from the estate plan (mattermost_cluster_peers) and the install stops without it.");
       out.push("Install every app server, then check the cluster: verify warns until each peer has joined. Keep them on the same Mattermost version.");
     }
-    if (hasRole("calls")) out.push("If clients reach the Calls server through NAT or a different address, fill in rtcd_ice_host_override on that server.");
+    if (anywhere("rtcd")) out.push("If clients reach the Calls server through NAT or a different address, fill in rtcd_ice_host_override on that server.");
+    if (anywhere("calls_offloader")) {
+      out.push("Recording and transcription are Enterprise features and need the licence applied before they do anything.");
+      out.push("The job service pulls its recorder and transcriber images from Docker Hub the first time someone records a call. Build the offline bundle with --with-job-images, or point calls_offloader_image_registry at an internal mirror, if that server has no route out.");
+      out.push("Check calls_offloader_recorder_image and calls_offloader_transcriber_image after a Mattermost upgrade: those tags follow the Calls plugin, not the job service.");
+      if (plan.nodes.filter(n => comps(n).includes("calls_offloader")).length > 1) out.push("Put a load balancer in front of the job servers and point mattermost_job_service_url at it. Mattermost only talks to one.");
+    }
+    if (plan.deployment === "lab") {
+      out.push("Everything talks to itself over localhost, so there are no passwords to carry between servers. The installer generates them into /etc/mattermost-parthenon/secrets.yml.");
+      out.push("An Enterprise licence still has to go on the box by hand before Enterprise search, rtcd, recording or Mattermost's own metrics do anything.");
+    }
     out.push("None of that is in the estate plan on purpose. Secrets and certificate files never leave your servers.");
     return out;
   }
@@ -1042,7 +1272,10 @@
     const plan = buildPlanObject();
     const yamlText = emitYaml(plan);
     el("yaml-out").value = yamlText;
-    el("blob-out").textContent = encodePlan(yamlText);
+    const blob = encodePlan(yamlText);
+    el("blob-out").textContent = blob || NO_ENCODER;
+    el("copy-blob").disabled = !blob;
+    el("download-blob").disabled = !blob;
     renderInstallOrder("install-order-4");
     const decisions = renderDecisions();
     const firewall = renderFirewallTable();
@@ -1101,10 +1334,12 @@
   function decodePlanText(text) {
     text = text.trim();
     if (text.startsWith("MME1:")) {
+      if (!window.pako) throw planError(LIB_MISSING);
       const binary = atob(text.slice(5));
       const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
       text = new TextDecoder().decode(window.pako.ungzip(bytes));
     }
+    if (!window.jsyaml) throw planError(LIB_MISSING);
     return window.jsyaml.load(text);
   }
 
@@ -1112,6 +1347,20 @@
     if (!plan || typeof plan !== "object") throw new Error("That isn't an estate plan.");
     if (plan.estate_version !== 1) throw new Error("This plan says estate_version " + plan.estate_version + ", and this wizard writes version 1.");
     if (!Array.isArray(plan.nodes) || !plan.nodes.length) throw new Error("That plan has no nodes in it.");
+
+    // install.sh's menu and hand-written plans say all-in-one where the wizard
+    // says a list of profiles. Same box either way, so read it as that list and
+    // every check below (search? calls? monitoring?) answers itself.
+    for (const node of plan.nodes) {
+      if ((node.profiles || []).includes("all-in-one")) node.profiles = ALL_IN_ONE.slice();
+    }
+    // The plan says which it is. A plan written before this field existed, or by
+    // hand, doesn't: one server carrying the database and the app is a lab box
+    // whatever it calls itself, because there is nowhere else for anything to go.
+    const lab = plan.deployment ? plan.deployment === "lab"
+      : plan.nodes.length === 1 && profileComponents(plan.nodes[0].profiles || []).includes("postgresql")
+        && profileComponents(plan.nodes[0].profiles || []).includes("mattermost");
+    setRadio("deployment", lab ? "lab" : "estate");
 
     el("f-name").value = plan.name || "mattermost";
     el("f-site").value = plan.mattermost_site_url || "";
@@ -1142,26 +1391,44 @@
     setRadio("calls", callsNodes.length ? "rtcd"
       : (["integrated", "none"].includes(plan.calls) ? plan.calls : "none"));
     el("f-calls-servers").value = Math.max(1, callsNodes.length);
+    const jobsNodes = plan.nodes.filter(n => (n.profiles || []).includes("jobs"));
+    // "calls" means the job service shares the Calls servers, so there is no node
+    // of its own to count: the plan line is the only record of it.
+    el("f-recording").checked = jobsNodes.length > 0 || plan.recording === "calls";
+    setRadio("recording", jobsNodes.length ? "own" : (plan.recording === "calls" ? "calls" : "own"));
+    el("f-recording-servers").value = Math.max(1, jobsNodes.length);
     updateCallsNote();
 
-    nodes = plan.nodes.map(n => ({
-      id: nextId++,
-      role: (n.profiles || ["app"])[0],
-      replica: Boolean(n.primary),
-      primaryId: null,
-      name: String(n.name || ""),
-      address: String(n.address || ""),
-      nameTouched: true,
-    }));
+    nodes = plan.nodes.map(n => {
+      const profiles = (n.profiles && n.profiles.length) ? n.profiles.slice() : ["app"];
+      return {
+        id: nextId++,
+        role: lab ? "lab" : profiles[0],
+        profiles: profiles,
+        replica: Boolean(n.primary),
+        primaryId: null,
+        name: String(n.name || ""),
+        address: String(n.address || ""),
+        nameTouched: true,
+      };
+    });
     plan.nodes.forEach((src, i) => {
       if (!src.primary) return;
       const primary = nodes.find(x => x.name === src.primary);
       if (primary) nodes[i].primaryId = primary.id;
     });
 
-    const unknown = nodes.filter(n => !ROLE_LABEL[n.role]).map(n => n.name);
-    if (unknown.length) throw new Error("This wizard doesn't know the profile on " + unknown.join(", ") + ".");
+    // Name the profile, not just the server: "this wizard doesn't know the
+    // profile on db01" leaves you guessing which of the three it means.
+    const unknown = [...new Set(nodes.flatMap(n => nodeProfiles(n)).filter(p => !DATA.profile_components[p]))];
+    if (unknown.length) {
+      throw planError("This plan uses " + unknown.map(p => "'" + p + "'").join(" and ")
+        + ", which this wizard doesn't build. It knows "
+        + Object.keys(DATA.profile_components).join(", ")
+        + ". Install that server with install.sh --profile instead, or take it out of the plan.");
+    }
 
+    updateDeploymentMode();
     updateHaNote();
     updateSearchNote();
     updateMonitoringNote();
@@ -1187,7 +1454,11 @@
       applyPlan(decodePlanText(text));
       showError("import-error", "");
     } catch (err) {
-      showError("import-error", err.message + " Paste the encoded line exactly as the wizard gave it, or the plain YAML.");
+      // A plan this wizard understood but didn't like already says what is wrong
+      // with it, so the advice about pasting is only for the ones that didn't
+      // parse at all.
+      const advice = err.explained ? "" : " Paste the encoded line exactly as the wizard gave it, or the plain YAML.";
+      showError("import-error", err.message + advice);
     }
   });
 
@@ -1204,19 +1475,22 @@
     // anything on a licence that has group calls at all. On Team Edition the
     // labels describe where Calls runs and nothing more.
     const groupCalls = tier !== "team";
-    el("calls-integrated-label").textContent = groupCalls
-      ? "Up to 50 people in calls, built into the app servers"
-      : "Built into the app servers";
-    el("calls-rtcd-label").textContent = groupCalls
-      ? "More than 50, on dedicated Calls servers"
-      : "On dedicated Calls servers";
+    const lab = isLab();
+    el("calls-integrated-label").textContent = lab
+      ? (groupCalls ? "Up to 50 people in calls, built into Mattermost" : "Built into Mattermost")
+      : (groupCalls ? "Up to 50 people in calls, built into the app servers" : "Built into the app servers");
+    el("calls-rtcd-label").textContent = lab
+      ? "On rtcd, which this box runs alongside Mattermost"
+      : (groupCalls ? "More than 50, on dedicated Calls servers" : "On dedicated Calls servers");
 
     const mode = qs('input[name="calls"]:checked').value;
     const note = el("calls-mode-note");
-    el("field-calls-servers").style.display = mode === "rtcd" ? "" : "none";
+    el("field-calls-servers").style.display = (mode === "rtcd" && !lab) ? "" : "none";
     note.style.display = mode === "none" ? "none" : "";
     if (mode === "integrated") {
-      const media = " UDP and TCP 8443 have to reach the app servers directly, not through the proxy.";
+      const media = lab
+        ? " UDP and TCP 8443 have to reach the box directly, not through the proxy."
+        : " UDP and TCP 8443 have to reach the app servers directly, not through the proxy.";
       if (tier === "team") {
         // Team Edition calls are 1-to-1 and time-limited, so "up to 50 people"
         // is about the deployment model, not what this licence can actually do.
@@ -1230,10 +1504,72 @@
           + "and live captions, inside each app server." + media;
       }
     } else if (mode === "rtcd") {
-      note.textContent = "Mattermost points at one rtcd URL, so more than one needs a load balancer in front.";
+      note.textContent = lab
+        ? "rtcd runs as its own service on the same box, which is how you try the split without buying a second server. "
+          + "Busy calls will take CPU from Mattermost."
+        : "Mattermost points at one rtcd URL, so more than one needs a load balancer in front.";
     }
+    updateRecordingNote();
+  }
+
+  // Recording, transcription and live captions are run by a separate service
+  // (calls-offloader), one container per job. Enterprise only, and only worth
+  // offering once Calls is actually switched on.
+  function recordingOn(s) {
+    return s.recording && s.tier === "enterprise" && s.callsMode !== "none";
+  }
+
+  function updateRecordingNote() {
+    const tier = el("f-tier").value;
+    const mode = qs('input[name="calls"]:checked').value;
+    const open = tier === "enterprise" && mode !== "none";
+    const box = el("f-recording");
+    el("recording-block").style.display = mode === "none" ? "none" : "";
+    box.disabled = !open;
+    if (!open) box.checked = false;
+    const on = box.checked;
+    // On one box "its own server" and "the Calls server" are the same machine,
+    // so there is nothing to place and nothing worth asking.
+    const lab = isLab();
+    if (lab) setRadio("recording", "own");
+    el("recording-options").style.display = (on && !lab) ? "" : "none";
+
+    // With Calls inside the app servers there is no Calls server to share, so
+    // the job service either gets its own box or there is nowhere else for it.
+    const onCalls = el("f-recording-on-calls");
+    onCalls.disabled = mode !== "rtcd";
+    el("recording-on-calls-label").textContent = mode === "rtcd"
+      ? "On the Calls server" : "On the Calls server (needs dedicated Calls servers)";
+    if (onCalls.disabled && onCalls.checked) setRadio("recording", "own");
+    const placement = qs('input[name="recording"]:checked').value;
+    el("field-recording-servers").style.display = (on && placement === "own") ? "" : "none";
+
+    const note = el("recording-note");
+    if (!open) {
+      note.textContent = mode === "none" ? ""
+        : "Recording, transcription and live captions are Enterprise features.";
+      return;
+    }
+    if (!on) {
+      note.textContent = "Adds calls-offloader, which runs each recording or transcription as a container. "
+        + "It is the only server here that needs Docker.";
+      return;
+    }
+    if (lab) {
+      note.textContent = "calls-offloader runs on this box, which is also the only part of the toolkit that "
+        + "needs Docker. Mattermost sizes it at 8 vCPU / 16 GB on its own, and a job takes whole CPUs for "
+        + "minutes, so expect one recording to make everything else on the box feel slow.";
+      return;
+    }
+    const where = placement === "own" ? "its own server" : "the Calls server";
+    note.textContent = "Runs on " + where + ". Mattermost sizes it at 8 vCPU / 16 GB, which carries about "
+      + "six medium-quality recordings at once; transcription is slower again. Recordings upload back into "
+      + "Mattermost as attachments, so the wizard raises the upload limit on the app servers to match."
+      + (placement === "calls" ? " A transcription job will take CPU from live calls on that server." : "");
   }
   qsa('input[name="calls"]').forEach(r => r.addEventListener("change", updateCallsNote));
+  qsa('input[name="recording"]').forEach(r => r.addEventListener("change", updateRecordingNote));
+  el("f-recording").addEventListener("change", updateRecordingNote);
   el("f-tier").addEventListener("change", updateCallsNote);
 
   // The seat band proposes a shape; the Availability group is where it's decided.
@@ -1293,7 +1629,9 @@
     if (!enterprise && opensearch.checked) setRadio("search", "database");
     el("search-note").textContent = !enterprise
       ? "OpenSearch needs Enterprise. Recommended from 2 million posts."
-      : "Recommended from 2 million posts.";
+      : isLab()
+        ? "Recommended from 2 million posts. On one box it wants 4 GB to itself, and it will take them from Mattermost."
+        : "Recommended from 2 million posts.";
   }
   qsa('input[name="search"]').forEach(r => r.addEventListener("change", updateSearchNote));
   el("f-tier").addEventListener("change", updateSearchNote);
@@ -1306,11 +1644,47 @@
     const managed = qs('input[name="observability"]:checked').value === "managed";
     const note = el("monitoring-note");
     if (!managed) { note.textContent = ""; return; }
+    if (isLab()) {
+      note.textContent = "Prometheus, Loki and Grafana go on the same box they are watching, so when it goes "
+        + "down you lose the dashboards that would tell you why. Fine for seeing what the dashboards look like."
+        + (enterprise ? "" : " Mattermost's own metrics on port 8067 need Enterprise, so those dashboards stay empty.");
+      return;
+    }
     note.textContent = enterprise
       ? "Mattermost's own metrics on port 8067 are collected too. They need the Enterprise licence in place."
       : "Host, PostgreSQL, Nginx and log collection work on any licence. Mattermost's own metrics on "
         + "port 8067 need Enterprise, so the Mattermost dashboards stay empty on this licence.";
   }
+
+  // Grafana only has somewhere else to go when there is another server to put it
+  // on, and the question only arises when this toolkit is the thing building it.
+  function syncMonitoringLayoutRow() {
+    const managed = qs('input[name="observability"]:checked').value === "managed";
+    el("observability-external").style.display = managed ? "none" : "";
+    el("monitoring-layout-row").style.display = (managed && !isLab()) ? "" : "none";
+  }
+
+  // One box or an estate. Everything below the choice still gets asked, because
+  // the answers are the same answers: what changes is whether a yes buys another
+  // server or adds another thing to the one box. The questions that only exist to
+  // spread work across servers go away, since there is nowhere to spread it to.
+  function updateDeploymentMode() {
+    const lab = isLab();
+    el("field-seats").style.display = lab ? "none" : "";
+    el("group-availability").style.display = lab ? "none" : "";
+    el("add-node-box").style.display = lab ? "none" : "";
+    el("search-opensearch-label").textContent = lab
+      ? "OpenSearch, on this box too" : "OpenSearch, on its own server";
+    el("run-step-2").innerHTML = lab
+      ? 'On the server, run <code>sudo ./install.sh --estate my-estate.yml</code>, or paste the plan when it asks.'
+      : 'On each server, in the install order below, run <code>sudo ./install.sh --estate my-estate.yml</code>, or paste the plan when it asks.';
+    if (lab) el("f-ha").checked = false;
+    syncMonitoringLayoutRow();
+    updateHaNote();
+    updateCallsNote();
+    updateMonitoringNote();
+  }
+  qsa('input[name="deployment"]').forEach(r => r.addEventListener("change", updateDeploymentMode));
 
   el("f-channel").addEventListener("change", () => {
     el("field-version").style.display = el("f-channel").value === "pinned" ? "" : "none";
@@ -1325,14 +1699,7 @@
   el("f-app-servers").addEventListener("input", updateHaNote);
   el("f-db-replicas").addEventListener("input", updateHaNote);
 
-  qs('input[name="observability"][value="external"]').addEventListener("change", () => {
-    el("observability-external").style.display = "";
-    el("monitoring-layout-row").style.display = "none";
-  });
-  qs('input[name="observability"][value="managed"]').addEventListener("change", () => {
-    el("observability-external").style.display = "none";
-    el("monitoring-layout-row").style.display = "";
-  });
+  qsa('input[name="observability"]').forEach(r => r.addEventListener("change", syncMonitoringLayoutRow));
 
   el("to-step-2").addEventListener("click", () => {
     const problems = step1Problems();
@@ -1397,7 +1764,8 @@
   el("copy-infra").addEventListener("click", (e) => copyFrom(
     toMarkdown(["Server", "Runs", "vCPU", "RAM", "Disk", "Notes"],
       buildInfraRows().map(r => [r.name, r.runs, r.cpus, r.ram, r.disk, r.note]))
-    + "\n\n" + (DATA.sizing_source || "") + "\n\n" + (DATA.storage_formula || ""), e.target));
+    + "\n\n" + sizingSource()
+    + (state.s.mode === "lab" ? "" : "\n\n" + (DATA.storage_formula || "")), e.target));
 
   el("start-over").addEventListener("click", () => {
     nodes = []; nextId = 1; state = {};
@@ -1439,6 +1807,7 @@
   updateSearchNote();
   updateCallsNote();
   updateMonitoringNote();
+  updateDeploymentMode();
   // Optional dark mode: off by default, remembered per browser.
   const themeBtn = el("theme-toggle");
   function syncThemeButton() {

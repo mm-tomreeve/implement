@@ -21,6 +21,13 @@ LimitNOFILE=49152
 Environment=MM_CONFIG={{ mattermost_config_dir }}/config.json
 # Logs live outside the install directory too, so tell Mattermost where the log root is.
 Environment=MM_LOG_PATH={{ mattermost_log_dir }}
+{% if mmd_calls_recording | bool and mmd_recorder_site_url | length > 0 %}
+# The recorder and transcriber run in containers on the job server and connect
+# back to Mattermost. They get this address instead of the public site URL, which
+# they may not be able to resolve or route to.
+Environment=MM_CALLS_RECORDER_SITE_URL={{ mmd_recorder_site_url }}
+Environment=MM_CALLS_TRANSCRIBER_SITE_URL={{ mmd_recorder_site_url }}
+{% endif %}
 
 [Install]
 WantedBy=multi-user.target

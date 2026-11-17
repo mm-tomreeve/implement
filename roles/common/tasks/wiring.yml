@@ -14,6 +14,13 @@
   register: _rtcd_installed_link
   when: "'rtcd' in mmd_selected"
 
+- name: Look for a calls-offloader installed by an earlier run
+  ansible.builtin.stat:
+    path: "{{ calls_offloader_dir }}/bin/calls-offloader"
+    follow: false
+  register: _offloader_installed_link
+  when: "'calls_offloader' in mmd_selected"
+
 - name: Decide local versus remote wiring
   ansible.builtin.set_fact:
     mmd_db_local: "{{ 'postgresql' in mmd_selected }}"
@@ -36,6 +43,9 @@
     mmd_rtcd_url: >-
       {{ mattermost_rtcd_url if mattermost_rtcd_url | length > 0
          else ('http://127.0.0.1:' ~ rtcd_api_port if 'rtcd' in mmd_selected else '') }}
+    mmd_job_service_url: >-
+      {{ mattermost_job_service_url if mattermost_job_service_url | length > 0
+         else ('http://127.0.0.1:' ~ calls_offloader_api_port if 'calls_offloader' in mmd_selected else '') }}
     mmd_opensearch_security: "{{ opensearch_allowed_clients | length > 0 }}"
     mmd_prometheus_url: >-
       {{ grafana_prometheus_url if grafana_prometheus_url | length > 0 else 'http://127.0.0.1:' ~ prometheus_port }}
@@ -59,6 +69,9 @@
     mmd_rtcd_installed: >-
       {{ (_rtcd_installed_link.stat.lnk_target | basename | regex_replace('^rtcd-', ''))
          if ((_rtcd_installed_link.stat | default({})).islnk | default(false)) else '' }}
+    mmd_offloader_installed: >-
+      {{ (_offloader_installed_link.stat.lnk_target | basename | regex_replace('^calls-offloader-', ''))
+         if ((_offloader_installed_link.stat | default({})).islnk | default(false)) else '' }}
     mmd_postgresql_app_servers: >-
       {{ (postgresql_app_servers if postgresql_app_servers != 'auto'
           else [postgresql_allowed_clients | length + (1 if 'mattermost' in mmd_selected else 0), 1] | max) | int }}
@@ -147,6 +160,9 @@
     mmd_rtcd_hold: >-
       {{ mmd_rtcd_installed | length > 0 and rtcd_version in ['latest', '']
          and not (rtcd_allow_upgrade | bool) }}
+    mmd_offloader_hold: >-
+      {{ mmd_offloader_installed | length > 0 and calls_offloader_version in ['latest', '']
+         and not (calls_offloader_allow_upgrade | bool) }}
     # Mattermost's pool is per data source per app server, so every app server may
     # open mattermost_db_max_open_conns connections against this database, whether
     # it is the primary or a read replica. PostgreSQL keeps a few for superusers,
@@ -175,6 +191,28 @@
          else ('disable' if mmd_db_host in ['127.0.0.1', 'localhost', '::1'] else 'require') }}
     mmd_calls_integrated: >-
       {{ 'mattermost' in mmd_selected and mattermost_calls_integrated | bool and mmd_rtcd_url | length == 0 }}
+    # Recording needs somewhere to run the jobs and an Enterprise licence. As with
+    # metrics, 'auto' waits for the licence file rather than turning on a feature
+    # that would only fail; set it to true if you apply the licence in the console.
+    mmd_calls_recording: >-
+      {{ (mmd_job_service_url | length > 0 and mattermost_edition == 'enterprise'
+          and mattermost_license_file | length > 0)
+         if mattermost_calls_recording == 'auto' else (mattermost_calls_recording | bool) }}
+    # Mattermost's published benchmarks: 8 vCPU sustains 8 low, 6 medium or 4 high
+    # concurrent recordings at around 70% CPU. Scale that by this host's CPUs.
+    mmd_offloader_max_jobs: >-
+      {{ (calls_offloader_max_concurrent_jobs if calls_offloader_max_concurrent_jobs != 'auto'
+          else [({'low': 1.0, 'medium': 0.75, 'high': 0.5}[mattermost_calls_recording_quality]
+                 * ansible_facts['processor_vcpus'] | int) | round | int, 1] | max) | int }}
+    # What a full-length recording weighs, with headroom. Mattermost uploads it as a
+    # normal attachment when the call ends, so MaxFileSize and the proxy's body limit
+    # both have to be at least this or the recording is lost at the final step.
+    # Per hour: 0.5 GB low, 0.7 GB medium, 1.2 GB high.
+    mmd_recording_max_mb: >-
+      {{ [({'low': 512, 'medium': 717, 'high': 1229}[mattermost_calls_recording_quality]
+            * mattermost_calls_max_recording_minutes | int / 60 * 1.3) | round | int, 100] | max }}
+    # What job containers use to reach Mattermost, when the site URL isn't one they can get to.
+    mmd_recorder_site_url: "{{ mattermost_calls_internal_site_url | regex_replace('/+$', '') }}"
     mmd_opensearch_url: >-
       {{ mattermost_opensearch_url if mattermost_opensearch_url | length > 0
          else ((('https' if mmd_opensearch_security else 'http') ~ '://127.0.0.1:' ~ opensearch_port)
@@ -185,3 +223,12 @@
       {{ mattermost_opensearch_ca_file if mattermost_opensearch_ca_file | length > 0
          else (opensearch_conf_dir ~ '/certs/root-ca.pem'
                if ('opensearch' in mmd_selected and mmd_opensearch_security) else '') }}
+
+- name: Size the proxy's upload limit to match Mattermost's
+  ansible.builtin.set_fact:
+    # A recording goes through the proxy like any other upload, so the two limits
+    # have to agree. Nginx rejecting it is the usual reason a recording finishes
+    # and then never appears in the channel.
+    mmd_nginx_body_size: >-
+      {{ nginx_client_max_body_size if nginx_client_max_body_size != 'auto'
+         else (((mmd_recording_max_mb | int) + 1) | string ~ 'M' if mmd_calls_recording | bool else '101M') }}

@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Mattermost Calls job service
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart={{ calls_offloader_bin }} --config {{ calls_offloader_conf_dir }}/config.toml
+WorkingDirectory={{ calls_offloader_data_dir }}
+User={{ calls_offloader_user }}
+Group={{ calls_offloader_user }}
+{% if calls_offloader_docker_network | length > 0 %}
+# Job containers join this Docker network instead of the default bridge. "host"
+# is what some VMs need before a container can reach Mattermost's local address.
+Environment=DOCKER_NETWORK={{ calls_offloader_docker_network }}
+{% endif %}
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+# This service exists to start containers through the Docker socket, so the
+# sandboxing the other units here use would only get in its way. The service
+# account's docker group membership already makes it root-equivalent on this
+# host, which is why the job service belongs on a server of its own.
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths={{ calls_offloader_data_dir }}
+
+[Install]
+WantedBy=multi-user.target

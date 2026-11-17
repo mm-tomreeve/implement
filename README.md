@@ -84,9 +84,10 @@ An installed Mattermost stays on its version until you pass `--upgrade`. See
 
 ## The architecture wizard
 
-[wizard/index.html](wizard/index.html) is a single page you open in a browser. Nothing you enter
-is sent anywhere. The only outside request is the diagram library, which loads from jsDelivr, so
-the diagram needs a connection and the rest doesn't.
+[wizard/index.html](wizard/index.html) is a single page you open in a browser. Nothing you enter is
+sent anywhere, and nothing is fetched either: the libraries and the typeface are in
+[wizard/vendor](wizard/vendor/README.md), so the page works the same behind an air gap as it does
+anywhere else. Copy the `wizard` folder about as one piece.
 
 It is light by default. The moon/sun button in the banner switches to a dark theme, and the
 wizard remembers your choice in that browser.
@@ -98,10 +99,33 @@ server team, and the design decisions behind the shape. All of them copy as Mark
 
 ### 1. The deployment
 
-Name, site URL, licence and seats, then the choices that change the shape: high availability,
-search, Calls, monitoring, TLS and file storage.
+The first choice is what you are building: a **production estate**, one role per server, or a
+**lab on one server**. Then name, site URL, licence and seats, and the choices that change the
+shape: high availability, search, Calls, monitoring, TLS and file storage.
 
 ![Step 1: the deployment](docs/images/wizard-1-deployment.png)
+
+A lab asks the same questions, because they are the same questions. What changes is where a yes
+puts things: "OpenSearch, on its own server" becomes "OpenSearch, on this box too", and the
+answers that only exist to spread work over several servers — seats, high availability, how many
+Calls servers — stop being asked, because there is nowhere to spread it to. You can end up with
+every role on the box, which is the `all-in-one` profile, or any part of it. The plan says so one
+profile at a time, so a lab that doesn't want OpenSearch simply leaves it out:
+
+```yaml
+deployment: lab
+nodes:
+  - name: lab01
+    address: 10.10.1.50
+    profiles: [core, calls, monitoring]
+```
+
+A lab box isn't sized from a seat band, because no published tier describes a server running
+everything at once. It is sized by what each part needs to start, added up — the same floors in
+[catalogue.yml](inventory/group_vars/all/catalogue.yml) that `install.sh --preflight` holds the
+server to. The design decisions on the last step then list every warning the installer is going to
+give you about components sharing a box, from the same rules it uses, so you hear it before you
+build the thing rather than after.
 
 High availability is a checkbox, offered only on Enterprise, because clustering, Enterprise search
 and dedicated Calls servers are all Enterprise features. The badge beside it shows whether Mattermost
@@ -227,6 +251,7 @@ watch, so you don't pick them yourself.
 | PostgreSQL | `postgresql` | Mattermost's database |
 | Nginx | `nginx` | Reverse proxy and TLS termination |
 | Calls media server | `rtcd` | Audio, video and screen share for Mattermost Calls |
+| Calls job service | `calls_offloader` | Call recording, transcription and live captions. Runs each job as a container, so this is the one server that gets Docker |
 | OpenSearch | `opensearch` | Enterprise search, with the analysis-icu plugin |
 | Prometheus | `prometheus` | Collects metrics from every server |
 | Grafana | `grafana` | Dashboards and alerting |
@@ -252,6 +277,7 @@ Roles are grouped into profiles. Give a server one profile, several, or a custom
 | `app` | mattermost, nginx | Application server in a split estate |
 | `database` | postgresql | Dedicated database server, or a read replica of one |
 | `calls` | rtcd | Dedicated Calls server, once Calls outgrows the app servers |
+| `jobs` | calls_offloader | Call recording, transcription and live captions |
 | `search` | opensearch | Dedicated search server |
 | `storage` | nfs | NFS share for the Mattermost data directory |
 | `monitoring` | prometheus, loki, grafana | Watches the rest of the estate and keeps its logs |
@@ -261,7 +287,8 @@ Roles are grouped into profiles. Give a server one profile, several, or a custom
 
 You can put everything on one box. The installer tells you why that's a bad idea before it starts
 (OpenSearch fighting Mattermost for memory, monitoring living on the thing it monitors, and so on),
-and the report repeats it under Risks.
+and the report repeats it under Risks. The wizard's **lab on one server** says the same things on
+the way in, from the same rules, so you hear it before you build the box as well as after.
 
 ## Ways to install
 
@@ -625,6 +652,70 @@ More than one rtcd server needs a load balancer in front of them, with `mattermo
 pointing at it. Mattermost talks to one URL, so without it only the first server is used. Add a
 second once the first passes 70% CPU.
 
+### Example: recording, transcription and live captions
+
+These three are Enterprise features, and none of them runs in rtcd. They are run by a second
+service, `calls-offloader`, which starts a container for each job: one to sit in the call and
+record it, one to transcribe the recording afterwards, one per call for live captions. Give it a
+server of its own:
+
+```yaml
+# jobs01 (10.10.1.17)
+deploy_profiles: [jobs]
+calls_offloader_api_sources: [10.10.1.12]
+
+# and on app01
+mattermost_job_service_url: http://10.10.1.17:4545
+```
+
+That is the whole configuration. Recording and transcription are switched on in `config.json` for
+you, so they work when the run finishes rather than after a trip through the System Console.
+`mattermost_calls_transcriptions` and `mattermost_calls_live_captions` turn the other two on and
+off; captions are the one that is off by default, because it is the only one that has to keep up
+with the call in real time and it holds a transcriber for the whole of it.
+
+Four things about this one are worth knowing before you build it.
+
+**It needs Docker, and nothing else here does.** The install puts it there: `docker.io` from the
+distribution's own archive on Debian and Ubuntu, and `docker-ce` from Docker's repository on RHEL,
+which has no Docker in AppStream. That repository is the only third-party one this toolkit ever
+adds, and it is only added on a job server. `docker-ce` replaces Podman and runc, so the install
+stops and says so rather than taking them off a server something else is using. Set
+`calls_offloader_manage_docker: false` if you manage Docker yourself.
+
+**The service account is root on that host.** It has to be in the `docker` group to start
+containers, and anyone in that group can start a privileged one. That, more than the CPU, is why
+the job service belongs on its own server, and why `calls_offloader_api_sources` matters: port
+4545 stays on loopback until you fill it in, and then opens to the app servers alone.
+
+**A recording is uploaded as an ordinary attachment.** An hour at medium quality is about 700 MB,
+and at high quality about 1.2 GB, against Mattermost's 100 MiB default. So with recording on, the
+install raises `FileSettings.MaxFileSize` and Nginx's `client_max_body_size` to fit a full-length
+recording at the quality and duration you chose. That raises them for every upload, not just
+recordings. Getting this wrong is the usual reason a recording runs to the end and then never
+appears in the channel.
+
+**The job images come from Docker Hub.** Everything else here is fetched and checksummed before
+anything is installed; these two are pulled by the service the first time someone records a call.
+On a server with no route out, put them in the bundle:
+
+```bash
+tools/build-offline-bundle.sh --components calls_offloader --with-job-images
+```
+
+Their tags follow the Calls plugin rather than `calls-offloader` — the plugin has them built in —
+so check `calls_offloader_recorder_image` and `calls_offloader_transcriber_image` after a
+Mattermost upgrade. The post-deploy test warns when an image the job service will ask for is not
+on the server.
+
+Sizing: Mattermost starts at 8 vCPU and 16 GB, which carries eight low-quality recordings at once,
+six at medium or four at high, at around 70% CPU. Transcription is slower again: an hour of audio
+takes about seven minutes on four threads with the `base` model, and about twenty-three with
+`small`. The install sizes `max_concurrent_jobs` from the host's CPUs and the quality you picked.
+
+Like rtcd, Mattermost talks to one job service URL, so more than one job server needs a load
+balancer in front with `mattermost_job_service_url` pointing at it.
+
 ### Example: no internet access
 
 On a machine that does have internet access:
@@ -685,9 +776,9 @@ them. It checks them all at once (through `https_proxy` if you've set one) and s
 |---|---|
 | releases.mattermost.com | Mattermost server tarballs and their GPG signatures |
 | docs.mattermost.com | The version archive: which release is the latest stable and which is the latest ESR, with their SHA-256 checksums |
-| github.com | rtcd, Prometheus and the exporters, plus their published checksum files |
+| github.com | rtcd, calls-offloader, Prometheus and the exporters, plus their published checksum files |
 | release-assets.githubusercontent.com | Where GitHub actually serves those downloads from |
-| api.github.com | Looking up "latest" versions (rtcd by default). Pinned versions don't use it. |
+| api.github.com | Looking up "latest" versions (rtcd and calls-offloader by default). Pinned versions don't use it. |
 | artifacts.opensearch.org | OpenSearch, its ICU plugin, their signatures and SHA-512 checksums |
 | dl.grafana.com | The Grafana tarball |
 | grafana.com | Grafana's download API, for the checksum |
@@ -696,6 +787,13 @@ them. It checks them all at once (through `https_proxy` if you've set one) and s
 PostgreSQL and Nginx come from your own package repositories: the RHEL CDN, Satellite, a mirror or
 a mounted ISO with dnf, or the Debian or Ubuntu archive or a mirror of it with apt. They get the
 distribution's security updates like everything else on the box.
+
+A Calls job server needs two more, and neither is in the list above, because neither is needed
+when the list is checked. On RHEL, `download.docker.com` supplies Docker Engine during the
+install; Debian and Ubuntu take `docker.io` from their own archive like any other package. Then
+`registry-1.docker.io` and `auth.docker.io` serve the recorder and transcriber images, which the
+job service pulls the first time someone records a call, not during the install. Both are covered
+by the offline bundle — see [the Calls job images](docs/offline.md#the-calls-job-images).
 
 If you say no to the check, or any site fails, it asks for a folder or mirror instead, shows what
 it found there and asks you to confirm. If only some sites fail you can choose to carry on
@@ -727,7 +825,8 @@ The keys are held in this repo. We never trust a key that came from the download
 
 ## Versions we deploy
 
-Mattermost and rtcd follow the latest release by default when they're first installed. After that,
+Mattermost, rtcd and calls-offloader follow the latest release by default when they're first
+installed. After that,
 re-runs keep the installed version until you pass `--upgrade`. Everything else is pinned in
 [inventory/group_vars/all/defaults.yml](inventory/group_vars/all/defaults.yml), so an install
 today and an install next month get the same thing. Change any of them in the answer file; most
@@ -737,6 +836,8 @@ accept `latest`.
 |---|---|---|---|
 | Mattermost | `mattermost_version_channel` | `latest-stable` (the installer suggests `latest-esr`) | 12.0.1 stable, 11.7.14 ESR |
 | rtcd | `rtcd_version` | `latest` | 1.2.6 |
+| calls-offloader | `calls_offloader_version` | `latest`, newest plain X.Y.Z tag (upstream publishes `-dev` builds as releases too) | 0.9.6 |
+| Calls recorder and transcriber images | `calls_offloader_recorder_image`, `calls_offloader_transcriber_image` | pinned | v0.8.8 and v0.7.1, following the Calls plugin |
 | PostgreSQL | `postgresql_version` | `16` from AppStream on RHEL; the release's own version on Debian and Ubuntu (Debian 12: 15, Debian 13: 17, Ubuntu 24.04: 16) | 16.15 on RHEL 9.8 |
 | Nginx | `nginx_module_stream` | RHEL's default stream; the release's own package on Debian and Ubuntu | 1.20.1 on RHEL 9.8 |
 | OpenSearch | `opensearch_version` | `2.19.7` | pinned |
@@ -1058,6 +1159,12 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 | rtcd media errors `rtcd-errors` | > 10 | > 50 | > 200 | 0s | Check `journalctl -u rtcd` for the error types. Network paths and ICE settings are the usual cause. |
 | Calls packet loss reported by clients `rtcd-packet-loss` | > 2% | > 5% | > 10% | 10m | Users will hear choppy audio. Check bandwidth to the rtcd server and UDP buffer overflows. |
 
+#### Call recording alerts
+
+| Check | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|
+| Calls job service unreachable `jobs-api-unreachable` |  |  | < 1 | 3m | Recording, transcription and live captions stop; calls themselves carry on. Check `systemctl status calls-offloader docker` on that server, and that port 4545 is open to it. |
+
 #### NFS storage alerts
 
 | Check | Info | Warning | Critical | For | What to do |
@@ -1235,6 +1342,7 @@ tools/observability.py         turns the estate into alert rules and dashboards
 tools/estate_plan.py           decodes an estate plan and derives one server's answers
 estate.example.yml             the estate plan format, commented
 wizard/                        the architecture wizard (open index.html in a browser)
+wizard/vendor/                 the libraries and typeface it carries, so it needs no network
 tests/                         unit, render, smoke and end-to-end tests
 docs/                          alerts, offline installs, roles and testing
 ```

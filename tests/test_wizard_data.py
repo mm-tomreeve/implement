@@ -21,6 +21,7 @@ INDEX_HTML = os.path.join(ROOT, "wizard", "index.html")
 PROFILES = os.path.join(ROOT, "inventory", "group_vars", "all", "profiles.yml")
 CATALOGUE = os.path.join(ROOT, "inventory", "group_vars", "all", "catalogue.yml")
 DEFAULTS = os.path.join(ROOT, "inventory", "group_vars", "all", "defaults.yml")
+COMMON_DEFAULTS = os.path.join(ROOT, "roles", "common", "defaults", "main.yml")
 
 # Which setting in defaults.yml each port in the wizard's data comes from.
 # postgresql_port is itself "{{ mattermost_db_port }}", so that's the one to read.
@@ -31,6 +32,7 @@ PORT_SOURCE = {
     ("mattermost", 8443): "mattermost_calls_port",
     ("rtcd", 8045): "rtcd_api_port",
     ("rtcd", 8443): "rtcd_rtc_port",
+    ("calls_offloader", 4545): "calls_offloader_api_port",
     ("opensearch", 9200): "opensearch_port",
     ("nfs", 2049): "nfs_port",
     ("prometheus", 9090): "prometheus_port",
@@ -66,7 +68,9 @@ class WizardData(unittest.TestCase):
         cls.data = load_embedded_data()
         cls.profiles = load_yaml(PROFILES)["mmd_profiles"]
         cls.catalogue = load_yaml(CATALOGUE)["mmd_catalogue"]
+        cls.colocation = load_yaml(CATALOGUE)["mmd_colocation_rules"]
         cls.defaults = load_yaml(DEFAULTS)
+        cls.common = load_yaml(COMMON_DEFAULTS)
 
     # ------------------------------------------------------------ profiles
 
@@ -130,6 +134,53 @@ class WizardData(unittest.TestCase):
         for name, profile in self.profiles.items():
             for component in profile["components"]:
                 self.assertIn(component, self.data["components"], f"{name} -> {component}")
+
+    # ------------------------------------------------------------ lab sizing
+
+    # A lab box is sized by adding up what each component needs to start, because
+    # no seat band describes a server running all of them. Those floors are the
+    # same ones install.sh holds a server to, so the two have to stay in step or
+    # the wizard promises a box the installer then complains about.
+    def test_minimums_match_the_catalogue(self):
+        wizard = self.data["minimums"]
+        self.assertEqual(set(wizard), set(self.catalogue))
+        for name, spec in wizard.items():
+            with self.subTest(component=name):
+                self.assertEqual(spec["ram_mb"], self.catalogue[name]["min_ram_mb"])
+                self.assertEqual(spec["cpus"], self.catalogue[name]["min_cpus"])
+
+    def test_lab_builds_on_a_real_profile(self):
+        lab = self.data["lab"]
+        self.assertIn(lab["profile"], self.profiles)
+        # Without Mattermost and a database there is nothing to try on the box.
+        components = self.profiles[lab["profile"]]["components"]
+        self.assertIn("mattermost", components)
+        self.assertIn("postgresql", components)
+        self.assertGreaterEqual(lab["disk_gb"], 20)
+        for key in ("note", "sizing_note", "warning"):
+            self.assertTrue(lab[key].strip(), key)
+
+    # ------------------------------------------------------------ colocation
+
+    # The advice the wizard gives about components sharing a server is the advice
+    # install.sh gives when it gets there. One copy of the words, two places that
+    # show them, so a lab is never warned about one thing and told another later.
+    def test_colocation_rules_match_the_catalogue(self):
+        self.assertEqual(self.data["colocation"], self.colocation)
+
+    def test_major_components_match_the_common_role(self):
+        self.assertEqual(self.data["major_components"], self.common["common_major_components"])
+
+    def test_colocation_rules_only_name_real_components(self):
+        known = set(self.catalogue)
+        for rule in self.data["colocation"]:
+            with self.subTest(rule=rule["id"]):
+                for key in ("when_all", "when_any_with", "workloads"):
+                    for component in rule.get(key) or []:
+                        self.assertIn(component, known, key)
+                self.assertIn(rule["severity"], {"high", "medium", "low"})
+                self.assertTrue(rule["message"].strip())
+                self.assertTrue(rule["advice"].strip())
 
     # ------------------------------------------------------------ ports
 

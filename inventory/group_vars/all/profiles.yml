@@ -14,6 +14,9 @@ mmd_profiles:
   calls:
     description: Dedicated Calls media server (rtcd).
     components: [rtcd]
+  jobs:
+    description: Call recording, transcription and live captions (calls-offloader).
+    components: [calls_offloader]
   search:
     description: Dedicated OpenSearch node for Enterprise search.
     components: [opensearch]
@@ -31,7 +34,7 @@ mmd_profiles:
     components: [grafana]
   all-in-one:
     description: Everything on one box. Lab and proof-of-concept use only.
-    components: [postgresql, mattermost, nginx, rtcd, opensearch, prometheus, loki, grafana]
+    components: [postgresql, mattermost, nginx, rtcd, calls_offloader, opensearch, prometheus, loki, grafana]
 
 # Install order. Things other components depend on come first.
 mmd_component_order:
@@ -39,6 +42,7 @@ mmd_component_order:
   - postgresql
   - opensearch
   - rtcd
+  - calls_offloader
   - mattermost
   - nginx
   - node_exporter

@@ -23,24 +23,26 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Keep these in step with inventory/group_vars/all/profiles.yml and catalogue.yml.
 # tests/test_repo_consistency.py fails if they drift.
-PROFILE_NAMES=(core app database calls search storage monitoring metrics dashboards all-in-one)
+PROFILE_NAMES=(core app database calls jobs search storage monitoring metrics dashboards all-in-one)
 declare -A PROFILE_COMPONENTS=(
   [core]="postgresql mattermost nginx"
   [app]="mattermost nginx"
   [database]="postgresql"
   [calls]="rtcd"
+  [jobs]="calls_offloader"
   [search]="opensearch"
   [storage]="nfs"
   [monitoring]="prometheus loki grafana"
   [metrics]="prometheus loki"
   [dashboards]="grafana"
-  [all-in-one]="postgresql mattermost nginx rtcd opensearch prometheus loki grafana"
+  [all-in-one]="postgresql mattermost nginx rtcd calls_offloader opensearch prometheus loki grafana"
 )
 declare -A PROFILE_DESCRIPTIONS=(
   [core]="PostgreSQL, Mattermost and Nginx on one server. Fine for small teams."
   [app]="Mattermost application server with its Nginx proxy."
   [database]="Dedicated PostgreSQL server for Mattermost."
   [calls]="Dedicated Calls media server (rtcd)."
+  [jobs]="Call recording, transcription and live captions (calls-offloader)."
   [search]="Dedicated OpenSearch node for Enterprise search."
   [storage]="NFS file storage for the Mattermost data directory."
   [monitoring]="Prometheus, Loki and Grafana with the Mattermost dashboards and logs."
@@ -48,7 +50,7 @@ declare -A PROFILE_DESCRIPTIONS=(
   [dashboards]="Grafana on its own, pointed at a metrics server."
   [all-in-one]="Everything on one box. Lab and proof-of-concept use only."
 )
-COMPONENT_NAMES=(postgresql mattermost nginx rtcd opensearch nfs prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
+COMPONENT_NAMES=(postgresql mattermost nginx rtcd calls_offloader opensearch nfs prometheus loki grafana node_exporter postgres_exporter nginx_exporter opensearch_exporter blackbox_exporter otel_collector)
 
 ANSWERS=""
 ESTATE=""
@@ -194,7 +196,7 @@ Where to get it
 How to run
   --non-interactive       Never prompt. Needs --answers or --profile.
   -y, --yes               Do not ask for confirmation
-  --upgrade               Let an installed Mattermost (and rtcd) move to a newer release
+  --upgrade               Let an installed Mattermost (and rtcd, calls-offloader) move to a newer release
                           (it is stopped and its database dumped first)
   --check                 Dry run (Ansible check mode, best effort)
   --preflight             With --estate: check this server can resolve and reach
@@ -340,10 +342,11 @@ yaml_get() {
 # Every site an online install may download from, and why.
 SOURCE_HOSTS=(releases.mattermost.com docs.mattermost.com github.com release-assets.githubusercontent.com
               api.github.com artifacts.opensearch.org dl.grafana.com grafana.com galaxy.ansible.com)
+
 declare -A SOURCE_PURPOSE=(
   [releases.mattermost.com]="Mattermost server tarballs and their signatures"
   [docs.mattermost.com]="the list of current releases (latest and ESR)"
-  [github.com]="rtcd, Prometheus and the exporters"
+  [github.com]="rtcd, calls-offloader, Prometheus and the exporters"
   [release-assets.githubusercontent.com]="where GitHub actually serves those files from"
   [api.github.com]="looking up 'latest' versions"
   [artifacts.opensearch.org]="OpenSearch and its ICU plugin"
@@ -359,6 +362,14 @@ list_sources() {
   for h in "${SOURCE_HOSTS[@]}"; do
     printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' "${h}")${C_OFF}" "${C_DIM}${SOURCE_PURPOSE[${h}]}${C_OFF}"
   done
+  # Not in the list above because it is not needed during an install: the job
+  # service pulls its runner images the first time someone records a call.
+  if has_component calls_offloader; then
+    printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' 'download.docker.com')${C_OFF}" \
+      "${C_DIM}Docker Engine on RHEL (Debian and Ubuntu use their own archive)${C_OFF}"
+    printf '      %s %s\n' "${C_BOLD}$(printf '%-38s' 'registry-1.docker.io, auth.docker.io')${C_OFF}" \
+      "${C_DIM}the Calls recorder and transcriber images, at the first recording${C_OFF}"
+  fi
 }
 
 # Check every source in parallel and print each result as it comes in. Any HTTP
@@ -975,6 +986,7 @@ scrape_ports() {
   has_component opensearch && echo "OpenSearch metrics, opensearch_exporter (9114)"
   has_component mattermost && [[ "${MM_EDITION:-enterprise}" == enterprise ]] && echo "Mattermost metrics (8067)"
   has_component rtcd && echo "rtcd metrics (8045)"
+  has_component calls_offloader && echo "the Calls job service API (4545, probed rather than scraped)"
   has_component loki && echo "Loki metrics (3100)"
   has_component grafana && echo "Grafana metrics (3000)"
   [[ "$1" == true ]] && echo "the log collector's metrics (8888)"
@@ -1072,7 +1084,7 @@ monitoring_and_logs() {
     ask self_ip "This server's address, as the monitoring server sees it" ""
   done
   short="$(hostname -s 2>/dev/null || uname -n)"
-  for c in mattermost nginx postgresql rtcd opensearch prometheus loki grafana; do
+  for c in mattermost nginx postgresql rtcd calls_offloader opensearch prometheus loki grafana; do
     has_component "${c}" && comps+=("${c}")
   done
   local joined
@@ -1187,6 +1199,12 @@ interview() {
         "$(prev mattermost_rtcd_url)"
       emit mattermost_rtcd_url "$(yaml_quote "${rurl}")"
     fi
+    if ! has_component calls_offloader; then
+      local jurl
+      ask jurl "Calls job service URL for recording, e.g. http://jobs01:4545 ($(blank) = no recording)" \
+        "$(prev mattermost_job_service_url)"
+      emit mattermost_job_service_url "$(yaml_quote "${jurl}")"
+    fi
     if ! has_component opensearch; then
       local osurl
       ask osurl "OpenSearch URL if search runs on another server ($(blank) = none)" "$(prev mattermost_opensearch_url)"
@@ -1280,6 +1298,40 @@ interview() {
     fi
   fi
 
+  if has_component calls_offloader; then
+    section "Call recording (calls-offloader)"
+    info "Recording, transcription and live captions all run here, one container per job."
+    info "This server needs Docker: the toolkit installs it, from the distribution's own"
+    info "archive on Debian and Ubuntu, and from Docker's repository on RHEL."
+    local jsrcs jquality jminutes jsite
+    if ! has_component mattermost; then
+      ask_addresses jsrcs "Mattermost app server addresses allowed to use the job service API" \
+        "The app servers can't start a recording without at least one address." "$(prev calls_offloader_api_sources)"
+      emit calls_offloader_api_sources "$(yaml_list "${jsrcs}")"
+    fi
+    ask_choice jquality "Recording quality" "$(prev mattermost_calls_recording_quality medium)" low medium high
+    emit mattermost_calls_recording_quality "$(yaml_quote "${jquality}")"
+    ask jminutes "Longest recording in minutes (15-180)" "$(prev mattermost_calls_max_recording_minutes 60)"
+    emit mattermost_calls_max_recording_minutes "${jminutes}"
+    info "A ${jminutes}-minute ${jquality}-quality recording uploads to Mattermost as a file"
+    info "when the call ends, so the upload limit is raised to match on the app servers."
+    if ask_yn "Transcribe recordings once the call ends?" "$(prev_yn mattermost_calls_transcriptions y)"; then
+      emit mattermost_calls_transcriptions true
+      if ask_yn "Also show live captions during calls? Costs a transcriber per call" \
+        "$(prev_yn mattermost_calls_live_captions n)"; then
+        emit mattermost_calls_live_captions true
+      else
+        emit mattermost_calls_live_captions false
+      fi
+    else
+      emit mattermost_calls_transcriptions false
+      emit mattermost_calls_live_captions false
+    fi
+    ask jsite "Address job containers use to reach Mattermost ($(blank) = the site URL)" \
+      "$(prev mattermost_calls_internal_site_url)"
+    emit mattermost_calls_internal_site_url "$(yaml_quote "${jsite}")"
+  fi
+
   if has_component opensearch && ! has_component mattermost; then
     section "OpenSearch"
     local clients ospass
@@ -1352,7 +1404,7 @@ interview() {
       [[ ${#defaults[@]} -gt 0 ]] && info "${C_DIM}Press Enter to keep each server as it was, or type - as its name to drop it.${C_OFF}"
       # Prometheus, Loki and Grafana elsewhere get scraped too, and this server's
       # firewall opens Prometheus to the ones that query it (see wiring.yml).
-      local i short mods=(mattermost nginx postgresql rtcd opensearch nfs prometheus loki grafana)
+      local i short mods=(mattermost nginx postgresql rtcd calls_offloader opensearch nfs prometheus loki grafana)
       short="$(hostname -s 2>/dev/null || uname -n)"
       while true; do
         estate_lines=() snames=() saddrs=() scomps_list=() entered=()
@@ -1803,6 +1855,7 @@ if args.get("plan_file"):
 if args.get("upgrade") == "true":
     out["mattermost_allow_upgrade"] = True
     out["rtcd_allow_upgrade"] = True
+    out["calls_offloader_allow_upgrade"] = True
 print(json.dumps(out))
 PY
 }

@@ -50,10 +50,35 @@ file_storage: local                  # local | nfs | amazons3
 #   rtcd        on nodes with the calls profile
 calls: rtcd
 
+# Call recording, transcription and live captions (Enterprise). They are run by a
+# separate service, calls-offloader, which starts a container per job, so that
+# server is the only one here that needs Docker. The install adds it.
+#   none   no recording
+#   own    on nodes with the jobs profile (what Mattermost recommends: a job takes
+#          whole CPUs for minutes, and live media does not forgive that)
+#   calls  on the calls nodes, sharing them with rtcd
+recording: own
+
 # The wizard writes this so it can reload the plan later. Nothing else reads it.
 # Mattermost's reference architectures, which the wizard sizes from, are stated in
 # concurrent users rather than seats, so a seat count sizes you generously.
 seats: 2000
+
+# estate (one role per server) or lab (everything on one box). The wizard writes
+# it so it can reload the plan into the right shape; nothing else reads it, and a
+# plan without it still works. What actually puts a role on a server is the
+# profiles list below, so a lab plan is simply one node carrying several profiles:
+#
+#   deployment: lab
+#   nodes:
+#     - name: lab01
+#       address: 10.10.1.50
+#       profiles: [core, search, calls, jobs, monitoring]
+#
+# which is the same set of components as the all-in-one profile, said one role at
+# a time so a lab can leave out the parts it isn't trying. install.sh --preflight
+# will tell you whether the box is big enough for all of it.
+deployment: estate
 
 # managed: this estate runs its own Prometheus, Loki and Grafana. Give one node the
 #   monitoring profile, or split it: metrics (Prometheus and Loki) and dashboards
@@ -83,6 +108,9 @@ nodes:
   - name: calls01
     address: 10.10.1.13
     profiles: [calls]
+  - name: jobs01
+    address: 10.10.1.17
+    profiles: [jobs]
   - name: search01
     address: 10.10.1.14
     profiles: [search]

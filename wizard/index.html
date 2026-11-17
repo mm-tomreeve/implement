@@ -4,9 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mattermost Parthenon &middot; architecture wizard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Inter is in vendor/ too. Fetching it from Google would tell them every time
+     someone opened this page, and would leave the wizard looking wrong on a
+     server-room laptop with no way out. wizard.css falls back to the system
+     font if the file is missing. -->
+<link rel="stylesheet" href="vendor/inter.css">
 <script>try{if(localStorage.getItem("wizard-theme")==="dark")document.documentElement.dataset.theme="dark";}catch(e){}</script>
 <link rel="stylesheet" href="wizard.css">
 </head>
@@ -42,6 +44,23 @@
       <button class="secondary small" id="do-import">Load this plan</button>
       <div class="error-message" id="import-error" style="display:none"></div>
     </details>
+
+    <div class="mode-cards" id="mode-cards">
+      <label class="mode-card">
+        <input type="radio" name="deployment" value="estate" checked>
+        <span class="mode-text">
+          <span class="mode-title">Production estate</span>
+          <span class="mode-sub">One role per server, sized from Mattermost's reference architectures.</span>
+        </span>
+      </label>
+      <label class="mode-card">
+        <input type="radio" name="deployment" value="lab">
+        <span class="mode-text">
+          <span class="mode-title">Lab on one server</span>
+          <span class="mode-sub">Every role you ask for on a single box. Proof of concept and testing only.</span>
+        </span>
+      </label>
+    </div>
 
     <div class="grid2">
       <div class="field" id="field-name">
@@ -85,7 +104,7 @@
       </div>
     </div>
 
-    <div class="group">
+    <div class="group" id="group-availability">
       <h3>Availability</h3>
       <label class="inline"><input type="checkbox" id="f-ha"> High availability
         <span class="badge recommended" id="ha-badge">Recommended</span></label>
@@ -109,7 +128,7 @@
       <div class="choices">
         <label><input type="radio" name="search" value="database" checked> In the database</label>
         <label><input type="radio" name="search" value="opensearch" id="f-search-opensearch">
-          OpenSearch, on its own server</label>
+          <span id="search-opensearch-label">OpenSearch, on its own server</span></label>
       </div>
       <p class="hint" id="search-note" style="margin:10px 0 0;"></p>
     </div>
@@ -128,6 +147,25 @@
         <input type="number" id="f-calls-servers" class="short" min="1" max="10" value="1">
       </div>
       <p class="hint" id="calls-mode-note" style="margin:10px 0 0; display:none;"></p>
+
+      <div id="recording-block" style="display:none; margin-top:18px;">
+        <label class="inline"><input type="checkbox" id="f-recording">
+          Record calls, transcribe them and show live captions</label>
+        <div id="recording-options" style="display:none; margin:14px 0 0 24px;">
+          <label style="font-size:.85rem; font-weight:600; margin-bottom:8px; display:block;">Where the job
+            service runs</label>
+          <div class="choices">
+            <label><input type="radio" name="recording" value="own" checked> On its own server</label>
+            <label><input type="radio" name="recording" value="calls" id="f-recording-on-calls">
+              <span id="recording-on-calls-label">On the Calls server</span></label>
+          </div>
+          <div class="field" id="field-recording-servers" style="margin:14px 0 0;">
+            <label for="f-recording-servers">Job servers</label>
+            <input type="number" id="f-recording-servers" class="short" min="1" max="10" value="1">
+          </div>
+        </div>
+        <p class="hint" id="recording-note" style="margin:10px 0 0;"></p>
+      </div>
     </div>
 
     <div class="group">
@@ -193,7 +231,7 @@
 
     <div id="estate-summary"></div>
 
-    <details class="import-box" style="margin-top:4px;">
+    <details class="import-box" style="margin-top:4px;" id="add-node-box">
       <summary>Add a server by hand</summary>
       <div class="field" style="margin:12px 0 0;">
         <label for="f-add-role">Role</label>
@@ -241,7 +279,7 @@
     <div class="run-steps">
       <ol>
         <li>Copy the plan.</li>
-        <li>On each server, in the install order below, run
+        <li id="run-step-2">On each server, in the install order below, run
             <code>sudo ./install.sh --estate my-estate.yml</code>, or paste the plan when it asks.</li>
       </ol>
     </div>
@@ -300,7 +338,7 @@
 
     <details class="section">
       <summary>Infrastructure requirements <span class="count" id="count-infra"></span></summary>
-      <p class="hint">For the server team. Mattermost's published figures for this size, per server.</p>
+      <p class="hint" id="infra-lead">For the server team. Mattermost's published figures for this size, per server.</p>
       <div class="copy-row">
         <button class="secondary small" id="copy-infra">Copy as Markdown</button>
         <div class="table-wrap"><table class="nodes" id="infra-table">
@@ -368,6 +406,7 @@
         "database": { "vcpu": 2, "ram_gb": 16, "disk_gb": 100 },
         "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 50 },
         "calls": { "vcpu": 2, "ram_gb": 4, "disk_gb": 20 },
+        "jobs": { "vcpu": 4, "ram_gb": 8, "disk_gb": 50 },
         "storage": { "vcpu": 2, "ram_gb": 4, "disk_gb": null },
         "monitoring": { "vcpu": 2, "ram_gb": 8, "disk_gb": 100 },
         "metrics": { "vcpu": 2, "ram_gb": 8, "disk_gb": 100 },
@@ -391,6 +430,7 @@
         "database": { "vcpu": 2, "ram_gb": 16, "disk_gb": 200 },
         "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 100 },
         "calls": { "vcpu": 4, "ram_gb": 8, "disk_gb": 20 },
+        "jobs": { "vcpu": 4, "ram_gb": 8, "disk_gb": 100 },
         "storage": { "vcpu": 2, "ram_gb": 8, "disk_gb": null },
         "monitoring": { "vcpu": 4, "ram_gb": 16, "disk_gb": 150 },
         "metrics": { "vcpu": 4, "ram_gb": 16, "disk_gb": 150 },
@@ -414,6 +454,7 @@
         "database": { "vcpu": 4, "ram_gb": 32, "disk_gb": 500 },
         "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 250 },
         "calls": { "vcpu": 4, "ram_gb": 8, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 100 },
         "storage": { "vcpu": 4, "ram_gb": 8, "disk_gb": null },
         "monitoring": { "vcpu": 4, "ram_gb": 16, "disk_gb": 250 },
         "metrics": { "vcpu": 4, "ram_gb": 16, "disk_gb": 250 },
@@ -437,6 +478,7 @@
         "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
         "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 500 },
         "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 200 },
         "storage": { "vcpu": 4, "ram_gb": 16, "disk_gb": null },
         "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
         "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
@@ -460,6 +502,7 @@
         "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
         "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 500 },
         "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 200 },
         "storage": { "vcpu": 4, "ram_gb": 16, "disk_gb": null },
         "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
         "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
@@ -484,6 +527,7 @@
         "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 2000 },
         "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
         "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 200 },
         "storage": { "vcpu": 8, "ram_gb": 16, "disk_gb": null },
         "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 1000 },
         "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 1000 },
@@ -499,6 +543,7 @@
     "database": "Mattermost's figure for the writer. Each read replica is the same size again.",
     "search": "Mattermost's figure for one search node. Its reference clusters two to four of them at this size; this toolkit installs one.",
     "calls": "Sized by concurrent call participants, not seats. Mattermost benchmarks rtcd on 4 vCPU / 8 GB and 8 vCPU / 16 GB.",
+    "jobs": "Sized by how many calls you record at once, not seats. Mattermost's figure is 8 vCPU / 16 GB, which sustains 8 low, 6 medium or 4 high quality recordings concurrently. Disk is working space: each job buffers the whole recording before uploading it.",
     "storage": "Disk is the whole job: size it for total uploads across the estate.",
     "monitoring": "15 days of metrics and 14 days of logs, at roughly 1 to 3 GB of logs a day.",
     "metrics": "15 days of metrics and 14 days of logs, at roughly 1 to 3 GB of logs a day.",
@@ -509,13 +554,106 @@
     "app": ["mattermost", "nginx"],
     "database": ["postgresql"],
     "calls": ["rtcd"],
+    "jobs": ["calls_offloader"],
     "search": ["opensearch"],
     "storage": ["nfs"],
     "monitoring": ["prometheus", "loki", "grafana"],
     "metrics": ["prometheus", "loki"],
     "dashboards": ["grafana"],
-    "all-in-one": ["postgresql", "mattermost", "nginx", "rtcd", "opensearch", "prometheus", "loki", "grafana"]
+    "all-in-one": ["postgresql", "mattermost", "nginx", "rtcd", "calls_offloader", "opensearch", "prometheus", "loki", "grafana"]
   },
+  "lab": {
+    "profile": "core",
+    "disk_gb": 80,
+    "note": "The floor for everything on this box together, summed from each component's minimum. Give it more than this if you want it to feel quick.",
+    "sizing_note": "A lab box is sized by what it takes to start, not by what it takes to carry load, so a seat band's figures say nothing about it. This is the sum of each component's floor in inventory/group_vars/all/catalogue.yml, the same minimums install.sh --preflight holds the server to before it runs. The operating system wants its share on top. Disk is room for the install and a few weeks of test data, not a capacity estimate.",
+    "warning": "One box is a lab shape. Nothing here survives a restart, nothing can be sized or upgraded on its own, and the monitoring that would tell you what broke goes down with everything else. Don't grow this into production: build a split estate instead."
+  },
+  "minimums": {
+    "postgresql": { "ram_mb": 2048, "cpus": 2 },
+    "mattermost": { "ram_mb": 4096, "cpus": 2 },
+    "nginx": { "ram_mb": 512, "cpus": 1 },
+    "rtcd": { "ram_mb": 1024, "cpus": 2 },
+    "calls_offloader": { "ram_mb": 4096, "cpus": 2 },
+    "nfs": { "ram_mb": 512, "cpus": 1 },
+    "opensearch": { "ram_mb": 4096, "cpus": 2 },
+    "prometheus": { "ram_mb": 2048, "cpus": 1 },
+    "grafana": { "ram_mb": 512, "cpus": 1 },
+    "node_exporter": { "ram_mb": 64, "cpus": 0 },
+    "postgres_exporter": { "ram_mb": 64, "cpus": 0 },
+    "nginx_exporter": { "ram_mb": 32, "cpus": 0 },
+    "opensearch_exporter": { "ram_mb": 64, "cpus": 0 },
+    "blackbox_exporter": { "ram_mb": 32, "cpus": 0 },
+    "loki": { "ram_mb": 1024, "cpus": 1 },
+    "otel_collector": { "ram_mb": 128, "cpus": 0 }
+  },
+  "major_components": ["postgresql", "mattermost", "nginx", "rtcd", "opensearch", "nfs", "prometheus", "grafana"],
+  "colocation": [
+    {
+      "id": "all-in-one",
+      "when_count_at_least": 5,
+      "severity": "high",
+      "message": "Five or more major components share this server.",
+      "advice": "Fine for a lab or proof of concept. For production split the database, search, Calls and monitoring onto their own servers."
+    },
+    {
+      "id": "search-with-app",
+      "when_all": ["opensearch", "mattermost"],
+      "severity": "high",
+      "message": "OpenSearch shares the server with Mattermost.",
+      "advice": "OpenSearch wants half the RAM for its JVM heap and competes with Mattermost for memory and IO. Give it its own server once you have more than a few hundred users."
+    },
+    {
+      "id": "calls-with-app",
+      "when_all": ["rtcd", "mattermost"],
+      "severity": "medium",
+      "message": "rtcd shares the server with Mattermost.",
+      "advice": "Calls media is CPU and network heavy. Busy calls will slow the app for everyone. Move rtcd to its own server for anything beyond light use."
+    },
+    {
+      "id": "jobs-with-app",
+      "when_all": ["calls_offloader", "mattermost"],
+      "severity": "high",
+      "message": "The Calls job service shares the server with Mattermost.",
+      "advice": "Recording and transcription will take whole CPUs for minutes at a time, and the service runs containers through the Docker socket, which is root on this host. Give it its own server."
+    },
+    {
+      "id": "jobs-with-calls",
+      "when_all": ["calls_offloader", "rtcd"],
+      "severity": "medium",
+      "message": "The Calls job service shares the server with rtcd.",
+      "advice": "A transcription job will happily eat the cores rtcd needs to carry live media, and people in the call hear it. Fine while recording is occasional; split them before it is routine."
+    },
+    {
+      "id": "database-with-app",
+      "when_all": ["postgresql", "mattermost"],
+      "severity": "medium",
+      "message": "PostgreSQL shares the server with Mattermost.",
+      "advice": "Fine up to roughly 1,000 users. Beyond that, or if you want HA later, run PostgreSQL on its own server."
+    },
+    {
+      "id": "storage-with-app",
+      "when_all": ["nfs", "mattermost"],
+      "severity": "medium",
+      "message": "The NFS share is served by the app server that uses it.",
+      "advice": "Shared storage exists so several app servers see the same files, and so losing one app server doesn't take the uploads with it. Serve it from its own server or a NAS before you add a second app server."
+    },
+    {
+      "id": "monitoring-with-workload",
+      "when_any_with": ["prometheus", "grafana"],
+      "workloads": ["mattermost", "postgresql", "opensearch", "rtcd", "calls_offloader"],
+      "severity": "medium",
+      "message": "Monitoring runs on a server it is meant to watch.",
+      "advice": "If this server goes down you lose the dashboards and alerts that would tell you why. Put Prometheus and Grafana somewhere else."
+    },
+    {
+      "id": "search-with-database",
+      "when_all": ["opensearch", "postgresql"],
+      "severity": "medium",
+      "message": "OpenSearch and PostgreSQL share the server.",
+      "advice": "Both are memory and disk hungry. Expect contention and keep their data on separate volumes at the very least."
+    }
+  ],
   "auto_components": {
     "alongside": {
       "postgresql": "postgres_exporter",
@@ -556,6 +694,12 @@
       "listens": [
         { "port": 8045, "proto": "tcp", "from": "app", "purpose": "rtcd API: call setup, not the media itself" },
         { "port": 8443, "proto": "tcp and udp", "from": "internet", "purpose": "Calls media (WebRTC). Clients connect straight to this server, not through the app server." }
+      ]
+    },
+    "calls_offloader": {
+      "title": "calls-offloader",
+      "listens": [
+        { "port": 4545, "proto": "tcp", "from": "app", "purpose": "Job service API: the app servers start and track recording and transcription jobs" }
       ]
     },
     "opensearch": {
@@ -637,7 +781,11 @@
       { "component": "mattermost", "to": "api.integrations.mattermost.com", "port": 443, "proto": "tcp",
         "when_label": "Unless you install plugins by hand", "purpose": "Plugin marketplace" },
       { "component": "calls", "to": "stun.global.calls.mattermost.com", "port": 3478, "proto": "udp",
-        "when_label": "Until you set an ICE host override", "purpose": "Public IP discovery for Calls" }
+        "when_label": "Until you set an ICE host override", "purpose": "Public IP discovery for Calls" },
+      { "component": "calls_offloader", "to": "Your Mattermost app servers, or the site URL", "port": 443, "proto": "tcp",
+        "purpose": "Recorder and transcriber containers join the call as a participant and upload the result" },
+      { "component": "calls_offloader", "to": "registry-1.docker.io and auth.docker.io", "port": 443, "proto": "tcp",
+        "when_label": "First recording, unless the images are bundled", "purpose": "Pulling the recorder and transcriber images" }
     ],
     "install": [
       { "component": null, "to": "Your package repositories: the Red Hat CDN, Satellite, the Debian or Ubuntu archive, or a local mirror", "port": 443, "proto": "tcp",
@@ -649,16 +797,27 @@
       { "component": "grafana", "to": "dl.grafana.com", "port": 443, "proto": "tcp",
         "purpose": "The Grafana tarball" },
       { "component": null, "to": "api.github.com, github.com and objects.githubusercontent.com", "port": 443, "proto": "tcp",
-        "purpose": "rtcd, Loki, the OpenTelemetry Collector and the Prometheus exporters" }
+        "purpose": "rtcd, calls-offloader, Loki, the OpenTelemetry Collector and the Prometheus exporters" },
+      { "component": "calls_offloader", "to": "download.docker.com", "port": 443, "proto": "tcp",
+        "when_label": "RHEL only", "purpose": "Docker Engine. Debian and Ubuntu take docker.io from their own archive." }
     ],
     "offline_note": "Point <strong class=\"product\">Mattermost Parthenon</strong> at an offline bundle or an internal mirror with --artifact-source and none of the install rows are needed. The runtime rows still are."
   }
 }
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<!--
+  The three libraries this page borrows are in wizard/vendor, not on a CDN, so
+  the page works behind an air gap and makes no requests at all. That is what
+  lets the footer say what it says. vendor/README.md has the versions, the
+  licences and how to update one.
+
+  wizard.js copes with any of them missing, so a cut-down copy of this folder
+  still gives you a plan: see the notes on each in that README.
+-->
+<script src="vendor/pako.min.js"></script>
+<script src="vendor/js-yaml.min.js"></script>
+<script src="vendor/mermaid.min.js"></script>
 <script src="wizard.js"></script>
 </body>
 </html>

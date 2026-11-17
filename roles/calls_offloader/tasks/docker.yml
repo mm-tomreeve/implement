@@ -1,0 +1,89 @@
+---
+# A container runtime for the job containers. This is the only component here
+# that needs one, and the only place the toolkit adds a third-party repository.
+#
+# Debian and Ubuntu ship docker.io in their own archives, so that is what we use,
+# the same way PostgreSQL and Nginx come from the archive. RHEL has no Docker at
+# all in AppStream (only Podman, which calls-offloader does not support), so on
+# RHEL we add Docker's own repository and install docker-ce from it.
+- name: Check for a container runtime we did not install
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: _offl_docker_sock
+
+- name: Stop when Docker is unmanaged and missing
+  ansible.builtin.assert:
+    that: _offl_docker_sock.stat.exists
+    fail_msg: >-
+      calls_offloader_manage_docker is false, but there is no Docker socket at
+      /var/run/docker.sock. Install Docker and start it, or set
+      calls_offloader_manage_docker back to true and let this role do it.
+    quiet: true
+  when: not (calls_offloader_manage_docker | bool)
+
+- name: Install and configure Docker
+  when: calls_offloader_manage_docker | bool
+  block:
+    - name: Install docker.io from the archive
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: package
+      vars:
+        pkg_names: "{{ calls_offloader_docker_packages_debian }}"
+      when: mmd_is_debian | bool
+
+    - name: Install docker-ce from Docker's repository
+      when: not (mmd_is_debian | bool)
+      block:
+        # docker-ce replaces these, and dnf will happily take Podman off a server
+        # that something else is using. Say so rather than doing it quietly.
+        - name: Read the installed packages
+          ansible.builtin.package_facts:
+            manager: rpm
+
+        - name: Stop if Podman or runc is installed
+          ansible.builtin.assert:
+            that: _offl_installed | length == 0
+            fail_msg: >-
+              {{ _offl_installed | join(', ') }} is installed, and docker-ce replaces it. Remove it
+              yourself if nothing else on this server uses it, or put the job service on a server of
+              its own. calls-offloader talks to the Docker API and Mattermost does not support Podman
+              for it, so swapping one for the other is not an option here.
+            quiet: true
+          vars:
+            _offl_installed: >-
+              {{ calls_offloader_docker_conflicts | select('in', ansible_facts['packages']) | list }}
+
+        - name: Add Docker's repository
+          ansible.builtin.yum_repository:
+            name: docker-ce-stable
+            description: Docker CE Stable
+            baseurl: "{{ calls_offloader_docker_repo_url }}"
+            gpgcheck: true
+            gpgkey: "{{ calls_offloader_docker_repo_key }}"
+            enabled: true
+            file: docker-ce
+
+        - name: Install Docker Engine
+          ansible.builtin.include_role:
+            name: common
+            tasks_from: package
+          vars:
+            pkg_names: "{{ calls_offloader_docker_packages_rhel }}"
+
+    - name: Enable and start Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+        daemon_reload: true
+
+# Job containers run binaries out of image layers under Docker's data root.
+# fapolicyd denies execution from anywhere it does not trust, so without this a
+# recording dies with a permission error that names nothing useful.
+- name: Trust Docker's data root for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: fapolicyd
+  vars:
+    fapolicyd_paths: ["{{ calls_offloader_docker_root }}/"]

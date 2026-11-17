@@ -28,12 +28,14 @@ MODULE_COMPONENTS = {
     "nginx": "nginx",
     "opensearch": "opensearch",
     "rtcd": "rtcd",
+    "calls_offloader": "calls_offloader",
     "nfs": "nfs",
     "monitoring": "prometheus",
 }
 MODULE_NAMES = {
     "host": "Servers", "site": "Site availability", "mattermost": "Mattermost", "postgresql": "PostgreSQL",
-    "nginx": "Nginx", "opensearch": "OpenSearch", "rtcd": "Calls (rtcd)", "nfs": "NFS storage",
+    "nginx": "Nginx", "opensearch": "OpenSearch", "rtcd": "Calls (rtcd)",
+    "calls_offloader": "Call recording", "nfs": "NFS storage",
     "monitoring": "Monitoring",
 }
 # Log lines the e2e self-test pushes carry this host name, so its queries see only them.
@@ -620,6 +622,24 @@ def calls_board(spec):
     b.timeseries("RTC sessions", [("mattermost_plugin_calls_rtc_sessions_total{%s}" % csel, "{{instance}}")])
     b.timeseries("WebSocket events", [("sum by (type) (rate(mattermost_plugin_calls_websocket_events_total{%s}[5m]))" % csel, "{{type}}")], unit="ops")
     b.timeseries("RTP tracks", [("sum by (direction, type) (mattermost_plugin_calls_rtc_rtp_tracks_total{%s})" % csel, "{{direction}} {{type}}")])
+    if "calls_offloader" in modules_present(spec):
+        jobs = [s["name"] for s in spec.get("servers", []) if "calls_offloader" in s.get("components", [])]
+        jsel = 'instance=~"%s"' % "|".join(re.escape(n) for n in jobs)
+        b.row("Recording and transcription")
+        b.text("calls-offloader publishes no metrics, so this is the host it runs on plus a probe of its "
+               "API. A job is a container: it takes whole CPUs while it runs, and buffers the recording "
+               "on disk before uploading it, so CPU and free disk are the two things worth watching.", h=2)
+        b.stat("Job service answering", 'min(probe_success{job="blackbox_http_jobs"}) or vector(0)', w=6,
+               steps=tiers_of("jobs-api-unreachable", spec))
+        b.stat("Job server CPU", '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",%s}[5m])))' % jsel,
+               unit="percent", w=6, steps=tiers_of("cpu-busy", spec))
+        b.timeseries("Job server CPU and memory",
+                     [('100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",%s}[5m])))' % jsel, "CPU %"),
+                      ('100 * (1 - avg(node_memory_MemAvailable_bytes{%s} / node_memory_MemTotal_bytes{%s}))'
+                       % (jsel, jsel), "memory %")], unit="percent")
+        b.timeseries("Space left where jobs write",
+                     [('min by (instance) (node_filesystem_avail_bytes{%s,mountpoint=~"/|/var|/var/lib/docker"}) '
+                       '/ 1024 / 1024 / 1024' % jsel, "{{instance}} GiB")])
     return b.json()
 
 
@@ -674,7 +694,7 @@ def build_dashboards(spec):
         boards["mmp-nginx.json"] = nginx_board(spec)
     if "opensearch" in present:
         boards["mmp-opensearch.json"] = opensearch_board(spec)
-    if "rtcd" in present or "mattermost" in present:
+    if "rtcd" in present or "mattermost" in present or "calls_offloader" in present:
         boards["mmp-calls.json"] = calls_board(spec)
     if "nfs" in present:
         boards["mmp-nfs.json"] = nfs_board(spec)
@@ -717,7 +737,8 @@ def rule_query(rule, spec):
 def catalogue_markdown(heading="###", suffix=""):
     """Per-module tables for docs/alerts.md and the README. tests/ checks both match."""
     out = []
-    for module in ["host", "site", "mattermost", "postgresql", "nginx", "opensearch", "rtcd", "nfs", "monitoring"]:
+    for module in ["host", "site", "mattermost", "postgresql", "nginx", "opensearch", "rtcd",
+                   "calls_offloader", "nfs", "monitoring"]:
         rules = [r for r in CATALOGUE if r["module"] == module]
         if not rules:
             continue

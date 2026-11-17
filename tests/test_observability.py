@@ -19,6 +19,7 @@ FULL = {
         {"name": "app01", "address": "10.0.0.2", "components": ["mattermost", "nginx"]},
         {"name": "db01", "address": "10.0.0.1", "components": ["postgresql"]},
         {"name": "calls01", "address": "10.0.0.3", "components": ["rtcd"]},
+        {"name": "jobs01", "address": "10.0.0.6", "components": ["calls_offloader"]},
         {"name": "search01", "address": "10.0.0.4", "components": ["opensearch"]},
         {"name": "files01", "address": "10.0.0.5", "components": ["nfs"]},
         {"name": "mon01", "address": "127.0.0.1", "components": ["prometheus", "grafana"]},

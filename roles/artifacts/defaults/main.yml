@@ -3,6 +3,7 @@
 artifacts_tarball_components:
   - mattermost
   - rtcd
+  - calls_offloader
   - opensearch
   - prometheus
   - node_exporter

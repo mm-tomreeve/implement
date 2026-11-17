@@ -79,6 +79,11 @@ Data goes only when `uninstall_purge` is true (`--purge`): the PostgreSQL cluste
 data, the NFS export directory and the service users. A role never drops a database on a
 server it does not own, so Mattermost's database is PostgreSQL's to remove.
 
+Docker is left alone too, on the Calls job server. The toolkit installed it, but something else
+may be using it by now, and taking a container runtime off a server as a side effect of removing
+one service is not a decision this tool gets to make. `--purge` removes the job runner images and
+prunes orphaned job volumes; the engine, its repository and `/var/lib/docker` stay.
+
 Two things are left alone on purpose. The SELinux booleans `httpd_can_network_connect` and
 `nfs_export_all_rw` may have been on before the toolkit arrived, and `nfs-utils` is also the NFS
 client. The baseline packages (firewalld, chrony and the rest) stay for the same reason.
@@ -97,6 +102,16 @@ needs to know which it is on:
 - `postgresql_conf_dir` is where `postgresql.conf`, `pg_hba.conf` and `conf.d` live. It is the
   data directory on RHEL and `/etc/postgresql/<version>/main` on Debian and Ubuntu, where the
   data is in `/var/lib/postgresql/<version>/main`.
+
+`calls_offloader` is the one role that needs something the distribution may not have: a Docker
+API. On Debian and Ubuntu it installs `docker.io` from the archive, like any other package. RHEL
+has no Docker in AppStream at all — only Podman, which calls-offloader does not support — so the
+role adds `download.docker.com` as a repository and installs `docker-ce`. That is the only
+third-party repository this toolkit ever adds, and only on a job server. `docker-ce` replaces
+Podman and runc, so the role stops and says so rather than removing them quietly, and
+`calls_offloader_manage_docker: false` skips the whole thing for a server where Docker is managed
+elsewhere. One more RHEL-only detail: job containers execute binaries from image layers under
+Docker's data root, which fapolicyd denies by default, so the role trusts that path.
 
 Debian and Ubuntu keep firewalld, so the same rich rules apply, but the toolkit stops if ufw is
 active, because the two overwrite each other's rules. They also have no SELinux or fapolicyd,
