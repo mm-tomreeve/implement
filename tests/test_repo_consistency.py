@@ -3,6 +3,8 @@
 Needs PyYAML (it comes with ansible-core).
 """
 
+import base64
+import hashlib
 import os
 import re
 import sys
@@ -35,6 +37,35 @@ class Consistency(unittest.TestCase):
             self.assertIn(">v%s<" % version, handle.read())
         with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as handle:
             self.assertIn("**Version %s**" % version, handle.read())
+
+    def test_wizard_loads_nothing_from_the_network(self):
+        """The wizard tells people it keeps what they type to itself.
+
+        It can only say that while it fetches nothing: a script pulled from a CDN
+        could be swapped for one that forwards every address and hostname typed
+        into the page, and the page would run it. The libraries live in
+        wizard/vendor, which is also what makes the page work behind an air gap.
+        """
+        with open(os.path.join(ROOT, "wizard", "index.html"), encoding="utf-8") as handle:
+            page = handle.read()
+        remote = re.findall(r'<(?:script|link)[^>]*\b(?:src|href)="(https?://[^"]+)"', page)
+        self.assertEqual(remote, [], "the wizard should carry these rather than fetch them")
+
+    def test_vendored_libraries_match_their_checksums(self):
+        """A damaged or swapped vendored file should fail here, not in a browser."""
+        folder = os.path.join(ROOT, "wizard", "vendor")
+        with open(os.path.join(folder, "README.md"), encoding="utf-8") as handle:
+            recorded = dict(re.findall(r"^(\S+\.js)\s+sha384-(\S+)$", handle.read(), re.M))
+        self.assertTrue(recorded, "vendor/README.md records no checksums")
+        for name, want in recorded.items():
+            with open(os.path.join(folder, name), "rb") as handle:
+                got = base64.b64encode(hashlib.sha384(handle.read()).digest()).decode()
+            self.assertEqual(got, want, name + " does not match the hash in vendor/README.md")
+
+        # Every library the page loads should be one of the files we checked.
+        with open(os.path.join(ROOT, "wizard", "index.html"), encoding="utf-8") as handle:
+            loaded = re.findall(r'<script[^>]*\bsrc="vendor/([^"]+)"', handle.read())
+        self.assertEqual(sorted(loaded), sorted(recorded))
 
     def test_wrapper_profiles_match_profiles_yml(self):
         block = re.search(r"declare -A PROFILE_COMPONENTS=\((.*?)\n\)", INSTALL_SH, re.S).group(1)
