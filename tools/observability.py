@@ -753,7 +753,8 @@ def catalogue_markdown(heading="###", suffix=""):
             action = r["action"].replace("|", "\\|")
             out.append("| %s `%s` | %s | %s | %s |" % (r["title"], r["id"], " | ".join(cells), r["for"], action))
         out.append("")
-    for module in ["host", "mattermost", "postgresql", "nginx", "opensearch", "monitoring"]:
+    for module in ["host", "mattermost", "postgresql", "nginx", "opensearch", "calls_offloader",
+                   "monitoring"]:
         rules = [r for r in LOG_CATALOGUE if r["module"] == module]
         if not rules:
             continue
