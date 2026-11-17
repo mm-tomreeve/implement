@@ -19,6 +19,10 @@
 #   - the licence, the TLS certificate and key, and the OpenSearch CA. Put them on
 #     the server, then run ./install.sh --edit to point at them.
 #
+# None of that applies to a one-box lab. Nothing is copied between servers when
+# there is only one: every password is generated on it, and everything on it is
+# reached on localhost, so the plan alone is the whole install.
+#
 # Check a server is ready before installing anything:
 #   sudo ./install.sh --estate my-estate.yml --preflight
 #
@@ -85,7 +89,11 @@ deployment: estate
 #   (Grafana) on separate servers.
 # external: you already run them. Fill in the two settings below and leave all
 #   three off the nodes.
-observability: managed
+# none: no monitoring at all. Nothing is installed, no exporters go on any server
+#   and no logs are shipped, so nothing is collected and no alert can fire. Add it
+#   later by installing the monitoring profile somewhere and setting
+#   deploy_monitoring_exporters: true on every other server.
+observability: managed       # managed | external | none
 monitoring_scrape_sources: []        # only read when observability is external
 logging_loki_url: ""                 # only read when observability is external
 

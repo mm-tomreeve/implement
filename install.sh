@@ -1597,7 +1597,7 @@ estate_run() {
 # this server's answers from it. The result is a normal answer file, so
 # everything after this behaves as it does for --answers.
 resolve_estate() {
-  local secret_args=() node tmp backup="" followups line
+  local secret_args=() node tmp backup="" followups notes line
   estate_prepare
   if [[ -n "${ESTATE_SECRETS}" ]]; then
     secret_args=(--secrets "${ESTATE_SECRETS}")
@@ -1623,12 +1623,21 @@ resolve_estate() {
   info "Wrote this server's answers to ${ANSWERS} from the estate plan (node ${node})${backup:+, and kept the earlier ones in ${backup}}."
 
   followups="$(grep '^# FOLLOWUP: ' "${ESTATE_ERRFILE}" | sed 's/^# FOLLOWUP: //')"
+  notes="$(grep '^# NOTE: ' "${ESTATE_ERRFILE}" | sed 's/^# NOTE: //')"
   rm -f "${ESTATE_ERRFILE}"
   if [[ -n "${followups}" ]]; then
     section "Still needed on this server"
     while IFS= read -r line; do info "${line}"; done <<< "${followups}"
     info "The plan still runs with these blank. An install stops if it needs one, such as a TLS"
     info "certificate path. Run ./install.sh --edit here: it keeps what the plan settled and asks the rest."
+  fi
+  # Things worth knowing that need no answer. A server whose components all sit
+  # on it - a lab, or a core profile - settles its own passwords and reaches
+  # everything on localhost, so it reaches this point with nothing to fill in,
+  # and saying so beats an empty "still needed" heading.
+  if [[ -n "${notes}" ]]; then
+    section "Worth knowing"
+    while IFS= read -r line; do info "${line}"; done <<< "${notes}"
   fi
 }
 

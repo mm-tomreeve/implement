@@ -71,6 +71,24 @@
   function roleHas(node, component) { return profileComponents(nodeProfiles(node)).includes(component); }
   function isLab() { return qs('input[name="deployment"]:checked').value === "lab"; }
 
+  // A lab is one box, so every component question is a yes or a no about this
+  // server. The ticks in "Components on this box" are those answers: each one
+  // sets the control it stands for and fires its change handler, so the notes,
+  // the sizing and the plan all carry on reading the same inputs they always
+  // have, and nothing has to know the checklist exists.
+  const LAB_COMPONENTS = [
+    { box: "f-lab-search", set: on => setRadio("search", on ? "opensearch" : "database"),
+      read: () => qs('input[name="search"]:checked').value === "opensearch" },
+    { box: "f-lab-calls", set: on => { if (!on) setRadio("calls", "none"); else if (callsOff()) setRadio("calls", "integrated"); },
+      read: () => !callsOff() },
+    { box: "f-lab-recording", set: on => { el("f-recording").checked = on; },
+      read: () => el("f-recording").checked },
+    { box: "f-lab-monitoring", set: on => { if (!on) setRadio("observability", "none"); else if (monitoringOff()) setRadio("observability", "managed"); },
+      read: () => !monitoringOff() },
+  ];
+  function callsOff() { return qs('input[name="calls"]:checked').value === "none"; }
+  function monitoringOff() { return qs('input[name="observability"]:checked').value === "none"; }
+
   function showStep(n) {
     for (let i = 1; i <= 4; i++) {
       el("step-" + i).style.display = (i === n) ? "" : "none";
@@ -1375,10 +1393,10 @@
     el("f-tls").value = plan.tls_mode === "provided" ? "provided" : "later";
     el("f-storage").value = ["local", "nfs", "amazons3"].includes(plan.file_storage) ? plan.file_storage : "local";
     if (plan.seats) el("f-seats").value = plan.seats;
-    const obs = plan.observability === "external" ? "external" : "managed";
+    const obs = ["external", "none"].includes(plan.observability) ? plan.observability : "managed";
     qs('input[name="observability"][value="' + obs + '"]').checked = true;
     el("observability-external").style.display = obs === "external" ? "" : "none";
-    el("monitoring-layout-row").style.display = obs === "external" ? "none" : "";
+    el("monitoring-layout-row").style.display = obs === "managed" ? "" : "none";
     setRadio("grafana", plan.nodes.some(n => (n.profiles || []).includes("monitoring"))
       ? "combined" : "split");
     el("f-scrape").value = (plan.monitoring_scrape_sources || []).join(", ");
@@ -1643,9 +1661,15 @@
   // monitoring servers are still worth building; say what you do and don't get.
   function updateMonitoringNote() {
     const enterprise = el("f-tier").value === "enterprise";
-    const managed = qs('input[name="observability"]:checked').value === "managed";
+    const obs = qs('input[name="observability"]:checked').value;
     const note = el("monitoring-note");
-    if (!managed) { note.textContent = ""; return; }
+    if (obs === "none") {
+      note.textContent = "No Prometheus, Loki or Grafana, no exporters and no log shipping, so no alert "
+        + "can fire. Add it later with the monitoring profile and deploy_monitoring_exporters on every "
+        + "other server.";
+      return;
+    }
+    if (obs !== "managed") { note.textContent = ""; return; }
     if (isLab()) {
       note.textContent = "Prometheus, Loki and Grafana go on the same box they are watching, so when it goes "
         + "down you lose the dashboards that would tell you why. Fine for seeing what the dashboards look like."
@@ -1661,10 +1685,58 @@
   // Grafana only has somewhere else to go when there is another server to put it
   // on, and the question only arises when this toolkit is the thing building it.
   function syncMonitoringLayoutRow() {
-    const managed = qs('input[name="observability"]:checked').value === "managed";
-    el("observability-external").style.display = managed ? "none" : "";
-    el("monitoring-layout-row").style.display = (managed && !isLab()) ? "" : "none";
+    const obs = qs('input[name="observability"]:checked').value;
+    el("observability-external").style.display = obs === "external" ? "" : "none";
+    el("monitoring-layout-row").style.display = (obs === "managed" && !isLab()) ? "" : "none";
   }
+
+  // Push the checklist into the real controls, or read it back out of them, and
+  // hide the group behind a tick that is off: with Calls off there is no mode to
+  // pick, and with monitoring off there is nothing to say about where it runs.
+  function syncLabComponents(fromChecklist) {
+    const lab = isLab();
+    el("group-lab-components").style.display = lab ? "" : "none";
+    // Out of lab mode the groups speak for themselves and "None" is how
+    // monitoring is turned off, so nothing here applies.
+    el("observability-none-row").style.display = lab ? "none" : "";
+    if (!lab) {
+      el("group-search").style.display = "";
+      el("group-calls").style.display = "";
+      el("group-monitoring").style.display = "";
+      el("calls-none-row").style.display = "";
+      el("recording-row").style.display = "";
+      return;
+    }
+    const enterprise = el("f-tier").value === "enterprise";
+    const search = el("f-lab-search");
+    const recording = el("f-lab-recording");
+    search.disabled = !enterprise;
+    recording.disabled = !enterprise || !el("f-lab-calls").checked;
+    if (search.disabled) search.checked = false;
+    if (recording.disabled) recording.checked = false;
+
+    for (const item of LAB_COMPONENTS) {
+      if (fromChecklist) item.set(el(item.box).checked);
+      else el(item.box).checked = item.read();
+    }
+    // The tick is the on/off, so the group underneath keeps only the part of the
+    // question a lab still has to answer.
+    el("group-search").style.display = "none";
+    el("calls-none-row").style.display = "none";
+    el("recording-row").style.display = "none";
+    el("group-calls").style.display = el("f-lab-calls").checked ? "" : "none";
+    el("group-monitoring").style.display = el("f-lab-monitoring").checked ? "" : "none";
+    el("lab-components-note").textContent = enterprise ? ""
+      : "OpenSearch search and call recording need Enterprise.";
+  }
+  LAB_COMPONENTS.forEach(item => el(item.box).addEventListener("change", () => {
+    syncLabComponents(true);
+    updateCallsNote();
+    updateRecordingNote();
+    updateMonitoringNote();
+    syncMonitoringLayoutRow();
+    syncLabComponents(false);
+  }));
 
   // One box or an estate. Everything below the choice still gets asked, because
   // the answers are the same answers: what changes is whether a yes buys another
@@ -1681,6 +1753,9 @@
       ? 'On the server, run <code>sudo ./install.sh --estate my-estate.yml</code>, or paste the plan when it asks.'
       : 'On each server, in the install order below, run <code>sudo ./install.sh --estate my-estate.yml</code>, or paste the plan when it asks.';
     if (lab) el("f-ha").checked = false;
+    // No monitoring is a real answer either way, so switching modes keeps it:
+    // the estate shows it as the None radio, the lab as an empty tick.
+    syncLabComponents(false);
     syncMonitoringLayoutRow();
     updateHaNote();
     updateCallsNote();
@@ -1696,6 +1771,10 @@
   el("f-seats").addEventListener("change", updateSearchNote);
   el("f-tier").addEventListener("change", updateHaNote);
   el("f-tier").addEventListener("change", updateMonitoringNote);
+  el("f-tier").addEventListener("change", () => syncLabComponents(false));
+  qsa('input[name="calls"], input[name="search"], input[name="observability"]')
+    .forEach(r => r.addEventListener("change", () => syncLabComponents(false)));
+  el("f-recording").addEventListener("change", () => syncLabComponents(false));
   qsa('input[name="observability"]').forEach(r => r.addEventListener("change", updateMonitoringNote));
   el("f-ha").addEventListener("change", updateHaNote);
   el("f-app-servers").addEventListener("input", updateHaNote);

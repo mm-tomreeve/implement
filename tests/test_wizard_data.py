@@ -244,5 +244,44 @@ class WizardData(unittest.TestCase):
                     self.assertTrue(entry["purpose"])
 
 
+# The page and its script are separate files, so a renamed id is a control that
+# silently stops working: no error, just a tick that does nothing. Every id the
+# script reaches for has to be on the page.
+class WizardMarkup(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(INDEX_HTML, encoding="utf-8") as f:
+            cls.html = f.read()
+        with open(os.path.join(ROOT, "wizard", "wizard.js"), encoding="utf-8") as f:
+            cls.js = f.read()
+        cls.ids = set(re.findall(r'id="([A-Za-z0-9_-]+)"', cls.html))
+
+    def test_every_id_the_script_uses_is_on_the_page(self):
+        for name in sorted(set(re.findall(r'\bel\("([A-Za-z0-9_-]+)"\)', self.js))):
+            with self.subTest(id=name):
+                self.assertIn(name, self.ids)
+
+    def test_every_named_input_the_script_reads_is_on_the_page(self):
+        groups = set(re.findall(r'input\[name="([a-z-]+)"\]', self.js))
+        for name in sorted(groups):
+            with self.subTest(name=name):
+                self.assertIn('name="%s"' % name, self.html)
+
+    # A lab is one box, so each component question is a yes or a no about this
+    # server, and the checklist is where that is answered. Every tick has to
+    # stand for a control the rest of the form already reads, or the plan and the
+    # page part company.
+    def test_the_lab_checklist_covers_the_optional_components(self):
+        for box in ("f-lab-search", "f-lab-calls", "f-lab-recording", "f-lab-monitoring"):
+            with self.subTest(box=box):
+                self.assertIn('id="%s"' % box, self.html)
+                self.assertIn('"%s"' % box, self.js)
+
+    # Without an off switch the only way to skip monitoring is to hand-edit the
+    # plan, which is exactly what the wizard is for avoiding.
+    def test_monitoring_can_be_turned_off(self):
+        self.assertIn('name="observability" value="none"', self.html)
+
+
 if __name__ == "__main__":
     unittest.main()

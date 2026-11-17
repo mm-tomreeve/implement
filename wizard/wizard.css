@@ -193,10 +193,11 @@ fieldset legend { font-size: .85rem; font-weight: 600; padding: 0 4px; }
 .choices input { margin-top: 2px; flex: none; }
 .choices input:disabled + *, .choices label:has(input:disabled) { color: var(--dim); }
 
-/* The first choice on the page: one server or an estate. Big enough to be the
-   thing you answer first, because everything below it changes with the answer. */
-.mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 22px; }
-@media (max-width: 560px) { .mode-cards { grid-template-columns: 1fr; } }
+/* The first choice on the page, because everything below it changes with the
+   answer. Not an even pair, though: nearly everyone is here to plan an estate,
+   so that one is the card and a lab is the quieter row under it. Giving both
+   equal weight would ask people to weigh up a choice they have already made. */
+.mode-cards { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 0 0 22px; }
 .mode-card {
   display: flex;
   align-items: flex-start;
@@ -212,15 +213,28 @@ fieldset legend { font-size: .85rem; font-weight: 600; padding: 0 4px; }
 }
 .mode-card:hover { border-color: var(--tint-line); background: var(--hover); }
 .mode-card input { margin: 3px 0 0; flex: none; accent-color: var(--sapphire); }
+/* Selected reads as an accent border over a quiet tint. The glow is kept for
+   keyboard focus, where it is telling you where you are: carrying it on every
+   selected card put a bright halo on the page at all times, which in dark mode
+   is a hard thing to look at and says nothing the border hasn't. */
 .mode-card:has(input:checked) {
   border-color: var(--sapphire);
   background: var(--tint);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: inset 0 0 0 1px var(--sapphire);
 }
 .mode-card:has(input:focus-visible) { box-shadow: 0 0 0 3px var(--focus-ring); }
 .mode-text { display: block; }
 .mode-title { display: block; font-size: .92rem; font-weight: 600; color: var(--heading); }
 .mode-sub { display: block; margin-top: 3px; font-size: .82rem; line-height: 1.45; color: var(--dim); }
+
+/* The secondary way out: one line, no card weight of its own until you pick it.
+   It still selects, hovers and focuses like the other one, because a quieter
+   option is not a harder one to reach. */
+.mode-card.quiet { padding: 9px 16px; background: none; border-color: transparent; align-items: baseline; }
+.mode-card.quiet:hover { background: var(--hover); border-color: var(--line); }
+.mode-card.quiet .mode-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.mode-card.quiet .mode-title { display: inline; font-size: .88rem; font-weight: 500; }
+.mode-card.quiet .mode-sub { display: inline; margin-top: 0; font-size: .8rem; }
 
 button {
   font: inherit;
@@ -304,6 +318,16 @@ body.diagram-open { overflow: hidden; }
 .badge.optional { background: var(--badge-opt-bg); color: var(--sapphire); }
 .badge.recommended { background: var(--badge-rec-bg); color: var(--badge-rec-fg); }
 .badge.required { background: var(--danger-bg); color: var(--danger); }
+.badge.always { background: var(--badge-never-bg); color: var(--dim); }
+
+/* The lab component list: one tick per thing that goes on the box, with room
+   between them so a row and the hint under it stay a pair. */
+#group-lab-components label.inline { margin-bottom: 12px; font-size: .92rem; }
+#group-lab-components label.inline:last-of-type { margin-bottom: 0; }
+/* A tick the licence puts out of reach reads as unavailable, the same way a
+   disabled option does in the stacked choice lists. */
+#group-lab-components label.inline:has(input:disabled) { color: var(--dim); }
+#group-lab-components input:disabled { accent-color: var(--dim); }
 
 code.blob {
   display: block;

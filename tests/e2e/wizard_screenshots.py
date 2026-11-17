@@ -21,6 +21,12 @@ with sync_playwright() as p:
     pg.select_option("#f-tls","provided")
     pg.wait_for_timeout(500)
     pg.locator("#step-1").screenshot(path=RAW+"wizard-1-deployment.png")
+    # A lab asks the same questions as a tick list, so step 1 looks different
+    # enough to be worth its own shot. Taken before the estate run goes on, and
+    # the mode is put back so nothing below sees a lab.
+    pg.check('input[name="deployment"][value="lab"]'); pg.wait_for_timeout(400)
+    pg.locator("#group-lab-components").screenshot(path=RAW+"wizard-1-lab-components.png")
+    pg.check('input[name="deployment"][value="estate"]'); pg.wait_for_timeout(400)
     pg.click("#to-step-2"); pg.wait_for_timeout(3000)
     pg.locator("#step-2").screenshot(path=RAW+"wizard-2-recommendation.png")
     pg.click("#to-step-3"); pg.wait_for_timeout(500)
