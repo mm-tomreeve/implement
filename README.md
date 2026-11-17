@@ -1239,7 +1239,7 @@ what the overrides above use. The same tables are in [docs/alerts.md](docs/alert
 
 | Check | Watches for | Window | Info | Warning | Critical | For | What to do |
 |---|---|---|---|---|---|---|---|
-| Recording or transcription failing `calls-job-errors` | `mattermost` logs where `level` is `error` and `plugin_id` is `com\.mattermost\.calls` and `msg` is `(?i).*(job\|record\|transcri\|caption).*` | 15m |  | > 0 | > 5 | 0s | People press record and get nothing. Check the job service is up, that its runner images are present (`docker image ls` on the job server), and that the job containers can reach this server's site URL. |
+| Recording or transcription failing `calls-job-errors` | `mattermost` logs where `level` is `error` and `plugin_id` is `com\.mattermost\.calls` and `msg` is `.*([Jj]ob\|[Rr]ecord\|[Tt]ranscri\|[Cc]aption).*` | 15m |  | > 0 | > 5 | 0s | People press record and get nothing. Check the job service is up, that its runner images are present (`docker image ls` on the job server), and that the job containers can reach this server's site URL. |
 
 #### Monitoring log checks
 

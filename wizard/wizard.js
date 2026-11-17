@@ -1254,7 +1254,9 @@
       out.push("Install every app server, then check the cluster: verify warns until each peer has joined. Keep them on the same Mattermost version.");
     }
     if (anywhere("rtcd")) out.push("If clients reach the Calls server through NAT or a different address, fill in rtcd_ice_host_override on that server.");
-    if (anywhere("calls_offloader")) {
+    // Recording on the Calls servers puts no calls_offloader node in the plan,
+    // so the plan line is the only thing that says it is switched on.
+    if (anywhere("calls_offloader") || plan.recording === "calls") {
       out.push("Recording and transcription are Enterprise features and need the licence applied before they do anything.");
       out.push("The job service pulls its recorder and transcriber images from Docker Hub the first time someone records a call. Build the offline bundle with --with-job-images, or point calls_offloader_image_registry at an internal mirror, if that server has no route out.");
       out.push("Check calls_offloader_recorder_image and calls_offloader_transcriber_image after a Mattermost upgrade: those tags follow the Calls plugin, not the job service.");
