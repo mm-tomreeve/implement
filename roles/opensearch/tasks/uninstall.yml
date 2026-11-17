@@ -38,13 +38,17 @@
 - name: Purge the indices, logs and service user
   when: uninstall_purge | default(false) | bool
   block:
-    - name: Remove the data and log directories
+    - name: Remove the data directory
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: purge_dir
+      vars:
+        pd_path: "{{ opensearch_data_dir }}"
+
+    - name: Remove the log directory
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ opensearch_log_dir }}"
         state: absent
-      loop:
-        - "{{ opensearch_data_dir }}"
-        - "{{ opensearch_log_dir }}"
 
     - name: Remove the opensearch user
       ansible.builtin.user:

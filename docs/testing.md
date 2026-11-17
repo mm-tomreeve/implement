@@ -69,7 +69,7 @@ you a document that says what went wrong.
 make venv     # once: a local virtualenv with ansible-core, ansible-lint, yamllint, shellcheck
 make lint     # yamllint, ansible-lint (production profile), shellcheck, playbook syntax check
 make test     # unit tests for the resolver, and consistency checks across the repo
-make render   # render the plan logic and the report for eight server layouts
+make render   # render the plan logic and the report for nineteen server layouts
 make smoke    # the core profile in an AlmaLinux 9 systemd container
 make smoke-debian  # the same in Debian 12 and Ubuntu 24.04 containers
 make e2e      # five containers, one per role, wired together, plus a functional test
@@ -81,6 +81,12 @@ The unit tests run against a saved copy of Mattermost's version archive page
 (`tests/fixtures/version-archive.html`), so they need no network access. If Mattermost changes
 the page layout, refresh the fixture and fix `parse_archive` in `tools/resolve_versions.py`.
 
+`tests/test_install_sh.py` sources `install.sh` into bash and calls single functions, because the
+shell options (`set -Eeuo pipefail`) are what turn an unmatched `grep` or a failed command
+substitution into a crash that no Python test can see. It needs bash 4 or later, so it skips on
+macOS's bash 3.2 and runs in CI and in the containers. One test pastes a plan longer than 4,095
+characters through a pty, which is what a terminal's line editor cuts off.
+
 The consistency tests catch the drift that is easy to miss by eye: the wrapper's profile list
 against `profiles.yml`, the catalogue against the roles on disk, the resolver against the
 artifacts role, the pinned GPG fingerprints against the resolver, and the example answer file
@@ -88,7 +94,7 @@ against the defaults.
 
 `make render` runs the real plan tasks and report role against made-up facts and results for
 the layouts in `tests/render/scenarios/` (core, all-in-one, split app server, database, NFS storage,
-monitoring, and a failed install). It needs no root and no RHEL, and it catches most template and wiring
+a lab with its own NFS share, monitoring, and a failed install). It needs no root and no RHEL, and it catches most template and wiring
 mistakes. The output in `tests/render/out/` doubles as sample documents to show a customer.
 It also runs `tests/render/input_files.yml`, which points the answer file's file settings at
 real and missing files in a scratch directory and checks the plan names each missing one.

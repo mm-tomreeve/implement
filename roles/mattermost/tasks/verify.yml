@@ -174,7 +174,8 @@
           {{ 'skip' if not (mmd_mattermost_metrics | bool)
              else ('pass' if _v_mm_metrics.status | default(0) == 200 else 'warn') }}
         detail: >-
-          {{ 'Team Edition has no metrics' if not (mmd_mattermost_metrics | bool)
+          {{ ('Team Edition has no metrics' if mattermost_edition == 'team'
+              else 'metrics need an Enterprise licence and none is installed yet') if not (mmd_mattermost_metrics | bool)
              else ('HTTP 200' if _v_mm_metrics.status | default(0) == 200
                    else 'not answering; metrics need an Enterprise licence' ~ ('' if _licensed else ' and none is installed yet')) }}
       - component: mattermost

@@ -1,0 +1,16 @@
+---
+# Render scenario: a lab that keeps its uploads on an NFS share served from the same box.
+# These are the answers tools/estate_plan.py derives for a one-node plan with the core and
+# storage profiles. The plan refuses a share that is exported to nobody, so this is what
+# stops a lab plan with shared storage from being turned away.
+render_host: lab01
+render_ram: 8000
+render_cpus: 4
+deploy_name: lab-nfs
+deploy_profiles: [core, storage]
+mattermost_site_url: http://lab.example.test
+mattermost_edition: team
+tls_mode: later
+mattermost_data_dir: /srv/mattermost/data
+nfs_allowed_clients: [127.0.0.1]
+render_expect_selected: [postgresql, mattermost, nginx, nfs]

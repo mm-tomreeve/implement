@@ -56,12 +56,19 @@
     path: "{{ postgresql_passfile }}"
     state: absent
 
-- name: Purge the cluster and its logs
+- name: Purge the cluster
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: purge_dir
+  vars:
+    pd_path: "{{ postgresql_data_dir }}"
+  when: uninstall_purge | default(false) | bool
+
+- name: Purge the cluster's configuration and logs
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop:
-    - "{{ postgresql_data_dir }}"
     - "{{ postgresql_conf_dir }}"
     - "{{ postgresql_log_dir }}"
   when: uninstall_purge | default(false) | bool

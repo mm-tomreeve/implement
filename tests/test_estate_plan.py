@@ -636,5 +636,64 @@ class DeriveLabServer(unittest.TestCase):
         self.assertEqual(ram["target"], sum(catalogue[c]["min_ram_mb"] for c in installed))
 
 
+class DeriveLabWithNfs(unittest.TestCase):
+    """A lab that picks shared NFS storage: the share and Mattermost on one box.
+
+    Found by installing the plan the wizard wrote for exactly this. The share was
+    exported to nobody, which the plan stage refuses, because the only app server is
+    this one and nothing here listed it as a client.
+    """
+
+    PLAN = {
+        "estate_version": 1,
+        "name": "lab-nfs",
+        "deployment": "lab",
+        "mattermost_edition": "team",
+        "mattermost_site_url": "http://lab.acme.example",
+        "tls_mode": "later",
+        "file_storage": "nfs",
+        "calls": "none",
+        "recording": "none",
+        "observability": "none",
+        "nodes": [{"name": "lab01", "address": "10.0.0.50", "profiles": ["core", "storage"]}],
+    }
+
+    def test_the_share_is_exported_to_this_server(self):
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "lab01")
+        self.assertEqual(answers["nfs_allowed_clients"], ["127.0.0.1"])
+
+    def test_mattermost_writes_to_the_exported_directory(self):
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "lab01")
+        self.assertEqual(answers["mattermost_data_dir"], ep.settings()["nfs_export_dir"])
+
+    def test_nothing_is_still_needed(self):
+        _answers, followups, _notes = ep.derive_answers(self.PLAN, "lab01")
+        self.assertEqual(followups, [])
+
+    def test_the_answers_pass_answer_problems(self):
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "lab01")
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f:
+            yaml.safe_dump(answers, f)
+        try:
+            self.assertEqual(answer_problems(f.name, DEFAULTS), [])
+        finally:
+            os.unlink(f.name)
+
+    def test_another_app_server_is_listed_next_to_this_one(self):
+        plan = copy.deepcopy(self.PLAN)
+        plan["nodes"].append({"name": "app02", "address": "10.0.0.51", "profiles": ["app"]})
+        answers, _followups, _notes = ep.derive_answers(plan, "lab01")
+        self.assertEqual(answers["nfs_allowed_clients"], ["10.0.0.51"])
+        self.assertEqual(answers["mattermost_data_dir"], ep.settings()["nfs_export_dir"])
+
+    def test_a_storage_only_server_keeps_the_data_dir_alone(self):
+        plan = copy.deepcopy(self.PLAN)
+        plan["nodes"] = [{"name": "files01", "address": "10.0.0.60", "profiles": ["storage"]},
+                         {"name": "app01", "address": "10.0.0.61", "profiles": ["app"]}]
+        answers, _followups, _notes = ep.derive_answers(plan, "files01")
+        self.assertNotIn("mattermost_data_dir", answers)
+        self.assertEqual(answers["nfs_allowed_clients"], ["10.0.0.61"])
+
+
 if __name__ == "__main__":
     unittest.main()

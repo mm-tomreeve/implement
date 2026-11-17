@@ -26,9 +26,11 @@
         - name: Remember what failed so the report can say so
           ansible.builtin.set_fact:
             mmd_deploy_failed: true
+            # A handler that fails (a service restart, an NFS re-export) leaves both
+            # of these undefined, so say that rather than "unknown task: no message".
             mmd_deploy_error: >-
-              {{ ansible_failed_task.name | default('unknown task') }}:
-              {{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('no message')) | string | truncate(400) }}
+              {% if ansible_failed_task is defined %}{{ ansible_failed_task.name | default('unknown task') }}:
+              {{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('no message')) | string | truncate(400) }}{% else %}a handler, which the Ansible log names. Look for "RUNNING HANDLER" followed by "fatal"{% endif %}
 
     - name: Save state, verify and report
       ansible.builtin.include_tasks: tasks/finish.yml
