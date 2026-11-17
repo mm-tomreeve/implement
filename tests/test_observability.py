@@ -140,6 +140,20 @@ class Building(unittest.TestCase):
         self.assertEqual(total, sum(result["summary"]["by_severity"].values()))
 
 
+# A LogQL regex may open with an inline flag, as (?i) does on the job-service
+# rules. Python takes that at the start of a pattern but not in the middle of a
+# bigger one, and from 3.11 it is an error rather than a warning, so a regex being
+# embedded in the prefilter below has its flag scoped to the part it came from.
+INLINE_FLAGS = re.compile(r"^\(\?([aiLmsux]+)\)")
+
+
+def embeddable(regex):
+    opening = INLINE_FLAGS.match(regex)
+    if not opening:
+        return regex
+    return "(?%s:%s)" % (opening.group(1), regex[opening.end():])
+
+
 def log_line_matches(rule, line):
     """What Loki does with the pipeline observability.py builds, in Python."""
     params = obs.log_params({})
@@ -149,7 +163,7 @@ def log_line_matches(rule, line):
         if field == "line" and not re.search(regex, line):
             return False
         # The cheap prefilter on the raw line must never drop a line the field filter wants.
-        if field != "line" and rule.get("parser") == "json" and not re.search('"%s":\\s*"(%s)"' % (field, regex), line):
+        if field != "line" and rule.get("parser") == "json" and not re.search('"%s":\\s*"(%s)"' % (field, embeddable(regex)), line):
             return False
     for field, regex in exclude:
         if field == "line" and re.search(regex, line):
