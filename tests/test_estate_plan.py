@@ -139,7 +139,7 @@ class DeriveSplitEstate(unittest.TestCase):
     """
 
     def test_db01(self):
-        answers, _followups = ep.derive_answers(SPLIT_ESTATE, "db01")
+        answers, _followups, _notes = ep.derive_answers(SPLIT_ESTATE, "db01")
         self.assertEqual(answers, {
             "deploy_name": "chat-prod",
             "deploy_profiles": ["database"],
@@ -150,7 +150,7 @@ class DeriveSplitEstate(unittest.TestCase):
         })
 
     def test_app01(self):
-        answers, followups = ep.derive_answers(SPLIT_ESTATE, "app01")
+        answers, followups, _notes = ep.derive_answers(SPLIT_ESTATE, "app01")
         self.assertEqual(answers, {
             "deploy_name": "chat-prod",
             "deploy_profiles": ["app"],
@@ -176,18 +176,18 @@ class DeriveSplitEstate(unittest.TestCase):
         plan = dict(SPLIT_ESTATE)
         plan["nodes"] = list(SPLIT_ESTATE["nodes"]) + [
             {"name": "app02", "address": "10.10.1.16", "profiles": ["app"]}]
-        a1, f1 = ep.derive_answers(plan, "app01")
-        a2, _ = ep.derive_answers(plan, "app02")
+        a1, f1, _notes = ep.derive_answers(plan, "app01")
+        a2, _, _notes = ep.derive_answers(plan, "app02")
         self.assertEqual(a1["mattermost_cluster_peers"], ["10.10.1.16"])
         self.assertEqual(a2["mattermost_cluster_peers"], ["10.10.1.12"])
         self.assertTrue(any("mattermost_license_file" in f for f in f1))
 
     def test_single_app_server_has_no_peers(self):
-        answers, _ = ep.derive_answers(SPLIT_ESTATE, "app01")
+        answers, _, _notes = ep.derive_answers(SPLIT_ESTATE, "app01")
         self.assertNotIn("mattermost_cluster_peers", answers)
 
     def test_calls01(self):
-        answers, _followups = ep.derive_answers(SPLIT_ESTATE, "calls01")
+        answers, _followups, _notes = ep.derive_answers(SPLIT_ESTATE, "calls01")
         self.assertEqual(answers, {
             "deploy_name": "chat-prod",
             "deploy_profiles": ["calls"],
@@ -198,7 +198,7 @@ class DeriveSplitEstate(unittest.TestCase):
         })
 
     def test_search01(self):
-        answers, _followups = ep.derive_answers(SPLIT_ESTATE, "search01")
+        answers, _followups, _notes = ep.derive_answers(SPLIT_ESTATE, "search01")
         self.assertEqual(answers, {
             "deploy_name": "chat-prod",
             "deploy_profiles": ["search"],
@@ -209,7 +209,7 @@ class DeriveSplitEstate(unittest.TestCase):
         })
 
     def test_mon01(self):
-        answers, _followups = ep.derive_answers(SPLIT_ESTATE, "mon01")
+        answers, _followups, _notes = ep.derive_answers(SPLIT_ESTATE, "mon01")
         self.assertEqual(answers, {
             "deploy_name": "chat-prod",
             "deploy_profiles": ["monitoring"],
@@ -225,7 +225,7 @@ class DeriveSplitEstate(unittest.TestCase):
     def test_every_node_passes_answer_problems(self):
         for node in SPLIT_ESTATE["nodes"]:
             with self.subTest(node=node["name"]):
-                answers, _followups = ep.derive_answers(SPLIT_ESTATE, node["name"])
+                answers, _followups, _notes = ep.derive_answers(SPLIT_ESTATE, node["name"])
                 text = "---\n" + yaml.safe_dump(answers, sort_keys=False)
                 with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f:
                     f.write(text)
@@ -254,13 +254,13 @@ class DeriveReadReplica(unittest.TestCase):
     }
 
     def test_primary(self):
-        answers, _followups = ep.derive_answers(self.PLAN, "db01")
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "db01")
         self.assertEqual(answers["postgresql_replication"], "primary")
         self.assertEqual(answers["postgresql_replica_hosts"], ["10.10.1.21"])
         self.assertEqual(answers["postgresql_allowed_clients"], ["10.10.1.12"])
 
     def test_replica(self):
-        answers, followups = ep.derive_answers(self.PLAN, "db02")
+        answers, followups, _notes = ep.derive_answers(self.PLAN, "db02")
         self.assertEqual(answers["postgresql_replication"], "replica")
         self.assertEqual(answers["postgresql_primary_host"], "10.10.1.11")
         self.assertEqual(answers["postgresql_allowed_clients"], ["10.10.1.12"])
@@ -269,21 +269,21 @@ class DeriveReadReplica(unittest.TestCase):
     def test_app_reads_from_the_replica(self):
         # Building the replica isn't enough: Mattermost only sends reads to it
         # once the app server names it in SqlSettings.DataSourceReplicas.
-        answers, _followups = ep.derive_answers(self.PLAN, "app01")
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "app01")
         self.assertEqual(answers["mattermost_db_host"], "10.10.1.11")
         self.assertEqual(answers["mattermost_db_replica_hosts"], ["10.10.1.21"])
 
     # The plan is a list, and nothing says the primary comes first in it.
     def test_the_primary_is_found_wherever_it_sits_in_the_list(self):
         plan = dict(self.PLAN, nodes=list(reversed(self.PLAN["nodes"])))
-        answers, _followups = ep.derive_answers(plan, "app01")
+        answers, _followups, _notes = ep.derive_answers(plan, "app01")
         self.assertEqual(answers["mattermost_db_host"], "10.10.1.11")
         self.assertEqual(answers["mattermost_db_replica_hosts"], ["10.10.1.21"])
 
     def test_reads_only_go_to_the_replica_on_enterprise(self):
         plan = dict(self.PLAN, licence="professional")
-        _answers, followups = ep.derive_answers(plan, "app01")
-        self.assertTrue(any("Enterprise" in f and "replica" in f for f in followups))
+        _answers, _followups, notes = ep.derive_answers(plan, "app01")
+        self.assertTrue(any("Enterprise" in n and "replica" in n for n in notes))
 
     def test_a_plan_with_no_primary_is_refused(self):
         plan = dict(self.PLAN, nodes=[
@@ -312,27 +312,27 @@ class DeriveCalls(unittest.TestCase):
         }
 
     def test_not_using_calls_switches_it_off(self):
-        answers, _ = ep.derive_answers(self.plan("none"), "app01")
+        answers, _, _notes = ep.derive_answers(self.plan("none"), "app01")
         self.assertIs(answers["mattermost_calls_integrated"], False)
         self.assertNotIn("mattermost_rtcd_url", answers)
 
     def test_integrated_leaves_it_on_and_warns_about_the_port(self):
-        answers, followups = ep.derive_answers(self.plan("integrated"), "app01")
+        answers, _followups, notes = ep.derive_answers(self.plan("integrated"), "app01")
         self.assertNotIn("mattermost_calls_integrated", answers)   # the default is already on
         self.assertNotIn("mattermost_rtcd_url", answers)
-        self.assertTrue(any("8443" in f and "proxy" in f for f in followups))
+        self.assertTrue(any("8443" in n and "proxy" in n for n in notes))
 
     def test_rtcd_points_the_app_server_at_it(self):
-        answers, _ = ep.derive_answers(self.plan("rtcd", calls_nodes=1), "app01")
+        answers, _, _notes = ep.derive_answers(self.plan("rtcd", calls_nodes=1), "app01")
         self.assertEqual(answers["mattermost_rtcd_url"], "http://10.10.2.1:8045")
         self.assertNotIn("mattermost_calls_integrated", answers)
 
     def test_more_than_one_rtcd_says_it_needs_a_load_balancer(self):
-        _, followups = ep.derive_answers(self.plan("rtcd", calls_nodes=2), "app01")
+        _, followups, _notes = ep.derive_answers(self.plan("rtcd", calls_nodes=2), "app01")
         self.assertTrue(any("load balancer" in f for f in followups))
 
     def test_the_rtcd_server_allows_the_app_servers_in(self):
-        answers, _ = ep.derive_answers(self.plan("rtcd", calls_nodes=1), "calls01")
+        answers, _, _notes = ep.derive_answers(self.plan("rtcd", calls_nodes=1), "calls01")
         self.assertEqual(answers["rtcd_api_sources"], ["10.10.1.12"])
 
     def test_derived_answers_pass_answer_problems(self):
@@ -340,7 +340,7 @@ class DeriveCalls(unittest.TestCase):
             plan = self.plan(calls, count)
             for node in plan["nodes"]:
                 with self.subTest(calls=calls, node=node["name"]):
-                    answers, _ = ep.derive_answers(plan, node["name"])
+                    answers, _, _notes = ep.derive_answers(plan, node["name"])
                     with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f:
                         f.write("---\n" + yaml.safe_dump(answers, sort_keys=False))
                     self.addCleanup(os.remove, f.name)
@@ -367,7 +367,7 @@ class DeriveSplitMonitoring(unittest.TestCase):
     }
 
     def test_metrics_node_holds_the_estate(self):
-        answers, _ = ep.derive_answers(self.PLAN, "metrics01")
+        answers, _, _notes = ep.derive_answers(self.PLAN, "metrics01")
         self.assertEqual(answers["deploy_profiles"], ["metrics"])
         self.assertEqual(answers["monitoring_site_url"], "https://chat.acme.example")
         self.assertEqual([n["name"] for n in answers["monitoring_estate"]], ["db01", "app01", "graf01"])
@@ -376,7 +376,7 @@ class DeriveSplitMonitoring(unittest.TestCase):
         self.assertNotIn("logging_loki_url", answers)
 
     def test_dashboards_node_points_at_the_metrics_node(self):
-        answers, _ = ep.derive_answers(self.PLAN, "graf01")
+        answers, _, _notes = ep.derive_answers(self.PLAN, "graf01")
         self.assertEqual(answers["grafana_prometheus_url"], "http://10.10.1.15:9090")
         # Grafana needs the same estate list to build its alerts and dashboards.
         self.assertEqual([n["name"] for n in answers["monitoring_estate"]], ["db01", "app01", "metrics01"])
@@ -385,7 +385,7 @@ class DeriveSplitMonitoring(unittest.TestCase):
         self.assertEqual(answers["logging_loki_url"], "http://10.10.1.15:3100")
 
     def test_other_nodes_use_the_metrics_node(self):
-        answers, _ = ep.derive_answers(self.PLAN, "app01")
+        answers, _, _notes = ep.derive_answers(self.PLAN, "app01")
         self.assertEqual(answers["monitoring_scrape_sources"], ["10.10.1.15"])
         self.assertEqual(answers["logging_loki_url"], "http://10.10.1.15:3100")
         self.assertNotIn("grafana_prometheus_url", answers)
@@ -393,7 +393,7 @@ class DeriveSplitMonitoring(unittest.TestCase):
     def test_derived_answers_pass_answer_problems(self):
         for node in self.PLAN["nodes"]:
             with self.subTest(node=node["name"]):
-                answers, _ = ep.derive_answers(self.PLAN, node["name"])
+                answers, _, _notes = ep.derive_answers(self.PLAN, node["name"])
                 with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f:
                     f.write("---\n" + yaml.safe_dump(answers, sort_keys=False))
                 self.addCleanup(os.remove, f.name)
@@ -412,7 +412,7 @@ class EstateSecrets(unittest.TestCase):
     }
 
     def test_app_node_gets_the_passwords_it_connects_with(self):
-        answers, followups = ep.derive_answers(SPLIT_ESTATE, "app01", self.SECRETS)
+        answers, followups, _notes = ep.derive_answers(SPLIT_ESTATE, "app01", self.SECRETS)
         self.assertEqual(answers["mattermost_db_password"], "DbPass")
         self.assertEqual(answers["mattermost_opensearch_password"], "SearchPass")
         # No point telling someone to copy what has already been filled in.
@@ -421,17 +421,17 @@ class EstateSecrets(unittest.TestCase):
         self.assertTrue(any("root-ca.pem" in f for f in followups))
 
     def test_search_node_gets_both_opensearch_passwords(self):
-        answers, _ = ep.derive_answers(SPLIT_ESTATE, "search01", self.SECRETS)
+        answers, _, _notes = ep.derive_answers(SPLIT_ESTATE, "search01", self.SECRETS)
         self.assertEqual(answers["mattermost_opensearch_password"], "SearchPass")
         self.assertEqual(answers["opensearch_admin_password"], "AdminPass")
 
     def test_nodes_get_nothing_they_do_not_need(self):
-        answers, _ = ep.derive_answers(SPLIT_ESTATE, "calls01", self.SECRETS)
+        answers, _, _notes = ep.derive_answers(SPLIT_ESTATE, "calls01", self.SECRETS)
         for key in answers:
             self.assertNotIn("password", key, "the Calls server needs no estate password")
 
     def test_monitoring_node_gets_the_grafana_password(self):
-        answers, _ = ep.derive_answers(SPLIT_ESTATE, "mon01", self.SECRETS)
+        answers, _, _notes = ep.derive_answers(SPLIT_ESTATE, "mon01", self.SECRETS)
         self.assertEqual(answers["grafana_admin_password"], "GrafPass")
 
     def test_generated_secrets_match_the_roles_file(self):
@@ -444,7 +444,7 @@ class EstateSecrets(unittest.TestCase):
     def test_derived_answers_with_secrets_pass_answer_problems(self):
         for node in SPLIT_ESTATE["nodes"]:
             with self.subTest(node=node["name"]):
-                answers, _ = ep.derive_answers(SPLIT_ESTATE, node["name"], self.SECRETS)
+                answers, _, _notes = ep.derive_answers(SPLIT_ESTATE, node["name"], self.SECRETS)
                 with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f:
                     f.write("---\n" + yaml.safe_dump(answers, sort_keys=False))
                 self.addCleanup(os.remove, f.name)
@@ -504,12 +504,59 @@ class DeriveNfsStorage(unittest.TestCase):
     }
 
     def test_storage_node_gets_both_app_clients(self):
-        answers, _followups = ep.derive_answers(self.PLAN, "files01")
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "files01")
         self.assertEqual(answers["nfs_allowed_clients"], ["10.10.1.12", "10.10.1.22"])
 
     def test_app_node_gets_mount_followup(self):
-        _answers, followups = ep.derive_answers(self.PLAN, "app01")
+        _answers, followups, _notes = ep.derive_answers(self.PLAN, "app01")
         self.assertTrue(any("files01" in f and "Mount" in f for f in followups))
+
+
+class DeriveColocatedComponents(unittest.TestCase):
+    """A server that holds both ends of a connection is its own neighbour.
+
+    The core profile is the small estate's version of what a lab does: PostgreSQL
+    and Mattermost on one box, with other servers around it. Everything that
+    exists to hand one server's details to another has to stop at that boundary,
+    or the installer asks you to copy a password out of your own secrets.yml and
+    opens PostgreSQL to the network to reach itself.
+    """
+
+    PLAN = {
+        "estate_version": 1,
+        "name": "chat-small",
+        "mattermost_edition": "enterprise",
+        "mattermost_site_url": "https://chat.acme.example",
+        "tls_mode": "later",
+        "file_storage": "local",
+        "calls": "rtcd",
+        "observability": "managed",
+        "nodes": [
+            {"name": "core01", "address": "10.10.1.11", "profiles": ["core", "search"]},
+            {"name": "calls01", "address": "10.10.1.13", "profiles": ["calls"]},
+            {"name": "mon01", "address": "10.10.1.15", "profiles": ["monitoring"]},
+        ],
+    }
+
+    def test_its_own_database_is_not_a_followup(self):
+        _answers, followups, _notes = ep.derive_answers(self.PLAN, "core01")
+        self.assertFalse([f for f in followups if "secrets.yml" in f], followups)
+
+    def test_its_own_database_is_reached_on_localhost(self):
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "core01")
+        self.assertNotIn("mattermost_db_host", answers)
+        # Nothing connects from another server, so PostgreSQL has no reason to
+        # listen anywhere but localhost. Naming itself here is what would make it.
+        self.assertNotIn("postgresql_allowed_clients", answers)
+        self.assertNotIn("opensearch_allowed_clients", answers)
+
+    def test_components_on_other_servers_are_still_wired(self):
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "core01")
+        self.assertEqual(answers["mattermost_rtcd_url"], "http://10.10.1.13:8045")
+
+    def test_the_other_servers_still_point_back(self):
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "calls01")
+        self.assertEqual(answers["rtcd_api_sources"], ["10.10.1.11"])
 
 
 class DeriveLabServer(unittest.TestCase):
@@ -518,7 +565,9 @@ class DeriveLabServer(unittest.TestCase):
     The wizard writes several profiles on the one node rather than the all-in-one
     profile, so a lab that leaves OpenSearch or Calls out says so in the plan.
     Either way it is one server talking to itself, and that is what makes a lab
-    different: every address it derives has to be its own.
+    different: there is no other server to point at, to open a port to, or to
+    copy a password from, so the plan derives none of those and the install has
+    nothing left to ask for.
     """
 
     PLAN = {
@@ -551,14 +600,26 @@ class DeriveLabServer(unittest.TestCase):
         self.assertEqual(sorted(ep.expand_components(self.PLAN["nodes"][0]["profiles"])),
                          sorted(ep.PROFILE_COMPONENTS["all-in-one"]))
 
-    def test_everything_is_wired_to_itself(self):
-        answers, _followups = ep.derive_answers(self.PLAN, "lab01")
-        self.assertEqual(answers["mattermost_db_host"], "10.0.0.50")
-        self.assertEqual(answers["mattermost_rtcd_url"], "http://10.0.0.50:8045")
-        self.assertEqual(answers["mattermost_job_service_url"], "http://10.0.0.50:4545")
-        self.assertEqual(answers["mattermost_opensearch_url"], "https://10.0.0.50:9200")
+    def test_nothing_is_wired_over_the_network(self):
+        """Every address is left out, which is what makes roles/common/tasks/wiring.yml
+        reach for 127.0.0.1. Writing the box's own public address instead would work
+        too, but it would make PostgreSQL listen on every interface, turn SSL on for a
+        connection that never leaves the machine, and open ports to itself."""
+        answers, _followups, _notes = ep.derive_answers(self.PLAN, "lab01")
+        for key in ("mattermost_db_host", "mattermost_rtcd_url", "mattermost_job_service_url",
+                    "mattermost_opensearch_url", "postgresql_allowed_clients",
+                    "opensearch_allowed_clients", "rtcd_api_sources",
+                    "calls_offloader_api_sources"):
+            self.assertNotIn(key, answers)
         # Nothing else to watch, so the monitoring server has an empty estate.
         self.assertEqual(answers["monitoring_estate"], [])
+
+    def test_nothing_is_still_needed(self):
+        """The point of the whole thing: a lab box installs from the plan alone.
+        Every password is generated here by roles/common/tasks/secrets.yml, so there
+        is no secrets file to make, carry or decrypt."""
+        _answers, followups, _notes = ep.derive_answers(self.PLAN, "lab01")
+        self.assertEqual(followups, [])
 
     def test_nothing_is_checked_over_the_network(self):
         checks = ep.checks_for_node(self.PLAN, "lab01")

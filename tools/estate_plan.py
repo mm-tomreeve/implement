@@ -461,12 +461,24 @@ def select_node(plan, node_name=None, local_names=None, local_addresses=None):
 # ------------------------------------------------------------------ derivation
 
 def derive_answers(plan, node_name, estate_secrets=None):
-    """-> (answers: dict, followups: list[str]).
+    """-> (answers: dict, followups: list[str], notes: list[str]).
 
-    followups are things this node still needs that the plan deliberately never
-    carries: local files (a licence, a certificate, a CA), and passwords when
-    they aren't coming from an estate secrets file. install.sh prints these
-    after writing the derived answers, and install.sh --edit is where they go in.
+    followups are things this node still needs before it can install that the
+    plan deliberately never carries: local files (a licence, a certificate, a
+    CA), and passwords when they aren't coming from an estate secrets file.
+    install.sh prints these after writing the derived answers, and
+    install.sh --edit is where they go in.
+
+    notes are things worth knowing that need no answer. They are kept apart
+    because a run with nothing in followups is a run that is ready to go, and
+    telling someone to go and fill something in when there is nothing to fill in
+    is how a one-box lab ends up feeling like an estate.
+
+    Everything another server would have had to hand over is skipped when that
+    server is this one. A node that runs its own database generates its own
+    password and reaches it on localhost, so there is nothing to copy and
+    nothing to open up, and a lab - every profile on one box - therefore needs no
+    secrets file at all.
 
     estate_secrets, when given, is the decrypted estate secrets file. Only the
     entries this node needs are taken from it, and the followups that would have
@@ -493,6 +505,22 @@ def derive_answers(plan, node_name, estate_secrets=None):
     storage_nodes = nodes_with(nodes, "nfs")
     monitoring_nodes = nodes_with(nodes, "prometheus")
 
+    # A node is only "elsewhere" when it isn't this one. Everything below asks
+    # that before it writes an address or asks for a password, because a
+    # component on this very server is reached on localhost by wiring.yml, and
+    # its password is generated here by roles/common/tasks/secrets.yml.
+    def elsewhere(other):
+        return other is not None and other["name"] != node_name
+
+    def first_elsewhere(candidates):
+        """The node to point at, or None when this server is one of them."""
+        if any(n["name"] == node_name for n in candidates):
+            return None
+        return candidates[0] if candidates else None
+
+    def remote_addresses(candidates):
+        return [n["address"] for n in candidates if n["name"] != node_name]
+
     supplied = {}
     if estate_secrets:
         for answers_key, secret_key in secret_targets(plan, node_name).items():
@@ -505,6 +533,7 @@ def derive_answers(plan, node_name, estate_secrets=None):
         "deploy_profiles": list(node.get("profiles") or []),
     }
     followups = []
+    notes = []
 
     if has("mattermost"):
         out["mattermost_site_url"] = plan["mattermost_site_url"]
@@ -525,10 +554,14 @@ def derive_answers(plan, node_name, estate_secrets=None):
             out["mattermost_file_driver"] = "amazons3"
             followups.append("Fill in the S3 bucket, region and keys (mattermost_s3_*). They aren't in the plan.")
         if db_primary:
-            out["mattermost_db_host"] = db_primary["address"]
-            if "mattermost_db_password" not in supplied:
-                followups.append("Copy the database password from %s's secrets.yml into mattermost_db_password "
-                                  "here, or use an estate secrets file." % db_primary["name"])
+            # Only when the database is on another server. On this one Mattermost
+            # connects over localhost and shares the password this run generates,
+            # so there is nothing to point at and nothing to copy.
+            if elsewhere(db_primary):
+                out["mattermost_db_host"] = db_primary["address"]
+                if "mattermost_db_password" not in supplied:
+                    followups.append("Copy the database password from %s's secrets.yml into mattermost_db_password "
+                                      "here, or use an estate secrets file." % db_primary["name"])
             # Read replicas of that primary. Mattermost sends reads to them through
             # SqlSettings.DataSourceReplicas, which is an Enterprise feature: without
             # the licence the replica still streams, Mattermost just never reads it.
@@ -536,47 +569,59 @@ def derive_answers(plan, node_name, estate_secrets=None):
             if read_replicas:
                 out["mattermost_db_replica_hosts"] = [n["address"] for n in read_replicas]
                 if plan.get("licence") not in (None, "", "enterprise"):
-                    followups.append("This plan has %d database read replica(s), and Mattermost only reads from "
-                                      "them on Enterprise. On this licence they stream but carry no traffic."
-                                      % len(read_replicas))
+                    notes.append("This plan has %d database read replica(s), and Mattermost only reads from "
+                                  "them on Enterprise. On this licence they stream but carry no traffic."
+                                  % len(read_replicas))
         elif db_nodes:
             raise EstatePlanError("Every database node in this plan is a read replica. One of them has to be "
                                   "the primary: take the `primary` line off it.")
         # Calls either runs inside this server (up to 50 people, Mattermost's own
         # figure) or on rtcd servers of its own. An rtcd URL wins either way.
         if calls_nodes:
-            out["mattermost_rtcd_url"] = "http://%s:8045" % calls_nodes[0]["address"]
+            rtcd_node = first_elsewhere(calls_nodes)
+            if rtcd_node:
+                out["mattermost_rtcd_url"] = "http://%s:8045" % rtcd_node["address"]
             if len(calls_nodes) > 1:
                 followups.append("This plan has %d Calls servers. Put them behind a load balancer and "
                                   "point mattermost_rtcd_url at it, or Mattermost only uses %s."
-                                  % (len(calls_nodes), calls_nodes[0]["name"]))
+                                  % (len(calls_nodes), rtcd_node["name"] if rtcd_node else "the one on this server"))
         elif plan.get("calls") == "none":
             out["mattermost_calls_integrated"] = False
         elif plan.get("calls") == "integrated":
-            followups.append("Calls runs inside this server, so UDP and TCP 8443 have to reach it "
+            notes.append("Calls runs inside this server, so UDP and TCP 8443 have to reach it "
                               "directly rather than through the proxy. Past about 50 people in calls, "
                               "move it to an rtcd server of its own.")
         # Recording, transcription and live captions all come from the job service.
         # Mattermost talks to one URL, so several of them need something in front.
         if jobs_nodes:
-            out["mattermost_job_service_url"] = "http://%s:4545" % jobs_nodes[0]["address"]
+            job_node = first_elsewhere(jobs_nodes)
+            if job_node:
+                out["mattermost_job_service_url"] = "http://%s:4545" % job_node["address"]
             if len(jobs_nodes) > 1:
                 followups.append("This plan has %d Calls job servers. Put them behind a load balancer and "
                                   "point mattermost_job_service_url at it, or Mattermost only uses %s."
-                                  % (len(jobs_nodes), jobs_nodes[0]["name"]))
+                                  % (len(jobs_nodes), job_node["name"] if job_node else "the one on this server"))
             if plan.get("licence") not in (None, "", "enterprise"):
-                followups.append("Call recording, transcription and live captions are Enterprise features. "
-                                  "On this licence the job service installs but has nothing to do.")
-        if search_nodes:
-            out["mattermost_opensearch_url"] = "https://%s:9200" % search_nodes[0]["address"]
+                notes.append("Call recording, transcription and live captions are Enterprise features. "
+                              "On this licence the job service installs but has nothing to do.")
+        # Search on this same box is reached on localhost with the certificate and
+        # the password this run already made, so none of this applies to it.
+        search_node = first_elsewhere(search_nodes)
+        if search_node:
+            out["mattermost_opensearch_url"] = "https://%s:9200" % search_node["address"]
             if "mattermost_opensearch_password" not in supplied:
                 followups.append("Copy the password for the OpenSearch 'mattermost' user from %s's secrets.yml "
-                                  "into mattermost_opensearch_password here." % search_nodes[0]["name"])
+                                  "into mattermost_opensearch_password here." % search_node["name"])
             followups.append("Copy /etc/opensearch/certs/root-ca.pem from %s to this server, then point "
-                              "mattermost_opensearch_ca_file at it." % search_nodes[0]["name"])
+                              "mattermost_opensearch_ca_file at it." % search_node["name"])
         if plan.get("file_storage") == "nfs" and storage_nodes:
-            followups.append("Mount %s's NFS share before installing Mattermost here. Its report has the "
-                              "exact commands." % storage_nodes[0]["name"])
+            storage_node = first_elsewhere(storage_nodes)
+            if storage_node:
+                followups.append("Mount %s's NFS share before installing Mattermost here. Its report has the "
+                                  "exact commands." % storage_node["name"])
+            else:
+                notes.append("The NFS share is on this server. Point mattermost_data_dir at nfs_export_dir, "
+                              "or mount the share locally, so Mattermost writes where the share serves from.")
 
     if has("nginx"):
         out["tls_mode"] = plan["tls_mode"]
@@ -585,8 +630,11 @@ def derive_answers(plan, node_name, estate_secrets=None):
                               "install.sh --edit to add their paths.")
 
     if has("postgresql"):
-        if app_nodes:
-            out["postgresql_allowed_clients"] = [n["address"] for n in app_nodes]
+        # Only app servers that are somewhere else. Listing this one would make
+        # PostgreSQL listen on every interface and turn SSL on for a connection
+        # that never leaves the box.
+        if remote_addresses(app_nodes):
+            out["postgresql_allowed_clients"] = remote_addresses(app_nodes)
         replicas = [n for n in db_nodes if n.get("primary") == node["name"]]
         if replicas:
             out["postgresql_replication"] = "primary"
@@ -597,35 +645,35 @@ def derive_answers(plan, node_name, estate_secrets=None):
                 raise EstatePlanError("%s's primary (%s) isn't a node in this plan." % (node_name, node["primary"]))
             out["postgresql_replication"] = "replica"
             out["postgresql_primary_host"] = primary["address"]
-            if app_nodes:
-                out["postgresql_allowed_clients"] = [n["address"] for n in app_nodes]
+            if remote_addresses(app_nodes):
+                out["postgresql_allowed_clients"] = remote_addresses(app_nodes)
             if "postgresql_replication_password" not in supplied:
                 followups.append("Copy the db_password and replication_password from %s's secrets.yml into "
                                   "mattermost_db_password and postgresql_replication_password here."
                                   % primary["name"])
 
     if has("rtcd"):
-        if app_nodes:
-            out["rtcd_api_sources"] = [n["address"] for n in app_nodes]
-        followups.append("If clients reach this server through NAT or a different address, set "
-                          "rtcd_ice_host_override to the address they use. Calls connect without it, "
-                          "but carry no audio.")
+        if remote_addresses(app_nodes):
+            out["rtcd_api_sources"] = remote_addresses(app_nodes)
+        notes.append("If clients reach this server through NAT or a different address, set "
+                      "rtcd_ice_host_override to the address they use. Calls connect without it, "
+                      "but carry no audio.")
 
     if has("calls_offloader"):
-        if app_nodes:
-            out["calls_offloader_api_sources"] = [n["address"] for n in app_nodes]
-        followups.append("This server runs job containers, so it needs Docker. The install adds it, from "
-                          "the distribution's archive on Debian and Ubuntu and from Docker's own repository "
-                          "on RHEL. Set calls_offloader_manage_docker to false if you manage Docker here.")
-        followups.append("The job service pulls its runner images from Docker Hub the first time someone "
+        if remote_addresses(app_nodes):
+            out["calls_offloader_api_sources"] = remote_addresses(app_nodes)
+        notes.append("This server runs job containers, so it needs Docker. The install adds it, from "
+                      "the distribution's archive on Debian and Ubuntu and from Docker's own repository "
+                      "on RHEL. Set calls_offloader_manage_docker to false if you manage Docker here.")
+        notes.append("The job service pulls its runner images from Docker Hub the first time someone "
                           "records a call. On a server with no route out, build the offline bundle with "
                           "--with-job-images, or point calls_offloader_image_registry at an internal mirror.")
 
-    if has("opensearch") and app_nodes:
-        out["opensearch_allowed_clients"] = [n["address"] for n in app_nodes]
+    if has("opensearch") and remote_addresses(app_nodes):
+        out["opensearch_allowed_clients"] = remote_addresses(app_nodes)
 
-    if has("nfs") and app_nodes:
-        out["nfs_allowed_clients"] = [n["address"] for n in app_nodes]
+    if has("nfs") and remote_addresses(app_nodes):
+        out["nfs_allowed_clients"] = remote_addresses(app_nodes)
         if node.get("squash"):
             out["nfs_squash"] = node["squash"]
 
@@ -659,7 +707,7 @@ def derive_answers(plan, node_name, estate_secrets=None):
 
     # Last, so a password from the estate file always wins over anything above.
     out.update(supplied)
-    return out, followups
+    return out, followups, notes
 
 
 # ------------------------------------------------------------------ cli
@@ -732,11 +780,13 @@ def main(argv=None):
             estate_secrets = None
             if args.secrets:
                 estate_secrets = read_secrets_file(args.secrets, args.vault_password_file or None)
-            answers, followups = derive_answers(plan, node["name"], estate_secrets)
+            answers, followups, notes = derive_answers(plan, node["name"], estate_secrets)
             print("# Derived from %s for node %s" % (args.plan_file, node["name"]))
             print(yaml.safe_dump(answers, sort_keys=False, default_flow_style=False, allow_unicode=True), end="")
             for line in followups:
                 print("# FOLLOWUP: %s" % line, file=sys.stderr)
+            for line in notes:
+                print("# NOTE: %s" % line, file=sys.stderr)
             return 0
     except NoMatchingNode as exc:
         print("ERROR: %s" % exc, file=sys.stderr)

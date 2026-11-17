@@ -88,7 +88,8 @@ scenes = [
  ("installer-preflight", "sudo ./install.sh --estate my-estate.yml --preflight", trim(read("preflight"))),
  ("installer-help", "./install.sh --help", read("help").strip()+"\n"),
 ]
-shots = [("wizard-1-deployment","Architecture wizard"),("wizard-2-recommendation","Architecture wizard"),
+shots = [("wizard-1-deployment","Architecture wizard"),("wizard-1-lab-components","Architecture wizard"),
+         ("wizard-2-recommendation","Architecture wizard"),
          ("wizard-3-addresses","Architecture wizard"),("wizard-4-plan","Architecture wizard"),("wizard-5-firewall","Architecture wizard")]
 with sync_playwright() as p:
     b = p.chromium.launch(channel="chrome")

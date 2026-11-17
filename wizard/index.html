@@ -53,11 +53,11 @@
           <span class="mode-sub">One role per server, sized from Mattermost's reference architectures.</span>
         </span>
       </label>
-      <label class="mode-card">
+      <label class="mode-card quiet">
         <input type="radio" name="deployment" value="lab">
         <span class="mode-text">
           <span class="mode-title">Lab on one server</span>
-          <span class="mode-sub">Every role you ask for on a single box. Proof of concept and testing only.</span>
+          <span class="mode-sub">Proof of concept and testing only.</span>
         </span>
       </label>
     </div>
@@ -123,7 +123,29 @@
       <p class="hint" id="ha-note" style="margin:12px 0 0;"></p>
     </div>
 
-    <div class="group">
+    <!-- Lab only. One box, so every question below is a yes or a no about this
+         server rather than a decision about how many to buy. These ticks are the
+         answer: each one sets the control in the group underneath and that group
+         only appears when there is something more to say about it. -->
+    <div class="group" id="group-lab-components" style="display:none">
+      <h3>Components on this box</h3>
+      <p class="hint" style="margin:0 0 14px;">Untick anything you don't want installed.</p>
+      <label class="inline always-on"><input type="checkbox" checked disabled>
+        PostgreSQL, Mattermost and Nginx
+        <span class="badge always">Always</span></label>
+      <label class="inline"><input type="checkbox" id="f-lab-search">
+        OpenSearch for search
+        <span class="badge optional" id="lab-search-badge">Enterprise</span></label>
+      <label class="inline"><input type="checkbox" id="f-lab-calls"> Calls</label>
+      <label class="inline"><input type="checkbox" id="f-lab-recording">
+        Call recording, transcription and live captions
+        <span class="badge optional" id="lab-recording-badge">Enterprise</span></label>
+      <label class="inline"><input type="checkbox" id="f-lab-monitoring">
+        Monitoring: Prometheus, Loki and Grafana</label>
+      <p class="hint" id="lab-components-note" style="margin:12px 0 0;"></p>
+    </div>
+
+    <div class="group" id="group-search">
       <h3>Search</h3>
       <div class="choices">
         <label><input type="radio" name="search" value="database" checked> In the database</label>
@@ -133,10 +155,10 @@
       <p class="hint" id="search-note" style="margin:10px 0 0;"></p>
     </div>
 
-    <div class="group">
+    <div class="group" id="group-calls">
       <h3>Calls</h3>
       <div class="choices">
-        <label><input type="radio" name="calls" value="none" checked> Not using Calls</label>
+        <label id="calls-none-row"><input type="radio" name="calls" value="none" checked> Not using Calls</label>
         <label><input type="radio" name="calls" value="integrated">
           <span id="calls-integrated-label">Up to 50 people in calls, built into the app servers</span></label>
         <label><input type="radio" name="calls" value="rtcd" id="f-calls-rtcd">
@@ -149,7 +171,7 @@
       <p class="hint" id="calls-mode-note" style="margin:10px 0 0; display:none;"></p>
 
       <div id="recording-block" style="display:none; margin-top:18px;">
-        <label class="inline"><input type="checkbox" id="f-recording">
+        <label class="inline" id="recording-row"><input type="checkbox" id="f-recording">
           Record calls, transcribe them and show live captions</label>
         <div id="recording-options" style="display:none; margin:14px 0 0 24px;">
           <label style="font-size:.85rem; font-weight:600; margin-bottom:8px; display:block;">Where the job
@@ -168,13 +190,15 @@
       </div>
     </div>
 
-    <div class="group">
+    <div class="group" id="group-monitoring">
       <h3>Monitoring</h3>
       <div class="radio-row">
         <label><input type="radio" name="observability" value="managed" checked>
           Build it with this toolkit (Prometheus, Loki, Grafana)</label>
         <label><input type="radio" name="observability" value="external">
           We already have our own</label>
+        <label id="observability-none-row"><input type="radio" name="observability" value="none">
+          None &mdash; don't install it and don't ship anything</label>
       </div>
       <div id="monitoring-layout-row" style="margin-top:14px;">
         <label style="font-size:.85rem; font-weight:600; margin-bottom:8px;">Where Grafana runs</label>

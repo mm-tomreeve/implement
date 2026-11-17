@@ -65,9 +65,9 @@ Plan it in the browser, then run the same few commands on each server.
    ./install.sh --edit                                                    # certificates, licence, CA
    ```
 
-Step 2 is optional. Without it each server generates its own passwords and you copy the database
-one across by hand. `--edit` is only needed where something has to exist as a file on that server,
-and the install tells you which.
+Step 2 is optional, and a one-box lab never needs it at all. Across an estate, without it each
+server generates its own passwords and you copy the database one across by hand. `--edit` is only
+needed where something has to exist as a file on that server, and the install tells you which.
 
 ### What a run does
 
@@ -101,16 +101,21 @@ server team, and the design decisions behind the shape. All of them copy as Mark
 
 The first choice is what you are building: a **production estate**, one role per server, or a
 **lab on one server**. Then name, site URL, licence and seats, and the choices that change the
-shape: high availability, search, Calls, monitoring, TLS and file storage.
+shape: high availability, search, Calls, monitoring, TLS and file storage. Monitoring is built by
+this toolkit, pointed at one you already run, or **None**: no Prometheus, Loki or Grafana, no
+exporters on any server and no logs shipped.
 
 ![Step 1: the deployment](docs/images/wizard-1-deployment.png)
 
-A lab asks the same questions, because they are the same questions. What changes is where a yes
-puts things: "OpenSearch, on its own server" becomes "OpenSearch, on this box too", and the
-answers that only exist to spread work over several servers — seats, high availability, how many
-Calls servers — stop being asked, because there is nowhere to spread it to. You can end up with
-every role on the box, which is the `all-in-one` profile, or any part of it. The plan says so one
-profile at a time, so a lab that doesn't want OpenSearch simply leaves it out:
+On one box every component question is a yes or a no, so a lab asks them as a list to tick,
+**Components on this box**. PostgreSQL, Mattermost and Nginx are always on it; OpenSearch, Calls,
+call recording and the monitoring stack are yours to take or leave, and an untick isn't installed.
+Where a component still has something to decide — Calls built in or on rtcd, monitoring built here
+or scraped by one you already run — that question appears under its tick. Seats, high availability
+and how many Calls servers stop being asked, because there is nowhere to spread work to.
+
+Tick everything and you have the `all-in-one` profile. The plan says it one profile at a time, so a
+lab that doesn't want OpenSearch simply leaves it out:
 
 ```yaml
 deployment: lab
@@ -119,6 +124,12 @@ nodes:
     address: 10.10.1.50
     profiles: [core, calls, monitoring]
 ```
+
+**A lab needs no secrets file and no second pass.** With one server there is nowhere to copy a
+password from, so each is generated on first run and kept in
+`/etc/mattermost-parthenon/secrets.yml`. Nothing is pointed at an address either: everything is
+reached on localhost, which keeps PostgreSQL and OpenSearch off the network. `./install.sh --estate
+my-lab.yml` is the whole install.
 
 A lab box isn't sized from a seat band, because no published tier describes a server running
 everything at once. It is sized by what each part needs to start, added up — the same floors in
