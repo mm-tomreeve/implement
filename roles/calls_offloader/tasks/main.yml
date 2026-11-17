@@ -1,0 +1,140 @@
+---
+# Anyone who can reach the API port with self-registration on can ask this server
+# to run a container. Mattermost allows self-registration on a private network
+# with access control, and a rule open to the whole internet is not that.
+- name: Refuse self-registration on an API port open to everyone
+  ansible.builtin.assert:
+    that: not (calls_offloader_api_sources | select('in', ['0.0.0.0/0', '::/0']) | list)
+    fail_msg: >-
+      calls_offloader_api_sources opens port {{ calls_offloader_api_port }} to every address while
+      calls_offloader_allow_self_registration is on. The job service runs containers, so anyone who
+      could reach it would have the run of this server. Narrow calls_offloader_api_sources to the
+      Mattermost app servers, or set calls_offloader_allow_self_registration to false and register
+      Mattermost through the admin API.
+    quiet: true
+  when: calls_offloader_allow_self_registration | bool
+
+- name: Set up the container runtime
+  ansible.builtin.include_tasks: docker.yml
+
+# Membership of the docker group is root on this host: anyone in it can start a
+# privileged container. That is how calls-offloader works, and it is the main
+# reason the job service belongs on a server of its own. The report says so too.
+- name: Check the Docker socket's group exists
+  ansible.builtin.getent:
+    database: group
+    key: "{{ calls_offloader_docker_group }}"
+  register: _offl_docker_group
+  failed_when: false
+
+- name: Stop when there is no group to join
+  ansible.builtin.assert:
+    that: _offl_docker_group.ansible_facts.getent_group is defined
+    fail_msg: >-
+      There is no '{{ calls_offloader_docker_group }}' group on this server, so
+      {{ calls_offloader_user }} has no way to reach the Docker socket and no job could start.
+      Set calls_offloader_docker_group to the group that owns /var/run/docker.sock.
+    quiet: true
+
+- name: Create the calls-offloader user
+  ansible.builtin.user:
+    name: "{{ calls_offloader_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ calls_offloader_data_dir }}"
+    create_home: false
+    groups: ["{{ calls_offloader_docker_group }}"]
+    append: true
+
+- name: Create calls-offloader directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ calls_offloader_user }}"
+    mode: "0750"
+  loop:
+    - {path: "{{ calls_offloader_dir }}/bin", owner: root}
+    - {path: "{{ calls_offloader_conf_dir }}", owner: root}
+    - {path: "{{ calls_offloader_data_dir }}", owner: "{{ calls_offloader_user }}"}
+
+- name: Look for this version's binary
+  ansible.builtin.stat:
+    path: "{{ calls_offloader_version_bin }}"
+  register: _offl_version_bin
+
+# A kept version is already in place, and its download may have left the cache.
+- name: Install calls-offloader {{ mmd_artifacts.calls_offloader.version }}
+  ansible.builtin.copy:
+    src: "{{ mmd_artifacts.calls_offloader.path }}"
+    dest: "{{ calls_offloader_version_bin }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: not _offl_version_bin.stat.exists or mmd_offloader_installed != mmd_artifacts.calls_offloader.version
+
+- name: Trust the binary for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: fapolicyd
+  vars:
+    fapolicyd_paths: ["{{ calls_offloader_version_bin }}"]
+
+- name: Point calls-offloader at this version
+  ansible.builtin.file:
+    src: "{{ calls_offloader_version_bin }}"
+    dest: "{{ calls_offloader_bin }}"
+    state: link
+    force: true
+  notify: Restart calls-offloader
+
+- name: Load the job runner images
+  ansible.builtin.include_tasks: images.yml
+
+- name: Write the calls-offloader config
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: "{{ calls_offloader_conf_dir }}/config.toml"
+    owner: root
+    group: "{{ calls_offloader_user }}"
+    mode: "0640"
+  notify: Restart calls-offloader
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: calls-offloader.service.j2
+    dest: /etc/systemd/system/calls-offloader.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart calls-offloader
+
+- name: Enable and start calls-offloader
+  ansible.builtin.systemd:
+    name: calls-offloader
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+# Nothing outside the estate has any business here, so there is no public rule.
+- name: Open the API to the Mattermost app servers
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: firewall
+  vars:
+    fw_ports: [{port: "{{ calls_offloader_api_port }}", proto: tcp}]
+    fw_sources: "{{ calls_offloader_api_sources }}"
+    fw_public: false
+  when: calls_offloader_api_sources | length > 0
+
+- name: Wait for the job service API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ calls_offloader_api_port }}/version"
+  register: _offl_up
+  until: _offl_up.status == 200
+  retries: 12
+  delay: 5

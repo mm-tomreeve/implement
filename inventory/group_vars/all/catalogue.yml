@@ -107,6 +107,29 @@ mmd_catalogue:
         purpose: rtcd API and metrics (Mattermost and Prometheus)
         allowed: "{{ (rtcd_api_sources + mmd_scrape_sources) | unique | join(', ') if (rtcd_api_sources + mmd_scrape_sources) else 'localhost only' }}"
 
+  calls_offloader:
+    title: Mattermost Calls job service
+    summary: >-
+      Runs call recording, transcription and live captions. Each job is a short-lived
+      Docker container, so this server runs a container runtime. Mattermost's starting
+      size for it is 8 vCPU and 16 GB.
+    source: github.com/mattermost/calls-offloader release binary
+    service: calls-offloader
+    user: "{{ calls_offloader_user }}"
+    paths:
+      install: "{{ calls_offloader_dir }}/bin/calls-offloader"
+      config: "{{ calls_offloader_conf_dir }}/config.toml"
+      data: "{{ calls_offloader_data_dir }}"
+      jobs: /var/lib/docker (recordings buffer in a container volume before upload)
+      logs: journald (journalctl -u calls-offloader, and -u docker for the jobs)
+    min_ram_mb: 4096
+    min_cpus: 2
+    ports:
+      - port: "{{ calls_offloader_api_port }}"
+        proto: tcp
+        purpose: Job service API, used by the Mattermost app servers
+        allowed: "{{ calls_offloader_api_sources | join(', ') if calls_offloader_api_sources else 'localhost only' }}"
+
   nfs:
     title: NFS file storage
     summary: >-
@@ -357,6 +380,34 @@ mmd_dependency_checks:
     message: >-
       Mattermost isn't on this server, so list the app servers that use the rtcd API in
       rtcd_api_sources. Single addresses or CIDRs both work, e.g. [10.10.1.12] or [10.10.1.0/24].
+  - component: calls_offloader
+    ok: "{{ 'mattermost' in mmd_selected or calls_offloader_api_sources | length > 0 }}"
+    message: >-
+      Mattermost isn't on this server, so list the app servers that use the job service API in
+      calls_offloader_api_sources. Single addresses or CIDRs both work, e.g. [10.10.1.12] or
+      [10.10.1.0/24]. Without one, recording and transcription can't be started.
+  - component: calls_offloader
+    ok: "{{ mattermost_calls_recording_quality in ['low', 'medium', 'high'] }}"
+    message: mattermost_calls_recording_quality must be low, medium or high.
+  - component: calls_offloader
+    ok: "{{ mattermost_calls_transcriber_model in ['tiny', 'base', 'small'] }}"
+    message: mattermost_calls_transcriber_model must be tiny, base or small.
+  - component: calls_offloader
+    ok: "{{ mattermost_calls_live_captions_model in ['tiny', 'base', 'small'] }}"
+    message: mattermost_calls_live_captions_model must be tiny, base or small.
+  - component: calls_offloader
+    ok: "{{ mattermost_calls_max_recording_minutes | int >= 15 and mattermost_calls_max_recording_minutes | int <= 180 }}"
+    message: mattermost_calls_max_recording_minutes must be between 15 and 180. Mattermost refuses anything else.
+  - component: mattermost
+    ok: "{{ not (mmd_calls_recording | bool) or mattermost_license_file | length > 0 or mattermost_job_service_url | length > 0 }}"
+    message: >-
+      Call recording needs an Enterprise licence. Set mattermost_license_file, or set
+      mattermost_calls_recording to false if you apply the licence in the System Console instead.
+  - component: mattermost
+    ok: "{{ not (mattermost_calls_live_captions | bool) or mattermost_calls_transcriptions | bool }}"
+    message: >-
+      mattermost_calls_live_captions is on but mattermost_calls_transcriptions is off. Live captions
+      are produced by the transcriber, so they need transcription turned on.
   - component: node_exporter
     ok: "{{ 'prometheus' in mmd_selected or mmd_scrape_sources | length > 0 }}"
     message: >-
@@ -437,6 +488,20 @@ mmd_colocation_rules:
     severity: medium
     message: rtcd shares the server with Mattermost.
     advice: Calls media is CPU and network heavy. Busy calls will slow the app for everyone. Move rtcd to its own server for anything beyond light use.
+  - id: jobs-with-app
+    when_all: [calls_offloader, mattermost]
+    severity: high
+    message: The Calls job service shares the server with Mattermost.
+    advice: >-
+      Recording and transcription will take whole CPUs for minutes at a time, and the service runs
+      containers through the Docker socket, which is root on this host. Give it its own server.
+  - id: jobs-with-calls
+    when_all: [calls_offloader, rtcd]
+    severity: medium
+    message: The Calls job service shares the server with rtcd.
+    advice: >-
+      A transcription job will happily eat the cores rtcd needs to carry live media, and people in
+      the call hear it. Fine while recording is occasional; split them before it is routine.
   - id: database-with-app
     when_all: [postgresql, mattermost]
     severity: medium
@@ -449,7 +514,7 @@ mmd_colocation_rules:
     advice: Shared storage exists so several app servers see the same files, and so losing one app server doesn't take the uploads with it. Serve it from its own server or a NAS before you add a second app server.
   - id: monitoring-with-workload
     when_any_with: [prometheus, grafana]
-    workloads: [mattermost, postgresql, opensearch, rtcd]
+    workloads: [mattermost, postgresql, opensearch, rtcd, calls_offloader]
     severity: medium
     message: Monitoring runs on a server it is meant to watch.
     advice: If this server goes down you lose the dashboards and alerts that would tell you why. Put Prometheus and Grafana somewhere else.

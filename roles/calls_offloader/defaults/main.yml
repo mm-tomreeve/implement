@@ -1,0 +1,17 @@
+---
+calls_offloader_bin: "{{ calls_offloader_dir }}/bin/calls-offloader"
+calls_offloader_version_bin: "{{ calls_offloader_dir }}/bin/calls-offloader-{{ mmd_artifacts.calls_offloader.version }}"
+# The group that owns the Docker socket. Membership of it is what lets the service
+# start containers, and what makes its account root-equivalent on this host.
+calls_offloader_docker_group: docker
+# Where Docker keeps images and the volumes jobs write recordings into.
+calls_offloader_docker_root: /var/lib/docker
+# Docker's own repository, used on RHEL only. Debian and Ubuntu have docker.io in
+# the archive, so this is the one third-party repository the toolkit ever adds.
+calls_offloader_docker_repo_url: >-
+  https://download.docker.com/linux/centos/{{ ansible_facts['distribution_major_version'] }}/{{ ansible_facts['architecture'] }}/stable
+calls_offloader_docker_repo_key: https://download.docker.com/linux/centos/gpg
+calls_offloader_docker_packages_rhel: [docker-ce, docker-ce-cli, containerd.io]
+calls_offloader_docker_packages_debian: [docker.io]
+# Packages that cannot coexist with docker-ce on RHEL.
+calls_offloader_docker_conflicts: [podman, runc, buildah]

@@ -41,6 +41,7 @@ OPENSEARCH_KEY = {"gpg_key": "opensearch.pgp",
 COMPONENT_ARTIFACTS = {
     "mattermost": ["mattermost"],
     "rtcd": ["rtcd"],
+    "calls_offloader": ["calls_offloader"],
     "opensearch": ["opensearch", "opensearch_icu"],
     "prometheus": ["prometheus"],
     "node_exporter": ["node_exporter"],
@@ -56,6 +57,7 @@ COMPONENT_ARTIFACTS = {
 # GitHub-hosted artifacts: repo and asset name template.
 GITHUB_ASSETS = {
     "rtcd": ("mattermost/rtcd", "rtcd-linux-{arch}"),
+    "calls_offloader": ("mattermost/calls-offloader", "calls-offloader-linux-{arch}"),
     "prometheus": ("prometheus/prometheus", "prometheus-{version}.linux-{arch}.tar.gz"),
     "node_exporter": ("prometheus/node_exporter", "node_exporter-{version}.linux-{arch}.tar.gz"),
     "postgres_exporter": ("prometheus-community/postgres_exporter",
@@ -73,6 +75,7 @@ GITHUB_ASSETS = {
 # rate-limited GitHub API entirely. None means the project only offers API digests.
 GITHUB_SUMS = {
     "rtcd": None,
+    "calls_offloader": None,
     "prometheus": "sha256sums.txt",
     "node_exporter": "sha256sums.txt",
     "postgres_exporter": "sha256sums.txt",
@@ -84,10 +87,17 @@ GITHUB_SUMS = {
     "otel_collector": "{asset}.sha256",
 }
 
+# Projects that publish development builds as full GitHub releases. For these,
+# "latest" means the newest plain X.Y.Z tag rather than whatever /releases/latest says.
+GITHUB_STABLE_ONLY = {"calls_offloader"}
+
 # Filename patterns used when scanning a hand-made offline directory.
 SCAN_PATTERNS = {
     "mattermost": r"^mattermost-(?P<team>team-)?(?P<version>\d+\.\d+\.\d+)-linux-(?P<arch>amd64|arm64)\.tar\.gz$",
     "rtcd": r"^rtcd-(?:(?P<version>\d+\.\d+\.\d+)-)?linux-(?P<arch>amd64|arm64)$",
+    # Upstream sometimes tags a release with a suffix (v0.9.7-dev), so accept one here.
+    "calls_offloader": r"^calls-offloader-(?:(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)-)?"
+                       r"linux-(?P<arch>amd64|arm64)$",
     "opensearch": r"^opensearch-(?P<version>\d+\.\d+\.\d+)-linux-(?P<arch>x64|arm64)\.tar\.gz$",
     "opensearch_icu": r"^analysis-icu-(?P<version>\d+\.\d+\.\d+)\.zip$",
     "prometheus": r"^prometheus-(?P<version>\d+\.\d+\.\d+)\.linux-(?P<arch>amd64|arm64)\.tar\.gz$",
@@ -255,8 +265,26 @@ def resolve_mattermost(edition, channel, version, arch, archive_page=None, warni
 
 # ------------------------------------------------------------------ github
 
-def github_release(repo, version):
+def github_latest_stable(repo):
+    """The newest release whose tag is a plain X.Y.Z.
+
+    calls-offloader publishes development builds as full releases (v0.9.7-dev is
+    what /releases/latest answers today), and we don't want to install one by
+    default. Fall back to /releases/latest if nothing matches.
+    """
+    releases = http_json("%s/repos/%s/releases?per_page=30" % (GITHUB_API, repo))
+    stable = [r for r in releases
+              if not r.get("draft") and not r.get("prerelease")
+              and re.fullmatch(r"v?\d+\.\d+\.\d+", r.get("tag_name") or "")]
+    if not stable:
+        return http_json("%s/repos/%s/releases/latest" % (GITHUB_API, repo))
+    return max(stable, key=lambda r: version_key(r["tag_name"]))
+
+
+def github_release(repo, version, stable_only=False):
     if is_latest(version):
+        if stable_only:
+            return github_latest_stable(repo)
         return http_json("%s/repos/%s/releases/latest" % (GITHUB_API, repo))
     last_error = None
     for tag in ("v" + version.lstrip("v"), version.lstrip("v")):
@@ -291,7 +319,7 @@ def resolve_github(name, version, arch):
         if not digest:
             raise ResolveError("%s %s: %s has no entry for %s" % (repo, resolved, sums_name, wanted))
         return artifact(name, name, resolved, base + wanted, wanted, "sha256:" + digest, sums_name, arch=arch)
-    release = github_release(repo, version)
+    release = github_release(repo, version, stable_only=name in GITHUB_STABLE_ONLY)
     resolved = release["tag_name"].lstrip("v")
     wanted = template.format(version=resolved, arch=arch)
     assets = {a["name"]: a for a in release.get("assets", [])}

@@ -202,6 +202,12 @@ name is what `monitoring_alert_overrides` and `monitoring_alerts_disabled` use.
 | rtcd media errors `rtcd-errors` | > 10 | > 50 | > 200 | 0s | Check `journalctl -u rtcd` for the error types. Network paths and ICE settings are the usual cause. |
 | Calls packet loss reported by clients `rtcd-packet-loss` | > 2% | > 5% | > 10% | 10m | Users will hear choppy audio. Check bandwidth to the rtcd server and UDP buffer overflows. |
 
+### Call recording
+
+| Check | Info | Warning | Critical | For | What to do |
+|---|---|---|---|---|---|
+| Calls job service unreachable `jobs-api-unreachable` |  |  | < 1 | 3m | Recording, transcription and live captions stop; calls themselves carry on. Check `systemctl status calls-offloader docker` on that server, and that port 4545 is open to it. |
+
 ### NFS storage
 
 | Check | Info | Warning | Critical | For | What to do |

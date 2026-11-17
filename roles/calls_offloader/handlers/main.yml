@@ -1,0 +1,6 @@
+---
+- name: Restart calls-offloader
+  ansible.builtin.systemd:
+    name: calls-offloader
+    state: restarted
+    daemon_reload: true

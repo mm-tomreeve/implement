@@ -17,6 +17,8 @@ COMPONENTS=all
 OUT=""
 WITH_RPMS=false
 WITH_DEBS=false
+WITH_JOB_IMAGES=auto
+declare -a IMAGE_PINS=()
 ALLOW_UNVERIFIED=false
 declare -a PINS=()
 
@@ -36,6 +38,16 @@ Usage: $(basename "$0") [options]
   --with-debs                   The same for Debian or Ubuntu: download the .debs install.sh
                                 needs. Run this on Debian or Ubuntu, the same release as the
                                 targets.
+  --with-job-images             Also save the Calls recorder and transcriber container
+                                images, so an air-gapped job server can record without
+                                reaching Docker Hub. Needs Docker here. On by default when
+                                the components include calls_offloader; --no-job-images
+                                turns it off.
+  --no-job-images               Leave the job runner images out of the bundle
+  --job-image NAME=REF          Override a job image, e.g.
+                                recorder=mattermost/calls-recorder:v0.8.8. These tags follow
+                                the Calls plugin, not calls-offloader, so check them when
+                                you upgrade Mattermost.
   --allow-unverified            Accept artifacts that have no published checksum
   --out DIR                     Output directory (default ./mm-bundle-<date>)
   -h, --help                    Show this help
@@ -58,6 +70,9 @@ while [[ $# -gt 0 ]]; do
     --version) PINS+=("$2"); shift 2 ;;
     --with-rpms) WITH_RPMS=true; shift ;;
     --with-debs) WITH_DEBS=true; shift ;;
+    --with-job-images) WITH_JOB_IMAGES=true; shift ;;
+    --no-job-images) WITH_JOB_IMAGES=false; shift ;;
+    --job-image) IMAGE_PINS+=("$2"); shift 2 ;;
     --allow-unverified) ALLOW_UNVERIFIED=true; shift ;;
     --out) OUT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -119,6 +134,49 @@ fi
 
 # A mirror served over HTTP cannot be listed, so record the collection files by name.
 for f in "${OUT}"/collections/*.tar.gz; do basename "${f}"; done | sort > "${OUT}/collections/manifest.txt"
+
+# The job runner images are the one thing calls-offloader fetches at run time
+# rather than at install: Mattermost names the image, and the service pulls it when
+# the first recording starts. Save them here so an air-gapped job server can record.
+if [[ "${WITH_JOB_IMAGES}" == auto ]]; then
+  if [[ "${COMPONENTS}" == all || ",${COMPONENTS}," == *,calls_offloader,* ]]; then
+    WITH_JOB_IMAGES=true
+  else
+    WITH_JOB_IMAGES=false
+  fi
+fi
+
+if [[ "${WITH_JOB_IMAGES}" == true ]]; then
+  if ! command -v docker >/dev/null; then
+    log "Skipping the Calls job images: no docker here. The job server will pull them itself,"
+    log "which needs a route to Docker Hub. Re-run this on a machine with Docker to include them."
+  else
+    log "Saving the Calls job runner images"
+    mkdir -p "${OUT}/images"
+    recorder="$(pinned_default calls_offloader_recorder_image)"
+    transcriber="$(pinned_default calls_offloader_transcriber_image)"
+    for pin in "${IMAGE_PINS[@]+"${IMAGE_PINS[@]}"}"; do
+      case "${pin%%=*}" in
+        recorder) recorder="${pin#*=}" ;;
+        transcriber) transcriber="${pin#*=}" ;;
+        *) die "--job-image takes recorder=REF or transcriber=REF" ;;
+      esac
+    done
+    : > "${OUT}/images/manifest.txt"
+    for ref in "${recorder}" "${transcriber}"; do
+      [[ -z "${ref}" ]] && continue
+      log "  ${ref}"
+      docker pull --platform "linux/${ARCH}" "${ref}" >/dev/null \
+        || die "could not pull ${ref}. Check the tag, or pass --job-image to change it."
+      file="${OUT}/images/$(printf '%s' "${ref}" | tr '/:' '__').tar"
+      docker save --output "${file}" "${ref}"
+      printf '%s  %s  %s\n' "${ref}" "$(basename "${file}")" \
+        "$(docker image inspect --format '{{index .RepoDigests 0}}' "${ref}" 2>/dev/null || echo no-digest)" \
+        >> "${OUT}/images/manifest.txt"
+    done
+    log "Job images saved. The tags above follow the Calls plugin, so check them after a Mattermost upgrade."
+  fi
+fi
 
 if [[ "${WITH_RPMS}" == true ]]; then
   command -v dnf >/dev/null || die "--with-rpms needs dnf (run it on RHEL)"

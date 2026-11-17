@@ -47,6 +47,7 @@ mm-bundle-20261028/
   rtcd/ opensearch/ prometheus/ node_exporter/ postgres_exporter/ grafana/
   keys/                  vendor GPG keys (the installer uses its own copies, see below)
   collections/           ansible.posix tarball and manifest.txt
+  images/                Calls job runner images, saved with docker save, plus manifest.txt
   rpms/                  only with --with-rpms
   debs/                  only with --with-debs
 mm-bundle-20261028.tar.gz
@@ -61,12 +62,32 @@ Copy the tarball across, unpack it and run:
 Or put `artifact_source: /srv/mm-bundle-20261028` in the answer file. An `https://` URL works
 too, if you publish the bundle directory on an internal web server.
 
+## The Calls job images
+
+`images/` is the odd one out. Everything else in the bundle is an installer, fetched and checked
+before anything is installed. The two files here are container images, and they exist because
+`calls-offloader` does not download its recorder and transcriber at install time: Mattermost names
+the image, and the service pulls it from Docker Hub when someone first presses record. On a server
+with no route out, that is a recording that fails for no visible reason months after the install.
+
+The builder saves them when the components include `calls_offloader`, which `--components all`
+does. `--with-job-images` asks for them explicitly, `--no-job-images` leaves them out. Building
+them needs Docker on the build machine; without it the script says so and carries on. The role
+loads whatever it finds in `images/` and lists what is missing in the post-deploy checks.
+
+Their tags come from `calls_offloader_recorder_image` and `calls_offloader_transcriber_image` in
+`defaults.yml`, and `--job-image recorder=mattermost/calls-recorder:v0.8.8` overrides one. Unlike
+every other version here, these follow the Calls **plugin** rather than the service they run on:
+the plugin has them built in, so a Mattermost upgrade can move them. Check them when you upgrade,
+or point `calls_offloader_image_registry` at an internal registry mirror and keep it current
+there instead.
+
 ## Hand-filled directories
 
 If someone has already downloaded the files, point `artifact_source` at the directory. With no
 `manifest.json` the resolver scans it for the vendors' file names, such as
-`mattermost-11.7.14-linux-amd64.tar.gz`, `rtcd-linux-amd64` and
-`prometheus-3.15.1.linux-amd64.tar.gz`. It reads checksums from any `SHA256SUMS`,
+`mattermost-11.7.14-linux-amd64.tar.gz`, `rtcd-linux-amd64`,
+`calls-offloader-linux-amd64` and `prometheus-3.15.1.linux-amd64.tar.gz`. It reads checksums from any `SHA256SUMS`,
 `sha256sums.txt` or `*.sha256` files it finds alongside them.
 
 The Mattermost and OpenSearch `.sig` files must sit next to their tarballs. Without them the

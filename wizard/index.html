@@ -128,6 +128,25 @@
         <input type="number" id="f-calls-servers" class="short" min="1" max="10" value="1">
       </div>
       <p class="hint" id="calls-mode-note" style="margin:10px 0 0; display:none;"></p>
+
+      <div id="recording-block" style="display:none; margin-top:18px;">
+        <label class="inline"><input type="checkbox" id="f-recording">
+          Record calls, transcribe them and show live captions</label>
+        <div id="recording-options" style="display:none; margin:14px 0 0 24px;">
+          <label style="font-size:.85rem; font-weight:600; margin-bottom:8px; display:block;">Where the job
+            service runs</label>
+          <div class="choices">
+            <label><input type="radio" name="recording" value="own" checked> On its own server</label>
+            <label><input type="radio" name="recording" value="calls" id="f-recording-on-calls">
+              <span id="recording-on-calls-label">On the Calls server</span></label>
+          </div>
+          <div class="field" id="field-recording-servers" style="margin:14px 0 0;">
+            <label for="f-recording-servers">Job servers</label>
+            <input type="number" id="f-recording-servers" class="short" min="1" max="10" value="1">
+          </div>
+        </div>
+        <p class="hint" id="recording-note" style="margin:10px 0 0;"></p>
+      </div>
     </div>
 
     <div class="group">
@@ -368,6 +387,7 @@
         "database": { "vcpu": 2, "ram_gb": 16, "disk_gb": 100 },
         "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 50 },
         "calls": { "vcpu": 2, "ram_gb": 4, "disk_gb": 20 },
+        "jobs": { "vcpu": 4, "ram_gb": 8, "disk_gb": 50 },
         "storage": { "vcpu": 2, "ram_gb": 4, "disk_gb": null },
         "monitoring": { "vcpu": 2, "ram_gb": 8, "disk_gb": 100 },
         "metrics": { "vcpu": 2, "ram_gb": 8, "disk_gb": 100 },
@@ -391,6 +411,7 @@
         "database": { "vcpu": 2, "ram_gb": 16, "disk_gb": 200 },
         "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 100 },
         "calls": { "vcpu": 4, "ram_gb": 8, "disk_gb": 20 },
+        "jobs": { "vcpu": 4, "ram_gb": 8, "disk_gb": 100 },
         "storage": { "vcpu": 2, "ram_gb": 8, "disk_gb": null },
         "monitoring": { "vcpu": 4, "ram_gb": 16, "disk_gb": 150 },
         "metrics": { "vcpu": 4, "ram_gb": 16, "disk_gb": 150 },
@@ -414,6 +435,7 @@
         "database": { "vcpu": 4, "ram_gb": 32, "disk_gb": 500 },
         "search": { "vcpu": 4, "ram_gb": 32, "disk_gb": 250 },
         "calls": { "vcpu": 4, "ram_gb": 8, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 100 },
         "storage": { "vcpu": 4, "ram_gb": 8, "disk_gb": null },
         "monitoring": { "vcpu": 4, "ram_gb": 16, "disk_gb": 250 },
         "metrics": { "vcpu": 4, "ram_gb": 16, "disk_gb": 250 },
@@ -437,6 +459,7 @@
         "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
         "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 500 },
         "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 200 },
         "storage": { "vcpu": 4, "ram_gb": 16, "disk_gb": null },
         "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
         "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
@@ -460,6 +483,7 @@
         "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
         "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 500 },
         "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 200 },
         "storage": { "vcpu": 4, "ram_gb": 16, "disk_gb": null },
         "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
         "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 500 },
@@ -484,6 +508,7 @@
         "database": { "vcpu": 8, "ram_gb": 64, "disk_gb": 2000 },
         "search": { "vcpu": 8, "ram_gb": 64, "disk_gb": 1000 },
         "calls": { "vcpu": 8, "ram_gb": 16, "disk_gb": 20 },
+        "jobs": { "vcpu": 8, "ram_gb": 16, "disk_gb": 200 },
         "storage": { "vcpu": 8, "ram_gb": 16, "disk_gb": null },
         "monitoring": { "vcpu": 8, "ram_gb": 32, "disk_gb": 1000 },
         "metrics": { "vcpu": 8, "ram_gb": 32, "disk_gb": 1000 },
@@ -499,6 +524,7 @@
     "database": "Mattermost's figure for the writer. Each read replica is the same size again.",
     "search": "Mattermost's figure for one search node. Its reference clusters two to four of them at this size; this toolkit installs one.",
     "calls": "Sized by concurrent call participants, not seats. Mattermost benchmarks rtcd on 4 vCPU / 8 GB and 8 vCPU / 16 GB.",
+    "jobs": "Sized by how many calls you record at once, not seats. Mattermost's figure is 8 vCPU / 16 GB, which sustains 8 low, 6 medium or 4 high quality recordings concurrently. Disk is working space: each job buffers the whole recording before uploading it.",
     "storage": "Disk is the whole job: size it for total uploads across the estate.",
     "monitoring": "15 days of metrics and 14 days of logs, at roughly 1 to 3 GB of logs a day.",
     "metrics": "15 days of metrics and 14 days of logs, at roughly 1 to 3 GB of logs a day.",
@@ -509,12 +535,13 @@
     "app": ["mattermost", "nginx"],
     "database": ["postgresql"],
     "calls": ["rtcd"],
+    "jobs": ["calls_offloader"],
     "search": ["opensearch"],
     "storage": ["nfs"],
     "monitoring": ["prometheus", "loki", "grafana"],
     "metrics": ["prometheus", "loki"],
     "dashboards": ["grafana"],
-    "all-in-one": ["postgresql", "mattermost", "nginx", "rtcd", "opensearch", "prometheus", "loki", "grafana"]
+    "all-in-one": ["postgresql", "mattermost", "nginx", "rtcd", "calls_offloader", "opensearch", "prometheus", "loki", "grafana"]
   },
   "auto_components": {
     "alongside": {
@@ -556,6 +583,12 @@
       "listens": [
         { "port": 8045, "proto": "tcp", "from": "app", "purpose": "rtcd API: call setup, not the media itself" },
         { "port": 8443, "proto": "tcp and udp", "from": "internet", "purpose": "Calls media (WebRTC). Clients connect straight to this server, not through the app server." }
+      ]
+    },
+    "calls_offloader": {
+      "title": "calls-offloader",
+      "listens": [
+        { "port": 4545, "proto": "tcp", "from": "app", "purpose": "Job service API: the app servers start and track recording and transcription jobs" }
       ]
     },
     "opensearch": {
@@ -637,7 +670,11 @@
       { "component": "mattermost", "to": "api.integrations.mattermost.com", "port": 443, "proto": "tcp",
         "when_label": "Unless you install plugins by hand", "purpose": "Plugin marketplace" },
       { "component": "calls", "to": "stun.global.calls.mattermost.com", "port": 3478, "proto": "udp",
-        "when_label": "Until you set an ICE host override", "purpose": "Public IP discovery for Calls" }
+        "when_label": "Until you set an ICE host override", "purpose": "Public IP discovery for Calls" },
+      { "component": "calls_offloader", "to": "Your Mattermost app servers, or the site URL", "port": 443, "proto": "tcp",
+        "purpose": "Recorder and transcriber containers join the call as a participant and upload the result" },
+      { "component": "calls_offloader", "to": "registry-1.docker.io and auth.docker.io", "port": 443, "proto": "tcp",
+        "when_label": "First recording, unless the images are bundled", "purpose": "Pulling the recorder and transcriber images" }
     ],
     "install": [
       { "component": null, "to": "Your package repositories: the Red Hat CDN, Satellite, the Debian or Ubuntu archive, or a local mirror", "port": 443, "proto": "tcp",
@@ -649,7 +686,9 @@
       { "component": "grafana", "to": "dl.grafana.com", "port": 443, "proto": "tcp",
         "purpose": "The Grafana tarball" },
       { "component": null, "to": "api.github.com, github.com and objects.githubusercontent.com", "port": 443, "proto": "tcp",
-        "purpose": "rtcd, Loki, the OpenTelemetry Collector and the Prometheus exporters" }
+        "purpose": "rtcd, calls-offloader, Loki, the OpenTelemetry Collector and the Prometheus exporters" },
+      { "component": "calls_offloader", "to": "download.docker.com", "port": 443, "proto": "tcp",
+        "when_label": "RHEL only", "purpose": "Docker Engine. Debian and Ubuntu take docker.io from their own archive." }
     ],
     "offline_note": "Point <strong class=\"product\">Mattermost Parthenon</strong> at an offline bundle or an internal mirror with --artifact-source and none of the install rows are needed. The runtime rows still are."
   }

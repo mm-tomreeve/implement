@@ -56,6 +56,11 @@ class Consistency(unittest.TestCase):
         # NFS has no exporter of its own. The node job scrapes every server in the estate,
         # and node_exporter's nfsd, nfs and mountstats collectors carry the NFS metrics.
         jobs.add("nfs")
+        # calls-offloader publishes no metrics at all, so Prometheus probes its API
+        # through blackbox instead of scraping it.
+        self.assertIn("blackbox_http_jobs", open(
+            os.path.join(ROOT, "roles/prometheus/templates/prometheus.yml.j2"), encoding="utf-8").read())
+        jobs.add("calls_offloader")
         self.assertEqual(sorted(set(mods) - jobs), [])
         self.assertTrue({"prometheus", "loki", "grafana"} <= set(mods))
 

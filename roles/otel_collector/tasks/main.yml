@@ -43,8 +43,11 @@
     validate: /opt/otel_collector/otelcol-contrib validate --config=%s
   vars:
     _otel_files: "{{ otel_collector_sources | select('in', mmd_selected) | list }}"
+    # Docker's journal as well on a job server: a recording that dies inside the
+    # container says so there, not in the job service's own log.
     _otel_units: >-
       {{ ((mmd_selected | select('in', otel_collector_units) | map('extract', otel_collector_units) | list)
+          + (['docker'] if 'calls_offloader' in mmd_selected else [])
           + otel_collector_journald_extra_units) | unique }}
   notify: Restart otelcol
 

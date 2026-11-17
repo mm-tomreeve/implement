@@ -14,6 +14,15 @@ modules:
 {% if monitoring_site_ca_file | length > 0 %}
         ca_file: {{ blackbox_exporter_conf_dir }}/site-ca.pem
 {% endif %}
+  # The Calls job service has no metrics endpoint, so "is it answering?" is the
+  # only question Prometheus can ask it. /version needs no authentication.
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      preferred_ip_protocol: ip4
   # Is rtcd accepting TCP on the Calls media port? Media prefers UDP, which
   # blackbox can't meaningfully test, so this is a stand-in.
   tcp_connect:

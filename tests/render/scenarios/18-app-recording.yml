@@ -1,0 +1,15 @@
+---
+# Render scenario: app servers pointed at a job service elsewhere. Recording is on,
+# so MaxFileSize and Nginx's body limit have to grow to fit a full recording.
+render_host: app01
+deploy_name: chat-prod
+deploy_profiles: [app]
+mattermost_site_url: https://chat.example.com
+mattermost_license_file: /etc/mattermost/licence.mattermost
+mattermost_db_host: 10.10.1.11
+mattermost_db_password: secret
+mattermost_rtcd_url: http://10.10.1.13:8045
+mattermost_job_service_url: http://10.10.1.17:4545
+mattermost_calls_internal_site_url: http://10.10.1.12:8065
+mattermost_calls_live_captions: true
+render_expect_selected: [mattermost, nginx]

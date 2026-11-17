@@ -1,0 +1,54 @@
+---
+# Job runner images are the one thing here that is pulled at run time rather than
+# installed: Mattermost tells the job service which image to use, and the service
+# pulls it from the registry when the first job starts. On a server with no route
+# to Docker Hub that first recording simply fails, so an offline bundle carries
+# the images and we load them here.
+- name: Decide which job images this server needs
+  ansible.builtin.set_fact:
+    _offl_images: "{{ [calls_offloader_recorder_image, calls_offloader_transcriber_image] }}"
+    _offl_bundle_dir: >-
+      {{ (artifact_source | regex_replace('/+$', '') ~ '/images')
+         if (artifact_source | length > 0 and not artifact_source is match('^https?://')) else '' }}
+
+- name: Look for bundled job images
+  ansible.builtin.find:
+    paths: "{{ _offl_bundle_dir }}"
+    patterns: "*.tar"
+  register: _offl_bundled
+  when: _offl_bundle_dir | length > 0
+
+- name: Load the bundled job images into Docker
+  ansible.builtin.command: docker load --input {{ item.path | quote }}
+  loop: "{{ _offl_bundled.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: _offl_loaded
+  changed_when: "'Loaded image' in _offl_loaded.stdout"
+
+- name: Check which job images are on this server
+  ansible.builtin.command: docker image inspect {{ item | quote }}
+  loop: "{{ _offl_images }}"
+  register: _offl_present
+  changed_when: false
+  failed_when: false
+
+- name: Keep what is here for the report and the checks
+  ansible.builtin.set_fact:
+    mmd_offloader_images: >-
+      {%- set out = [] -%}
+      {%- for r in _offl_present.results -%}
+      {%-   set _ = out.append({'image': r.item, 'present': r.rc == 0}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Say so when an image will have to be pulled
+  ansible.builtin.debug:
+    msg: >-
+      {{ _missing | join(', ') }} is not on this server, so the job service will pull it from
+      {{ calls_offloader_image_registry }} when the first recording starts. That needs a route out
+      to the registry. Build the offline bundle with --with-job-images to carry it instead, or set
+      calls_offloader_image_registry to an internal mirror.
+  vars:
+    _missing: "{{ mmd_offloader_images | rejectattr('present') | map(attribute='image') | list }}"
+  when: _missing | length > 0

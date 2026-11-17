@@ -1,0 +1,11 @@
+---
+# Render scenario: a dedicated Calls job server. Recording settings come from the
+# app servers' answers, but the job server still sizes max_concurrent_jobs and the
+# working space from them, so they are set here too.
+render_host: jobs01
+deploy_name: chat-prod
+deploy_profiles: [jobs]
+calls_offloader_api_sources: [10.10.1.12]
+mattermost_calls_recording_quality: high
+mattermost_calls_max_recording_minutes: 120
+render_expect_selected: [calls_offloader]

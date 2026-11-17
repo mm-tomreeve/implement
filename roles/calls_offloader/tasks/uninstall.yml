@@ -1,0 +1,58 @@
+---
+- name: Stop calls-offloader
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: uninstall_unit
+  vars:
+    rm_unit: calls-offloader
+
+- name: Close the job service API port
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfirewall
+  vars:
+    fw_ports: [{port: "{{ calls_offloader_api_port }}", proto: tcp}]
+
+- name: Stop trusting the calls-offloader binaries for fapolicyd
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: unfapolicyd
+  vars:
+    fapolicyd_paths: ["{{ calls_offloader_dir }}/bin/"]
+
+- name: Remove calls-offloader and its config
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ calls_offloader_dir }}"
+    - "{{ calls_offloader_conf_dir }}"
+
+# Docker stays. We may not have been the only thing using it, and taking a
+# container runtime off a server is not something to do as a side effect. The
+# report says what to run if you want it gone.
+- name: Purge the data, the job images and the service user
+  when: uninstall_purge | default(false) | bool
+  block:
+    - name: Remove the job runner images
+      ansible.builtin.command: docker image rm {{ item | quote }}
+      loop: "{{ [calls_offloader_recorder_image, calls_offloader_transcriber_image] }}"
+      register: _offl_rm_image
+      changed_when: _offl_rm_image.rc == 0
+      failed_when: false
+
+    - name: Remove volumes left by failed jobs
+      ansible.builtin.command: docker volume prune --force
+      register: _offl_prune
+      changed_when: "'Total reclaimed space: 0B' not in _offl_prune.stdout"
+      failed_when: false
+
+    - name: Remove the data directory
+      ansible.builtin.file:
+        path: "{{ calls_offloader_data_dir }}"
+        state: absent
+
+    - name: Remove the calls-offloader user
+      ansible.builtin.user:
+        name: "{{ calls_offloader_user }}"
+        state: absent

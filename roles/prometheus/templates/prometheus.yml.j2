@@ -86,6 +86,26 @@ scrape_configs:
         replacement: 127.0.0.1:{{ blackbox_exporter_port }}
 
 {% endif %}
+{% set joblist = estate | selectattr('components', 'contains', 'calls_offloader') | list %}
+{% if 'blackbox_exporter' in mmd_selected and joblist %}
+  # calls-offloader publishes no metrics of its own, so this is how we know it is
+  # answering: ask it for its version the way Mattermost does before a recording.
+  - job_name: blackbox_http_jobs
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+{%   for s in joblist %}
+      - targets: ["http://{{ s.address }}:{{ calls_offloader_api_port }}/version"]
+        labels: {instance: "{{ s.name }}"}
+{%   endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: 127.0.0.1:{{ blackbox_exporter_port }}
+
+{% endif %}
 {% for job in prometheus_scrape_targets if job.job not in (jobs | map(attribute='job') | list) %}
   - job_name: {{ job.job | to_json }}
     metrics_path: {{ job.metrics_path | default('/metrics') | to_json }}

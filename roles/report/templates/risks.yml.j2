@@ -27,6 +27,15 @@
 {% if mmd_calls_integrated | bool %}
 {%   set _ = r.append({'severity': 'low', 'title': 'Calls media runs inside Mattermost.', 'advice': 'Fine for occasional small calls. For regular use, deploy the calls profile on its own server and set mattermost_rtcd_url.'}) %}
 {% endif %}
+{% if 'calls_offloader' in mmd_selected %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'The job service account can run any container on this server.', 'advice': 'calls-offloader starts a container per job, so ' ~ calls_offloader_user ~ ' is in the docker group, and anyone in that group is effectively root here. Keep calls_offloader_api_sources to the app servers, and keep this server to the job service alone.'}) %}
+{% endif %}
+{% if 'calls_offloader' in mmd_selected and (mmd_offloader_images | default([]) | rejectattr('present') | list | length > 0) %}
+{%   set _ = r.append({'severity': 'medium', 'title': 'A job runner image is not on this server yet.', 'advice': (mmd_offloader_images | rejectattr('present') | map(attribute='image') | join(', ')) ~ ' will be pulled from ' ~ calls_offloader_image_registry ~ ' when someone first records a call, which needs a route out from this server. Build the offline bundle with --with-job-images, or point calls_offloader_image_registry at an internal mirror.'}) %}
+{% endif %}
+{% if 'mattermost' in mmd_selected and mmd_job_service_url | length > 0 and not (mmd_calls_recording | bool) %}
+{%   set _ = r.append({'severity': 'low', 'title': 'A job service is configured but recording is off.', 'advice': 'Recording, transcription and live captions need an Enterprise licence, and mattermost_calls_recording is auto, so they stay off until mattermost_license_file is set. Set it to true if you apply the licence in the System Console instead.'}) %}
+{% endif %}
 {% if 'nfs' in mmd_selected %}
 {%   set _ = r.append({'severity': 'medium', 'title': 'The NFS share trusts whoever reaches it.', 'advice': 'NFS with sec=sys has no authentication and no encryption: any host at ' ~ ((nfs_allowed_clients + nfs_readonly_clients) | join(', ') or 'the allowed addresses') ~ ' can read and write every uploaded file, and the traffic is in the clear. Keep it on an internal network, keep the client list to the app servers, and use Kerberos (sec=krb5p) or a storage appliance if that is not enough.'}) %}
 {%   set _ = r.append({'severity': 'info', 'title': 'File storage depends on this one server.', 'advice': 'Every app server that mounts the share stops serving files if this server or its disk is lost. Snapshot ' ~ nfs_export_dir ~ ' and keep the copy elsewhere, and treat this server as production even though it only serves files.'}) %}
