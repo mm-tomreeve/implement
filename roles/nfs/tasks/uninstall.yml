@@ -29,7 +29,9 @@
     fw_ports: [{port: "{{ nfs_port }}", proto: tcp}]
 
 - name: Purge the shared files
-  ansible.builtin.file:
-    path: "{{ nfs_export_dir }}"
-    state: absent
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: purge_dir
+  vars:
+    pd_path: "{{ nfs_export_dir }}"
   when: uninstall_purge | default(false) | bool

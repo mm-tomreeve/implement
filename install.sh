@@ -162,8 +162,16 @@ banner() {
   done
   echo
 }
+# The terminal's settings from before one was changed, to put back on the way out.
+TTY_STATE=""
+tty_restore() {
+  if [[ -n "${TTY_STATE}" ]]; then stty "${TTY_STATE}" 2>/dev/null || true; fi
+  TTY_STATE=""
+  return 0
+}
 trap 'die "install.sh stopped at line ${LINENO}. Logs are in ${LOG_DIR}."' ERR
 trap 'echo; log_line "Stopped with Ctrl-C."; exit 130' INT
+trap tty_restore EXIT
 
 usage() {
   cat <<EOF
@@ -1555,13 +1563,21 @@ estate_prepare() {
   ESTATE_FILE="${ESTATE}"
   if [[ "${ESTATE}" == - ]]; then
     info "Paste the estate plan the architecture wizard gave you, then press Enter:"
+    # While a terminal edits a line it holds no more than 4095 characters and drops
+    # the rest without a word. A plan for a dozen servers is longer than that, so
+    # take the line as it arrives instead. EXIT puts the terminal back, even on Ctrl-C.
+    if [[ -t 0 ]]; then
+      TTY_STATE="$(stty -g 2>/dev/null || true)"
+      if [[ -n "${TTY_STATE}" ]]; then stty -icanon 2>/dev/null || TTY_STATE=""; fi
+    fi
     read -r line || no_input
+    tty_restore
     ESTATE_FILE="$(mktemp "${CONFIG_DIR}/estate.XXXXXX")"
     printf '%s\n' "${line}" > "${ESTATE_FILE}"
   fi
   err="$(mktemp "${CONFIG_DIR}/estate-err.XXXXXX")"
   if ! python3 -I "${REPO_DIR}/tools/estate_plan.py" decode --plan-file "${ESTATE_FILE}" > /dev/null 2> "${err}"; then
-    line="$(cat "${err}")"; rm -f "${err}"; die "${line}"
+    line="$(cat "${err}")"; rm -f "${err}"; die "${line#ERROR: }"
   fi
   rm -f "${err}"
   ESTATE_ADDR_ARGS=()
@@ -1573,22 +1589,28 @@ estate_prepare() {
 # stderr in ESTATE_ERRFILE for the caller to read.
 estate_run() {
   local sub="$1"; shift
-  local rc names=() node_args=()
+  local rc reason names=() node_args=()
   ESTATE_ERRFILE="$(mktemp "${CONFIG_DIR}/estate-err.XXXXXX")"
   while true; do
     node_args=()
     [[ -n "${ESTATE_NODE}" ]] && node_args=(--node "${ESTATE_NODE}")
+    # The status has to be caught on the same line. A failing command substitution
+    # ends the script under errexit before a following rc=$? could run, and exit
+    # codes 3 and 4 are how the helper asks which node this server is.
+    rc=0
     ESTATE_OUT="$(python3 -I "${REPO_DIR}/tools/estate_plan.py" "${sub}" --plan-file "${ESTATE_FILE}" \
       "${node_args[@]}" --local-name "$(hostname -s 2>/dev/null || true)" --local-name "$(host_name)" \
-      "${ESTATE_ADDR_ARGS[@]}" "$@" 2> "${ESTATE_ERRFILE}")"
-    rc=$?
+      "${ESTATE_ADDR_ARGS[@]}" "$@" 2> "${ESTATE_ERRFILE}")" || rc=$?
     [[ ${rc} -eq 0 ]] && return 0
-    [[ ${rc} -eq 3 || ${rc} -eq 4 ]] || die "$(cat "${ESTATE_ERRFILE}")"
+    # The helper's messages start with "ERROR: ", which die and warn add themselves.
+    reason="$(sed 's/^ERROR: //' "${ESTATE_ERRFILE}")"
+    [[ ${rc} -eq 3 || ${rc} -eq 4 ]] || die "${reason}"
     mapfile -t names < <(tail -n +2 "${ESTATE_ERRFILE}")
+    reason="$(head -n1 "${ESTATE_ERRFILE}")"; reason="${reason#ERROR: }"
     if [[ "${NON_INTERACTIVE}" == true ]]; then
-      die "$(head -n1 "${ESTATE_ERRFILE}") Pass --estate-node NAME, one of: ${names[*]}."
+      die "${reason} Pass --estate-node NAME, one of: ${names[*]}."
     fi
-    warn "$(head -n1 "${ESTATE_ERRFILE}")"
+    warn "${reason}"
     ask_choice ESTATE_NODE "Which node in the plan is this server?" "${names[0]}" "${names[@]}"
   done
 }
@@ -1622,8 +1644,10 @@ resolve_estate() {
   node="$(head -n1 "${ANSWERS}" | sed -E 's/^# Derived from .* for node //')"
   info "Wrote this server's answers to ${ANSWERS} from the estate plan (node ${node})${backup:+, and kept the earlier ones in ${backup}}."
 
-  followups="$(grep '^# FOLLOWUP: ' "${ESTATE_ERRFILE}" | sed 's/^# FOLLOWUP: //')"
-  notes="$(grep '^# NOTE: ' "${ESTATE_ERRFILE}" | sed 's/^# NOTE: //')"
+  # grep exits 1 when nothing matches, which pipefail would turn into a crash.
+  # Either kind of line can be absent: a lab has notes and no follow-ups.
+  followups="$({ grep '^# FOLLOWUP: ' "${ESTATE_ERRFILE}" || true; } | sed 's/^# FOLLOWUP: //')"
+  notes="$({ grep '^# NOTE: ' "${ESTATE_ERRFILE}" || true; } | sed 's/^# NOTE: //')"
   rm -f "${ESTATE_ERRFILE}"
   if [[ -n "${followups}" ]]; then
     section "Still needed on this server"
@@ -1888,13 +1912,33 @@ run_playbook() {
   )
 }
 
+# Why an Ansible run failed, from its output: the message of the last failed task.
+# Ansible prints it as YAML, wrapped over several lines, under a "failed:" or
+# "fatal:" line.
+failure_reason() {
+  awk '
+    /^(failed|fatal):/ { failing = 1; next }
+    failing && /^[[:space:]]+msg:/ {
+      match($0, /^[[:space:]]*/); ind = RLENGTH
+      sub(/^[[:space:]]*msg:[[:space:]]*/, ""); cur = $0; inmsg = 1; failing = 0; next
+    }
+    inmsg {
+      match($0, /^[[:space:]]*/)
+      if (RLENGTH > ind && $0 !~ /^[[:space:]]*$/) { line = $0; sub(/^[[:space:]]+/, "", line); cur = cur " " line; next }
+      last = cur; inmsg = 0
+    }
+    END { if (inmsg) last = cur; gsub(/^\047|\047$/, "", last); if (last != "") print last }
+  ' "$1" 2>/dev/null || true
+}
+
 show_plan() {
-  local plan_file
+  local plan_file reason
   plan_file="$(mktemp)"
   say "Working out the plan"
   if ! run_playbook plan.yml "plan_file=${plan_file}" > "${LOG_DIR}/plan-${RUN_ID}.out" 2>&1; then
     rm -f "${plan_file}"
-    grep -E '"msg"|fatal|ERROR' "${LOG_DIR}/plan-${RUN_ID}.out" | tail -n 5 >&2 || true
+    reason="$(failure_reason "${LOG_DIR}/plan-${RUN_ID}.out")"
+    [[ -z "${reason}" ]] || warn "${reason}"
     die "The plan failed. Fix the answer file and try again. Full output: ${LOG_DIR}/plan-${RUN_ID}.out"
   fi
   section "The plan"
@@ -1947,7 +1991,9 @@ show_uninstall_plan() {
   say "Working out what to remove"
   if ! run_playbook uninstall.yml "plan_file=${UNINSTALL_PLAN}" > "${LOG_DIR}/uninstall-plan-${RUN_ID}.out" 2>&1; then
     rm -f "${UNINSTALL_PLAN}"
-    grep -E '"msg"|fatal|ERROR' "${LOG_DIR}/uninstall-plan-${RUN_ID}.out" | tail -n 5 >&2 || true
+    local reason
+    reason="$(failure_reason "${LOG_DIR}/uninstall-plan-${RUN_ID}.out")"
+    [[ -z "${reason}" ]] || warn "${reason}"
     die "Could not work out what to remove. Full output: ${LOG_DIR}/uninstall-plan-${RUN_ID}.out"
   fi
   section "To be removed"
@@ -2129,4 +2175,7 @@ main() {
   exit "${rc}"
 }
 
-main "$@"
+# Run only when executed, so tests can source this file and call its functions.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

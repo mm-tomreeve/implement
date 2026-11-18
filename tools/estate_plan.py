@@ -620,8 +620,9 @@ def derive_answers(plan, node_name, estate_secrets=None):
                 followups.append("Mount %s's NFS share before installing Mattermost here. Its report has the "
                                   "exact commands." % storage_node["name"])
             else:
-                notes.append("The NFS share is on this server. Point mattermost_data_dir at nfs_export_dir, "
-                              "or mount the share locally, so Mattermost writes where the share serves from.")
+                notes.append("The NFS share is on this server, so Mattermost writes to its directory directly "
+                              "(mattermost_data_dir is set to nfs_export_dir). Any other app server mounts it "
+                              "as the report describes.")
 
     if has("nginx"):
         out["tls_mode"] = plan["tls_mode"]
@@ -672,8 +673,18 @@ def derive_answers(plan, node_name, estate_secrets=None):
     if has("opensearch") and remote_addresses(app_nodes):
         out["opensearch_allowed_clients"] = remote_addresses(app_nodes)
 
-    if has("nfs") and remote_addresses(app_nodes):
-        out["nfs_allowed_clients"] = remote_addresses(app_nodes)
+    if has("nfs"):
+        clients = remote_addresses(app_nodes)
+        if has("mattermost"):
+            # The share and Mattermost are on one box, as in a lab. Mattermost writes
+            # to the exported directory itself, so nothing has to be mounted, and the
+            # share is exported to this server so it isn't exported to nobody (which
+            # the plan refuses). Any other app server is listed alongside.
+            if plan.get("file_storage") == "nfs":
+                out["mattermost_data_dir"] = settings()["nfs_export_dir"]
+            clients = clients or ["127.0.0.1"]
+        if clients:
+            out["nfs_allowed_clients"] = clients
         if node.get("squash"):
             out["nfs_squash"] = node["squash"]
 

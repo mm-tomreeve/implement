@@ -58,6 +58,15 @@
     mode: "0644"
   notify: Restart nfs-server
 
+# nfs-utils makes this directory on RHEL; nfs-kernel-server doesn't on Debian or Ubuntu.
+- name: Create the directory for our export list
+  ansible.builtin.file:
+    path: "{{ nfs_exports_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Write the export list
   ansible.builtin.template:
     src: exports.j2

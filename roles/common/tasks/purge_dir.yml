@@ -1,0 +1,31 @@
+---
+# Shared helper. Delete a directory and everything in it, for a purge.
+#   pd_path: /srv/mattermost/data
+# A directory that is a mount point (a data disk, an NFS mount) can't be removed, and
+# deleting it the usual way fails half way with "Device or resource busy". Its contents
+# go and the mount point stays, the way the disk's owner would expect. -xdev keeps find
+# on that one filesystem, so a mount inside it is reported rather than emptied.
+- name: "{{ pd_path }} | refuse a path that would be the whole system"
+  ansible.builtin.assert:
+    that: pd_path | regex_replace('/+$', '') | length > 0
+    quiet: true
+
+- name: "{{ pd_path }} | is it a mount point?"
+  ansible.builtin.command:
+    argv: [mountpoint, -q, "{{ pd_path }}"]
+  register: _pd_mount
+  changed_when: false
+  # Not a mount point and no such path both come back non-zero, and both mean "remove it".
+  failed_when: false
+
+- name: "{{ pd_path }} | empty the mount point, which stays"
+  ansible.builtin.command:
+    argv: [find, "{{ pd_path }}", -xdev, -mindepth, "1", -delete]
+  when: _pd_mount.rc == 0
+  changed_when: true
+
+- name: "{{ pd_path }} | remove the directory"
+  ansible.builtin.file:
+    path: "{{ pd_path }}"
+    state: absent
+  when: _pd_mount.rc != 0

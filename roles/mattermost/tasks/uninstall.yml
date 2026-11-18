@@ -63,17 +63,34 @@
 - name: Purge the configuration, data, plugins, logs and service account
   when: uninstall_purge | default(false) | bool
   block:
-    - name: Remove the directories
+    # The data directory first: it may be a mount (an NFS share, a data disk), which
+    # is emptied and left in place, so the parent directory below can't be removed then.
+    - name: Remove the data directory
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: purge_dir
+      vars:
+        pd_path: "{{ mattermost_data_dir }}"
+
+    - name: Remove the other directories
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
         - "{{ mattermost_config_dir }}"
-        - "{{ mattermost_data_dir }}"
         - "{{ mattermost_plugin_dir }}"
         - "{{ mattermost_client_plugin_dir }}"
         - "{{ mattermost_log_dir }}"
-        - "{{ mattermost_data_dir | dirname }}"
+
+    # The directories the data and plugin directories sat in go too, once they are
+    # empty. rmdir only takes an empty one, so a mount point, or a directory somebody
+    # else keeps things in, stays.
+    - name: Remove the directories they sat in, if they are empty
+      ansible.builtin.command:
+        argv: [rmdir, --ignore-fail-on-non-empty, "{{ item }}"]
+      loop: "{{ [mattermost_data_dir | dirname, mattermost_plugin_dir | dirname] | unique }}"
+      changed_when: false
+      failed_when: false
 
     - name: Remove the mattermost user
       ansible.builtin.user:
