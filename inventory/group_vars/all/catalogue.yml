@@ -38,7 +38,7 @@ mmd_catalogue:
     user: "{{ mattermost_user }}"
     paths:
       install: "{{ mattermost_dir }} -> {{ mattermost_install_root }}/mattermost-<version>"
-      config: "{{ mattermost_config_dir }}/config.json"
+      config: "{{ 'Configurations table in the ' ~ mattermost_db_name ~ ' database' if mattermost_config_store == 'database' else mattermost_config_dir ~ '/config.json' }}"
       data: "{{ mattermost_data_dir if mattermost_file_driver == 'local' else 's3://' ~ mattermost_s3_bucket }}"
       logs: "{{ mattermost_log_dir }}"
     min_ram_mb: 4096

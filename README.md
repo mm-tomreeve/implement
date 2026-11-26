@@ -425,6 +425,13 @@ only. Mattermost finds its peers through the database. Give both the same `deplo
 licence, and add each app server to `postgresql_allowed_clients` on the database server. Verify warns
 until the other node is installed.
 
+With `config.json` on each node, Mattermost makes the System Console read-only in a cluster, because
+a change made there would only reach one node. To keep it editable, store the config in the
+database instead: add `mattermost_config_store: database` to every app server's answers. Install
+the first app server and let it finish before you start the others. Servers that start together
+against an empty config store race to write the first config, and the losers fail on a unique
+constraint. [Layout and upgrades](#layout-and-upgrades) has the details.
+
 ### Example: a split estate
 
 Five servers, each with its own answer file. The pieces find each other through the `*_host`,
@@ -886,7 +893,8 @@ Mattermost is handled more carefully, because its database migrations only go fo
   `mattermost_allow_upgrade: true`) to move to the newest release. Changing a pinned
   `mattermost_version` is an upgrade by itself. rtcd on `latest` is held the same way.
 - Before an upgrade, Mattermost is stopped and its database dumped with `pg_dump -Fc` to
-  `/var/lib/mattermost-parthenon/backups`, next to a copy of `config.json`. On an app server with a
+  `/var/lib/mattermost-parthenon/backups`, next to a copy of `config.json` (or of the config in the
+  database, read through `mmctl` before Mattermost stops). On an app server with a
   remote database this installs the PostgreSQL client from the `postgresql_version` stream (the
   `postgresql-client-<version>` package on Debian and Ubuntu), which must be the database server's
   major version or newer. If the dump fails, Mattermost restarts on
@@ -898,6 +906,28 @@ Mattermost is handled more carefully, because its database migrations only go fo
 Mattermost reads `/etc/mattermost/config.json`. We only set the keys we own (site URL, database,
 file storage, paths, metrics, search and Calls), so everything else stays editable in the System
 Console.
+
+With `mattermost_config_store: database`, Mattermost keeps its config in the `Configurations` table
+of its own database instead, one copy for every app server. The connection string that points
+there carries the database password, so it goes in `/etc/mattermost/mattermost.env` (root, 0600),
+which the unit loads with `EnvironmentFile`. Before Mattermost first starts, `mattermost db init`
+seeds an empty config store with the keys we own and runs the schema migrations. Where the config
+store already has a config (another app server got there first, or an earlier run), it only runs
+the migrations. Every run then patches the keys we own back into the live config with
+`mmctl --local config patch` and restarts Mattermost if that changed anything, so changing
+`mattermost_site_url` and re-running updates the site URL for every app server. The post-deploy
+tests read the config through `mmctl` too. Because the app servers share that config, their answer
+files have to agree on the keys we own, or each run puts its own values back.
+
+Install the first app server before the others: servers starting together against an empty
+config store race to write the first config, and the losers fail on a unique constraint.
+
+Choose the config store before the first install. The installer doesn't move an existing
+`config.json` into the database. To switch a running server, copy its config across first with
+`mmctl --local config migrate /etc/mattermost/config.json "<connection string>"`, using the
+`SqlSettings.DataSource` from `config.json`, then set `mattermost_config_store: database` and
+re-run. Without that, the database starts from the keys we own and Mattermost's defaults, and
+what was set in the System Console stays behind in `config.json`.
 
 ### Security defaults
 

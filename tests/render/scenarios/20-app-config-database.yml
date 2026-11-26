@@ -1,0 +1,17 @@
+---
+# Render scenario: a clustered app server keeping Mattermost's config in the database.
+render_host: app01
+deploy_name: chat-prod
+deploy_profiles: [app]
+mattermost_site_url: https://chat.example.com
+mattermost_license_file: /root/mattermost.mattermost-license
+mattermost_config_store: database
+mattermost_db_host: db01.example.internal
+mattermost_db_password: from-db01
+mattermost_proxy_sources: [10.10.1.5]
+mattermost_cluster_peers: [10.10.1.13]
+mattermost_file_driver: amazons3
+mattermost_s3_endpoint: s3.example.internal:9000
+mattermost_s3_bucket: mattermost-prod
+mattermost_start_wait_seconds: 600
+tls_mode: later

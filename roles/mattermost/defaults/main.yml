@@ -5,5 +5,9 @@ mattermost_version_dir: "{{ mattermost_install_root }}/mattermost-{{ mmd_artifac
 # so we trust the search CA at the OS level instead and leave that setting empty.
 mattermost_opensearch_ca_dest: /etc/pki/ca-trust/source/anchors/mattermost-parthenon-opensearch.pem
 mattermost_license_dest: "{{ mattermost_config_dir }}/mattermost.mattermost-license"
-# First start runs schema migrations. Raise this for upgrades on a big database.
-mattermost_start_wait_seconds: 60
+# With mattermost_config_store: database. The environment file holds the database
+# connection string (and so its password) that tells Mattermost where its config is.
+mattermost_env_file: "{{ mattermost_config_dir }}/mattermost.env"
+# The settings this toolkit owns, as JSON. They seed an empty config store and are
+# patched into the live config on every run.
+mattermost_owned_config_file: "{{ mattermost_config_dir }}/parthenon-config.json"

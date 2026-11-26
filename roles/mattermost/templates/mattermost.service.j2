@@ -17,8 +17,14 @@ WorkingDirectory={{ mattermost_dir }}
 User={{ mattermost_user }}
 Group={{ mattermost_group }}
 LimitNOFILE=49152
+{% if mattermost_config_store == 'database' %}
+# Config lives in the database. The connection string that points there holds the
+# database password, so it sits in a root-only file rather than in this unit.
+EnvironmentFile={{ mattermost_env_file }}
+{% else %}
 # Config lives outside the versioned install so upgrades are a symlink swap.
 Environment=MM_CONFIG={{ mattermost_config_dir }}/config.json
+{% endif %}
 # Logs live outside the install directory too, so tell Mattermost where the log root is.
 Environment=MM_LOG_PATH={{ mattermost_log_dir }}
 {% if mmd_calls_recording | bool and mmd_recorder_site_url | length > 0 %}
