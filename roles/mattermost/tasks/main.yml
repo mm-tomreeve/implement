@@ -103,15 +103,14 @@
         group: root
         mode: "0700"
 
-    # The dump holds a config kept in the database too. This is the readable copy, and
-    # mmctl can only get it from the running server, so before it stops.
+    # The dump holds the config too. This is a readable copy, and mmctl can only get
+    # it from the running server, so before it stops.
     - name: Keep a copy of the config from the database
       ansible.builtin.shell: >-
         umask 077 && {{ (mattermost_dir ~ '/bin/mmctl') | quote }} --local config show > {{ (_mm_backup_base ~ '.config.json') | quote }}
       environment:
         MMCTL_LOCAL_SOCKET_PATH: "{{ mattermost_local_socket }}"
       changed_when: true
-      when: mattermost_config_store == 'database'
 
     # Mattermost's own upgrade steps: stop the server, back up, then upgrade. The
     # restart handler starts the new version once the symlink has moved.
@@ -120,7 +119,7 @@
         name: mattermost
         state: stopped
 
-    - name: Dump the database and keep the old config
+    - name: Dump the database
       block:
         - name: Dump the Mattermost database
           ansible.builtin.command:
@@ -136,16 +135,6 @@
           register: _mm_dump
           changed_when: true
           no_log: true
-
-        - name: Keep a copy of config.json
-          ansible.builtin.copy:
-            src: "{{ mattermost_config_dir }}/config.json"
-            dest: "{{ _mm_backup_base }}.config.json"
-            remote_src: true
-            owner: root
-            group: root
-            mode: "0600"
-          when: mattermost_config_store == 'file'
 
         - name: Remember the backup for the report
           ansible.builtin.set_fact:
@@ -210,113 +199,53 @@
     _mm_owned: "{{ lookup('ansible.builtin.template', 'config-overrides.yml.j2') | from_yaml }}"
   no_log: true
 
-- name: Keep the config in config.json
-  when: mattermost_config_store == 'file'
-  block:
-    - name: Look for an existing config.json
-      ansible.builtin.stat:
-        path: "{{ mattermost_config_dir }}/config.json"
-      register: _mm_config_stat
+- name: Write the settings we own as JSON
+  ansible.builtin.copy:
+    content: "{{ _mm_owned | combine(mattermost_config_overrides, recursive=true) | to_nice_json(indent=4) }}\n"
+    dest: "{{ mattermost_owned_config_file }}"
+    owner: "{{ mattermost_user }}"
+    group: "{{ mattermost_group }}"
+    mode: "0600"
+  no_log: true
 
-    - name: Seed config.json from the tarball default
-      ansible.builtin.copy:
-        src: "{{ mattermost_version_dir }}/config/config.json"
-        dest: "{{ mattermost_config_dir }}/config.json"
-        remote_src: true
-        owner: "{{ mattermost_user }}"
-        group: "{{ mattermost_group }}"
-        mode: "0600"
-      when: not _mm_config_stat.stat.exists
-      failed_when: false
-      register: _mm_seed
+# systemd reads this as root before it starts Mattermost, so only root needs to.
+- name: Tell Mattermost which database holds its config
+  ansible.builtin.template:
+    src: mattermost.env.j2
+    dest: "{{ mattermost_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  register: _mm_env
+  notify: Restart mattermost
+  no_log: true
 
-    - name: Start from an empty config when the tarball has none
-      ansible.builtin.copy:
-        content: "{}\n"
-        dest: "{{ mattermost_config_dir }}/config.json"
-        owner: "{{ mattermost_user }}"
-        group: "{{ mattermost_group }}"
-        mode: "0600"
-        force: false
-      when: not _mm_config_stat.stat.exists
+- name: Check whether Mattermost is running
+  ansible.builtin.command: systemctl is-active mattermost  # noqa: command-instead-of-module
+  register: _mm_active
+  changed_when: false
+  failed_when: false
 
-    - name: Read the current config.json
-      ansible.builtin.slurp:
-        path: "{{ mattermost_config_dir }}/config.json"
-      register: _mm_config_raw
-      no_log: true
+# Before Mattermost first starts on this config. On an empty config store this
+# writes our settings as the first config; on one that is already there (another
+# app server got there first, or an earlier run) it only runs the schema migrations.
+- name: Prepare the database and seed the config
+  ansible.builtin.command:
+    argv: [runuser, -u, "{{ mattermost_user }}", --, "{{ mattermost_dir }}/bin/mattermost", db, init]
+    chdir: "{{ mattermost_dir }}"
+  environment:
+    MM_CONFIG: "{{ _mm_owned.SqlSettings.DataSource }}"
+    MM_CUSTOM_DEFAULTS_PATH: "{{ mattermost_owned_config_file }}"
+  register: _mm_db_init
+  when: _mm_active.stdout != 'active' or _mm_env is changed
+  changed_when: true
+  failed_when: false
+  no_log: true
 
-    - name: Merge our settings into config.json
-      ansible.builtin.set_fact:
-        _mm_config_current: "{{ _mm_config_raw.content | b64decode | from_json }}"
-        _mm_config_desired: >-
-          {{ (_mm_config_raw.content | b64decode | from_json)
-             | combine(_mm_owned, recursive=true)
-             | combine(mattermost_config_overrides, recursive=true) }}
-      no_log: true
-
-    - name: Write config.json when it changed
-      ansible.builtin.copy:
-        content: "{{ _mm_config_desired | to_nice_json(indent=4) }}\n"
-        dest: "{{ mattermost_config_dir }}/config.json"
-        owner: "{{ mattermost_user }}"
-        group: "{{ mattermost_group }}"
-        mode: "0600"
-        backup: true
-      when: _mm_config_desired != _mm_config_current
-      notify: Restart mattermost
-      no_log: true
-
-- name: Keep the config in the database
-  when: mattermost_config_store == 'database'
-  block:
-    - name: Write the settings we own as JSON
-      ansible.builtin.copy:
-        content: "{{ _mm_owned | combine(mattermost_config_overrides, recursive=true) | to_nice_json(indent=4) }}\n"
-        dest: "{{ mattermost_owned_config_file }}"
-        owner: "{{ mattermost_user }}"
-        group: "{{ mattermost_group }}"
-        mode: "0600"
-      no_log: true
-
-    # systemd reads this as root before it starts Mattermost, so only root needs to.
-    - name: Tell Mattermost which database holds its config
-      ansible.builtin.template:
-        src: mattermost.env.j2
-        dest: "{{ mattermost_env_file }}"
-        owner: root
-        group: root
-        mode: "0600"
-      register: _mm_env
-      notify: Restart mattermost
-      no_log: true
-
-    - name: Check whether Mattermost is running
-      ansible.builtin.command: systemctl is-active mattermost  # noqa: command-instead-of-module
-      register: _mm_active
-      changed_when: false
-      failed_when: false
-
-    # Before Mattermost first starts on this config. On an empty config store this
-    # writes our settings as the first config; on one that is already there (another
-    # app server got there first, or an earlier run) it only runs the schema migrations.
-    - name: Prepare the database and seed the config
-      ansible.builtin.command:
-        argv: [runuser, -u, "{{ mattermost_user }}", --, "{{ mattermost_dir }}/bin/mattermost", db, init]
-        chdir: "{{ mattermost_dir }}"
-      environment:
-        MM_CONFIG: "{{ _mm_owned.SqlSettings.DataSource }}"
-        MM_CUSTOM_DEFAULTS_PATH: "{{ mattermost_owned_config_file }}"
-      register: _mm_db_init
-      when: _mm_active.stdout != 'active' or _mm_env is changed
-      changed_when: true
-      failed_when: false
-      no_log: true
-
-    - name: Stop if the database could not be prepared
-      ansible.builtin.fail:
-        msg: "mattermost db init failed: {{ (_mm_db_init.stderr | default('') or _mm_db_init.stdout | default('')) | trim }}"
-      when: _mm_db_init.rc | default(0) != 0
+- name: Stop if the database could not be prepared
+  ansible.builtin.fail:
+    msg: "mattermost db init failed: {{ (_mm_db_init.stderr | default('') or _mm_db_init.stdout | default('')) | trim }}"
+  when: _mm_db_init.rc | default(0) != 0
 
 - name: Install the systemd unit
   ansible.builtin.template:
@@ -343,8 +272,8 @@
     name: mattermost
     state: started
 
-# Re-runs keep our settings in the database config, the way they do in config.json.
-# mmctl reaches that config only through the running server, so this waits for it.
+# Re-runs put our settings back into the config. mmctl reaches it only through the
+# running server, so this waits for it.
 - name: Read the live config
   ansible.builtin.command:
     argv: ["{{ mattermost_dir }}/bin/mmctl", --local, config, show]
@@ -356,7 +285,6 @@
   delay: 5
   changed_when: false
   no_log: true
-  when: mattermost_config_store == 'database'
 
 - name: Patch our settings into the live config
   ansible.builtin.command:
@@ -365,13 +293,11 @@
     MMCTL_LOCAL_SOCKET_PATH: "{{ mattermost_local_socket }}"
   vars:
     _live: "{{ _mm_live_config.stdout | from_json }}"
-  when:
-    - mattermost_config_store == 'database'
-    - _live | combine(_mm_owned, mattermost_config_overrides, recursive=true) != _live
+  when: _live | combine(_mm_owned, mattermost_config_overrides, recursive=true) != _live
   changed_when: true
   notify: Restart mattermost
 
-# As with config.json, a changed setting restarts Mattermost.
+# A changed setting restarts Mattermost.
 - name: Apply the restart for patched settings
   ansible.builtin.meta: flush_handlers
 

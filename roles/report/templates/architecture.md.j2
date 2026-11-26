@@ -400,17 +400,12 @@ Disk use where data lives:
 | Listens on | {{ listening | map(attribute='port') | zip(listening | map(attribute='proto')) | map('join', '/') | join(', ') | default('nothing', true) }} |
 
 {% if c == 'mattermost' %}
-{% if mattermost_config_store == 'database' %}
 Mattermost keeps its config in the `Configurations` table of its database, one copy shared by every
 app server, so the System Console stays editable however many there are. systemd hands it the
 connection string from a root-only environment file in `{{ mattermost_config_dir }}`. We only set the
 keys we own: SiteURL, listen address, database, file storage, log and plugin paths, metrics, search
 and the Calls rtcd URL. They seed an empty config, and every run patches them back in with mmctl.
-Everything else stays editable in the System Console. {% else %}
-Mattermost reads `{{ mattermost_config_dir }}/config.json` (via `MM_CONFIG`), not the copy inside the
-install directory. We only set the keys we own: SiteURL, listen address, database, file storage,
-log and plugin paths, metrics, search and the Calls rtcd URL. Everything else stays editable in the
-System Console. {% endif %}Database: `{{ mmd_db_host }}:{{ mattermost_db_port }}/{{ mattermost_db_name }}` as
+Everything else stays editable in the System Console. Database: `{{ mmd_db_host }}:{{ mattermost_db_port }}/{{ mattermost_db_name }}` as
 `{{ mattermost_db_user }}`, sslmode `{{ mmd_db_sslmode }}`{{ ', with reads sent to the replicas on ' ~ mattermost_db_replica_hosts | join(', ') if mattermost_db_replica_hosts else '' }}. Files: {{ 'local disk at `' ~ mattermost_data_dir ~ '`' if mattermost_file_driver == 'local' else 'S3 bucket `' ~ mattermost_s3_bucket ~ '` at `' ~ mattermost_s3_endpoint ~ '`' }}.
 Calls: {{ 'rtcd at ' ~ mmd_rtcd_url if mmd_rtcd_url else ('built-in media server on port ' ~ mattermost_calls_port if mmd_calls_integrated else 'not configured') }}.
 Search: {{ 'OpenSearch at ' ~ mmd_opensearch_url ~ (', indexing on' if mattermost_search_enable | bool else ', indexing off until a licence is installed') if mmd_opensearch_url else 'database search (no OpenSearch configured)' }}.
@@ -517,7 +512,7 @@ are not used.
 
 `{{ mattermost_opensearch_username }}` holds one role, `{{ opensearch_mattermost_role_name }}`: bulk indexing, index
 templates, cluster monitoring, and read and write on `{{ opensearch_mattermost_index_prefix }}*`. It is not a cluster
-administrator. Its password sits in `config.json` on every app server, so losing an app server
+administrator. Its password sits in Mattermost's config, which every app server can read, so losing an app server
 should not cost you the cluster. The permissions are the set Mattermost publishes; widen them in
 `opensearch_mattermost_role` if a future release needs more.
 {% else %}
@@ -544,7 +539,7 @@ Bound to 127.0.0.1 with the security plugin off, which is fine while only the lo
 Clustering is on: `ClusterSettings` is written with cluster name `{{ mattermost_cluster_name }}`, and
 port {{ mattermost_cluster_port }} TCP and UDP is open to {{ mattermost_cluster_peers | join(', ') }} only. Run this toolkit on
 each app server with the other nodes as its `mattermost_cluster_peers`, keep every node on the same
-Mattermost version and the same {{ 'answers, since they share one config in the database' if mattermost_config_store == 'database' else '`config.json`' }}, and apply the licence to each one.
+Mattermost version and the same answers, since they share one config in the database, and apply the licence to each one.
 {% else %}
 Port {{ mattermost_cluster_port }} is listed for completeness and is not opened: no
 `mattermost_cluster_peers` are set, so this app server runs standalone. With more than one app
@@ -632,7 +627,7 @@ are not needed. The always-on rows still are.
 | OpenSearch | {{ 'HTTPS with authentication' if mmd_opensearch_security else 'HTTP on localhost' }} | {{ 'Remote clients authenticate and the transport is encrypted.' if mmd_opensearch_security else 'No remote clients, so it listens on localhost only.' }} |
 {% endif %}
 | Service accounts | {{ sel | length }} | {% for c in sel %}`{{ mmd_catalogue[c].user }}`{{ ', ' if not loop.last }}{% endfor %}. System accounts with no login shell, apart from `postgres`, which comes from the RPM. |
-| Secrets at rest | root only, 0600 | Generated passwords in `{{ deploy_config_dir }}/secrets.yml`, answers in `{{ mmd_answers_file | default(deploy_config_dir ~ '/answers.yml') }}`.{% if has.mm %}{% if mattermost_config_store == 'database' %} Mattermost's database password is in `{{ mattermost_config_dir }}`, in the environment file (0600, root) and our settings file (0600, `{{ mattermost_user }}`).{% else %} Mattermost holds its database password in `{{ mattermost_config_dir }}/config.json` (0600, `{{ mattermost_user }}`).{% endif %}{% endif %} |
+| Secrets at rest | root only, 0600 | Generated passwords in `{{ deploy_config_dir }}/secrets.yml`, answers in `{{ mmd_answers_file | default(deploy_config_dir ~ '/answers.yml') }}`.{% if has.mm %} Mattermost's database password is in `{{ mattermost_config_dir }}`, in the environment file (0600, root) and our settings file (0600, `{{ mattermost_user }}`).{% endif %} |
 
 No secret is reproduced in this document.
 
@@ -867,7 +862,7 @@ Re-runs keep the installed version{{ ' even though the channel is ' ~ mattermost
 
 1. Take a file backup of the uploaded files{{ ' in `' ~ mattermost_data_dir ~ '`' if mattermost_file_driver == 'local' else '' }}.
 2. Run `./install.sh --answers ... --upgrade` to move to the newest release on the channel, or pin a newer `mattermost_version` and re-run.
-3. Mattermost stops, the database is dumped to `{{ mattermost_backup_dir }}` with a copy of {{ 'the config, read through mmctl before the stop' if mattermost_config_store == 'database' else '`config.json`' }}{{ '' if mattermost_upgrade_backup | bool else ' (switched off here: `mattermost_upgrade_backup` is false, so take your own first)' }}, the new version unpacks to `{{ mattermost_install_root }}/mattermost-<version>`, the symlink moves and Mattermost starts. The old directory stays put.
+3. Mattermost stops, the database is dumped to `{{ mattermost_backup_dir }}` with a copy of the config, read through mmctl before the stop{{ '' if mattermost_upgrade_backup | bool else ' (switched off here: `mattermost_upgrade_backup` is false, so take your own first)' }}, the new version unpacks to `{{ mattermost_install_root }}/mattermost-<version>`, the symlink moves and Mattermost starts. The old directory stays put.
 
 The installer refuses to install an older version than the one running. Database migrations only
 go forwards, so rolling back means restoring the dump from step 3 (`pg_restore --clean`), then

@@ -70,16 +70,6 @@ class AnswerProblems(unittest.TestCase):
     def test_auto_or_number_settings_take_either(self):
         self.assertEqual(self.check("postgresql_max_connections: 300\npostgresql_ssl: true\n"), [])
 
-    def test_config_store_is_file_or_database(self):
-        self.assertEqual(self.check("mattermost_config_store: file\n"), [])
-        self.assertEqual(self.check("mattermost_config_store: database\n"), [])
-
-    def test_config_store_refuses_other_words(self):
-        self.assertEqual(
-            self.check("mattermost_config_store: db\n"),
-            ["mattermost_config_store should be file or database, not db."],
-        )
-
     def test_start_wait_takes_seconds(self):
         self.assertEqual(self.check("mattermost_start_wait_seconds: 600\n"), [])
 

@@ -76,8 +76,8 @@ fi
 RTCD="$("${MMCTL[@]}" config get 'PluginSettings.Plugins' 2>/dev/null | python3 -I -c "import json,sys; print(json.load(sys.stdin).get('com.mattermost.calls',{}).get('rtcdserviceurl',''))")"
 [[ "${RTCD}" == http://172.30.10.13:8045 ]] && pass "Calls uses rtcd on calls01" || fail "Calls uses rtcd on calls01" "'${RTCD}'"
 
-# app01's answers keep Mattermost's config in the database. The connection string that
-# points there holds the database password, so it must be root's alone.
+# Mattermost keeps its config in the database. The connection string that points
+# there holds the database password, so it must be root's alone.
 ENV_FILE="$(stat -c '%a %U' /etc/mattermost/mattermost.env 2>/dev/null || echo missing)"
 if [[ "${ENV_FILE}" == "600 root" ]] && ! grep -q MM_CONFIG /etc/systemd/system/mattermost.service \
     && [[ ! -e /etc/mattermost/config.json ]]; then

@@ -425,12 +425,11 @@ only. Mattermost finds its peers through the database. Give both the same `deplo
 licence, and add each app server to `postgresql_allowed_clients` on the database server. Verify warns
 until the other node is installed.
 
-With `config.json` on each node, Mattermost makes the System Console read-only in a cluster, because
-a change made there would only reach one node. To keep it editable, store the config in the
-database instead: add `mattermost_config_store: database` to every app server's answers. Install
-the first app server and let it finish before you start the others. Servers that start together
-against an empty config store race to write the first config, and the losers fail on a unique
-constraint. [Layout and upgrades](#layout-and-upgrades) has the details.
+Mattermost keeps its config in the database, one copy shared by every app server, so the System
+Console stays editable in a cluster too. Install the first app server and let it finish before you
+start the others. Servers that start together against an empty
+config store race to write the first config, and the losers fail on a unique constraint.
+[Layout and upgrades](#layout-and-upgrades) has the details.
 
 ### Example: a split estate
 
@@ -686,7 +685,7 @@ calls_offloader_api_sources: [10.10.1.12]
 mattermost_job_service_url: http://10.10.1.17:4545
 ```
 
-That is the whole configuration. Recording and transcription are switched on in `config.json` for
+That is the whole configuration. Recording and transcription are switched on in Mattermost's config for
 you, so they work when the run finishes rather than after a trip through the System Console.
 `mattermost_calls_transcriptions` and `mattermost_calls_live_captions` turn the other two on and
 off; captions are the one that is off by default, because it is the only one that has to keep up
@@ -768,7 +767,7 @@ directory, the `/opt/<name>` link, the systemd unit and the config the toolkit w
 stops fapolicyd trusting the paths. PostgreSQL and Nginx are removed with the package manager
 (`dnf` or `apt`, never a purge), and their module streams are reset on RHEL 9.
 
-The data stays: the PostgreSQL cluster, Mattermost's `config.json`, uploaded files and plugins,
+The data stays: the PostgreSQL cluster, Mattermost's config directory, uploaded files and plugins,
 OpenSearch indices, metrics, logs, the secrets file and the saved answers. That means you can
 put a component back with a normal run and find it as you left it. To delete all of that as
 well, add `--purge`. It also removes the service users, and once nothing is left, the secrets,
@@ -893,8 +892,8 @@ Mattermost is handled more carefully, because its database migrations only go fo
   `mattermost_allow_upgrade: true`) to move to the newest release. Changing a pinned
   `mattermost_version` is an upgrade by itself. rtcd on `latest` is held the same way.
 - Before an upgrade, Mattermost is stopped and its database dumped with `pg_dump -Fc` to
-  `/var/lib/mattermost-parthenon/backups`, next to a copy of `config.json` (or of the config in the
-  database, read through `mmctl` before Mattermost stops). On an app server with a
+  `/var/lib/mattermost-parthenon/backups`, next to a copy of the config, read through `mmctl` before
+  Mattermost stops. On an app server with a
   remote database this installs the PostgreSQL client from the `postgresql_version` stream (the
   `postgresql-client-<version>` package on Debian and Ubuntu), which must be the database server's
   major version or newer. If the dump fails, Mattermost restarts on
@@ -903,13 +902,12 @@ Mattermost is handled more carefully, because its database migrations only go fo
 - An older version than the one installed is refused. Going back means restoring the dump, then
   pointing the symlink back by hand.
 
-Mattermost reads `/etc/mattermost/config.json`. We only set the keys we own (site URL, database,
-file storage, paths, metrics, search and Calls), so everything else stays editable in the System
-Console.
+Mattermost keeps its config in the `Configurations` table of its own database, one copy for every
+app server, whether there is one or several. There is no `config.json`. We only set the keys we own
+(site URL, database, file storage, paths, metrics, search and Calls), so everything else stays
+editable in the System Console, or with `mmctl --local config`.
 
-With `mattermost_config_store: database`, Mattermost keeps its config in the `Configurations` table
-of its own database instead, one copy for every app server. The connection string that points
-there carries the database password, so it goes in `/etc/mattermost/mattermost.env` (root, 0600),
+The connection string that points Mattermost at its config carries the database password, so it goes in `/etc/mattermost/mattermost.env` (root, 0600),
 which the unit loads with `EnvironmentFile`. Before Mattermost first starts, `mattermost db init`
 seeds an empty config store with the keys we own and runs the schema migrations. Where the config
 store already has a config (another app server got there first, or an earlier run), it only runs
@@ -922,12 +920,7 @@ files have to agree on the keys we own, or each run puts its own values back.
 Install the first app server before the others: servers starting together against an empty
 config store race to write the first config, and the losers fail on a unique constraint.
 
-Choose the config store before the first install. The installer doesn't move an existing
-`config.json` into the database. To switch a running server, copy its config across first with
-`mmctl --local config migrate /etc/mattermost/config.json "<connection string>"`, using the
-`SqlSettings.DataSource` from `config.json`, then set `mattermost_config_store: database` and
-re-run. Without that, the database starts from the keys we own and Mattermost's defaults, and
-what was set in the System Console stays behind in `config.json`.
+A second app server added later joins the same config, so growing to a cluster needs no migration.
 
 ### Security defaults
 
@@ -937,7 +930,7 @@ toolkit leaves AppArmor as it found it and uses firewalld there too. OpenSearch 
 CA, never the public demo ones, and Mattermost connects to it as an account holding one role,
 `mattermost_search`: indexing, searching and index management over its own indices, plus the cluster
 monitoring and bulk permissions Mattermost publishes. It is not a cluster administrator. That
-password is in `config.json` on every app server, so losing an app server should not cost you the
+password is in Mattermost's config, which every app server can read, so losing an app server should not cost you the
 search cluster. `opensearch_mattermost_role` holds the permissions if a future Mattermost release
 needs more, and `make e2e-search-authz` checks the boundary against a real node.
 PostgreSQL uses SCRAM-SHA-256, with TLS on a self-signed

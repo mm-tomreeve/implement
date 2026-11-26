@@ -12,8 +12,6 @@ import yaml
 WRAPPER_ONLY = {"deploy_internet"}
 # roles/common/tasks/selection.yml also takes these as a comma-separated string.
 LIST_OR_STRING = {"deploy_profiles", "deploy_components"}
-# Settings that take one of a few words.
-CHOICES = {"mattermost_config_store": ["file", "database"]}
 
 
 def answer_problems(answers_path, defaults_path):
@@ -47,8 +45,6 @@ def answer_problems(answers_path, defaults_path):
             ok = isinstance(value, want)
         if not ok:
             problems.append(f"{key} should be {TYPE_NAMES[want]}, not {TYPE_NAMES.get(type(value), type(value).__name__)}.")
-        elif key in CHOICES and value not in CHOICES[key]:
-            problems.append(f"{key} should be {' or '.join(CHOICES[key])}, not {value}.")
     return problems
 
 

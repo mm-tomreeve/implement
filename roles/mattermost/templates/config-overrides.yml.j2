@@ -1,4 +1,4 @@
-# Settings this toolkit owns in config.json. Everything else stays as Mattermost
+# Settings this toolkit owns in Mattermost's config. Everything else stays as Mattermost
 # or the System Console set it.
 {% macro dsn_for(host, sslmode) -%}
 postgres://{{ mattermost_db_user | urlencode | replace('/', '%2F') }}:{{ mmd_secrets.db_password | urlencode | replace('/', '%2F') }}@{{ host }}:{{ mattermost_db_port }}/{{ mattermost_db_name }}?sslmode={{ sslmode }}&connect_timeout=10

@@ -97,7 +97,6 @@
       when: "'mattermost' in mmd_selected"
       vars:
         _templates: "{{ playbook_dir }}/../../roles/mattermost/templates"
-        _database: "{{ mattermost_config_store == 'database' }}"
       block:
         # Last, so the role's defaults can't hide a gap in what the report sees.
         - name: Load the Mattermost role defaults
@@ -119,19 +118,15 @@
             src: "{{ _templates }}/mattermost.env.j2"
             dest: "{{ render_out }}/{{ render_name }}.mattermost.env"
             mode: "0600"
-          when: _database | bool
 
         - name: Check the unit points Mattermost at the right config
           ansible.builtin.assert:
             that:
-              - >-
-                not _database | bool or (_unit is search('(?m)^EnvironmentFile=' ~ mattermost_env_file ~ '$')
-                and 'MM_CONFIG' not in _unit and _env is search("(?m)^MM_CONFIG='postgres://[^']+'$"))
-              - >-
-                _database | bool or (_unit is search('(?m)^Environment=MM_CONFIG=' ~ mattermost_config_dir ~ '/config.json$')
-                and 'EnvironmentFile' not in _unit)
-            fail_msg: "{{ render_name }}.mattermost.service does not match mattermost_config_store {{ mattermost_config_store }}"
+              - _unit is search('(?m)^EnvironmentFile=' ~ mattermost_env_file ~ '$')
+              - "'MM_CONFIG' not in _unit"
+              - _env is search("(?m)^MM_CONFIG='postgres://[^']+'$")
+            fail_msg: "{{ render_name }}.mattermost.service should load MM_CONFIG from {{ mattermost_env_file }}"
             quiet: true
           vars:
             _unit: "{{ lookup('ansible.builtin.file', render_out ~ '/' ~ render_name ~ '.mattermost.service') }}"
-            _env: "{{ lookup('ansible.builtin.file', render_out ~ '/' ~ render_name ~ '.mattermost.env') if _database | bool else '' }}"
+            _env: "{{ lookup('ansible.builtin.file', render_out ~ '/' ~ render_name ~ '.mattermost.env') }}"

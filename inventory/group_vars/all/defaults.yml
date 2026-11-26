@@ -77,12 +77,8 @@ mattermost_search_enable: "{{ mattermost_license_file | length > 0 }}"
 # Enterprise licence, so auto = the Enterprise build with a licence file given.
 # Set it to true if you apply the licence in the System Console instead.
 mattermost_metrics_enable: auto
-# Extra settings deep-merged into config.json last.
+# Extra settings deep-merged into Mattermost's config last.
 mattermost_config_overrides: {}
-# Where Mattermost keeps its config. file = config.json on this server. database = a
-# table in Mattermost's own database, shared by every app server, so the System
-# Console stays editable when there are several. Install one app server first.
-mattermost_config_store: file             # file | database
 # How long to wait for Mattermost to answer once it has started. The first start runs
 # schema migrations, so raise this for upgrades on a big database or on slow hosts.
 mattermost_start_wait_seconds: 60
