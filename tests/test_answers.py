@@ -70,6 +70,15 @@ class AnswerProblems(unittest.TestCase):
     def test_auto_or_number_settings_take_either(self):
         self.assertEqual(self.check("postgresql_max_connections: 300\npostgresql_ssl: true\n"), [])
 
+    def test_start_wait_takes_seconds(self):
+        self.assertEqual(self.check("mattermost_start_wait_seconds: 600\n"), [])
+
+    def test_start_wait_is_a_whole_number(self):
+        self.assertEqual(
+            self.check("mattermost_start_wait_seconds: 10m\n"),
+            ["mattermost_start_wait_seconds should be a whole number, not text."],
+        )
+
     def test_list_for_text(self):
         self.assertEqual(
             self.check("mattermost_db_host: [db01, db02]\n"),

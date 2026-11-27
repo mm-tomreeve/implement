@@ -77,8 +77,11 @@ mattermost_search_enable: "{{ mattermost_license_file | length > 0 }}"
 # Enterprise licence, so auto = the Enterprise build with a licence file given.
 # Set it to true if you apply the licence in the System Console instead.
 mattermost_metrics_enable: auto
-# Extra settings deep-merged into config.json last.
+# Extra settings deep-merged into Mattermost's config last.
 mattermost_config_overrides: {}
+# How long to wait for Mattermost to answer once it has started. The first start runs
+# schema migrations, so raise this for upgrades on a big database or on slow hosts.
+mattermost_start_wait_seconds: 60
 # Open 8443 udp/tcp for the built-in Calls media server when no rtcd is used.
 mattermost_calls_integrated: true
 mattermost_calls_port: 8443

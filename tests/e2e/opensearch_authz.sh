@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prove what Mattermost's OpenSearch account can and cannot do.
 #
-# The account's password sits in config.json on every app server, so the role it
+# The account's password sits in Mattermost's config, readable from every app server, so the role it
 # holds is the blast radius of an app server compromise. This runs a real
 # OpenSearch with the security plugin, applies the role, mapping and account
 # roles/opensearch creates, and checks both halves: every call Mattermost makes

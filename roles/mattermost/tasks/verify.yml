@@ -38,10 +38,13 @@
   changed_when: false
   failed_when: false
 
-- name: Read the live config.json
-  ansible.builtin.slurp:
-    path: "{{ mattermost_config_dir }}/config.json"
+- name: Read the live config through mmctl
+  ansible.builtin.command:
+    argv: ["{{ mattermost_dir }}/bin/mmctl", --local, config, show]
+  environment:
+    MMCTL_LOCAL_SOCKET_PATH: "{{ mattermost_local_socket }}"
   register: _v_mm_config
+  changed_when: false
   failed_when: false
   no_log: true
 
@@ -123,7 +126,7 @@
     tasks_from: record_results
   vars:
     _ping: "{{ _v_mm_ping.json | default({}) }}"
-    _cfg: "{{ (_v_mm_config.content | b64decode | from_json) if _v_mm_config.content is defined else {} }}"
+    _cfg: "{{ (_v_mm_config.stdout | from_json) if _v_mm_config.rc | default(1) == 0 else {} }}"
     _expected_version: "{{ mmd_artifacts.mattermost.version | default('unknown') }}"
     _licensed: "{{ mattermost_license_file | length > 0 }}"
     _cluster_nodes: >-

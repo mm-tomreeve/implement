@@ -58,10 +58,13 @@ mattermost_sha256: ""                   # optional extra check for a pinned buil
 # version is an upgrade by itself. Older versions are always refused.
 mattermost_allow_upgrade: false
 # Before an upgrade Mattermost is stopped and its database dumped here (pg_dump -Fc),
-# with a copy of config.json. Uploaded files are not copied: back them up yourself.
+# with a copy of its config. Uploaded files are not copied: back them up yourself.
 mattermost_upgrade_backup: true
 mattermost_backup_dir: /var/lib/mattermost-parthenon/backups
 mattermost_license_file: ""             # path on this server, e.g. /root/mattermost.mattermost-license
+# Seconds to wait for Mattermost to answer after it starts. The first start runs the
+# schema migrations; raise this for upgrades on a big database or on slow hosts.
+mattermost_start_wait_seconds: 60
 
 # File storage. We consume storage, we don't build it: local disk, an NFS mount
 # at mattermost_data_dir, or an S3 bucket someone else runs.
@@ -129,7 +132,7 @@ mattermost_proxy_sources: []
 mattermost_cluster_peers: []            # e.g. ["10.10.1.13"]
 # mattermost_cluster_name: chat-prod    # defaults to deploy_name; must match on every node
 
-# Arbitrary config.json settings, merged in last. Keys are case-sensitive.
+# Arbitrary Mattermost config settings, merged in last. Keys are case-sensitive.
 mattermost_config_overrides: {}
 #  TeamSettings:
 #    SiteName: Chat

@@ -10,6 +10,7 @@ import re
 import sys
 import unittest
 
+import jinja2
 import yaml
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -135,3 +136,20 @@ class Templating(unittest.TestCase):
                     if "ansible_managed" in handle.read():
                         offenders.append(os.path.relpath(os.path.join(root, name), ROOT))
         self.assertEqual(offenders, [])
+
+
+class StartWait(unittest.TestCase):
+    """The answer file sets how long the install waits for Mattermost to start."""
+
+    def wait_seconds(self, answers):
+        tasks = load("roles/mattermost/tasks/main.yml")
+        wait = next(t for t in tasks if t["name"].startswith("Wait for Mattermost to answer"))
+        values = dict(load("inventory/group_vars/all/defaults.yml"), **answers)
+        retries = jinja2.Environment(undefined=jinja2.StrictUndefined).from_string(wait["retries"]).render(values)
+        return int(retries) * wait["delay"]
+
+    def test_default_is_a_minute(self):
+        self.assertEqual(self.wait_seconds({}), 60)
+
+    def test_answer_raises_it(self):
+        self.assertEqual(self.wait_seconds({"mattermost_start_wait_seconds": 600}), 600)

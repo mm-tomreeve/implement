@@ -1,5 +1,5 @@
 ---
-# The server, its unit and its port rules go. config.json, uploaded files, plugins
+# The server, its unit and its port rules go. Its config directory, uploaded files, plugins
 # and logs stay unless uninstall_purge is set. The database belongs to PostgreSQL.
 - name: Stop Mattermost
   ansible.builtin.include_role:

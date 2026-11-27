@@ -75,7 +75,7 @@ Every `uninstall.yml` does the same four things:
   streams on RHEL 9
 
 Data goes only when `uninstall_purge` is true (`--purge`): the PostgreSQL cluster, Mattermost's
-`config.json`, uploaded files and plugins, the OpenSearch indices, Prometheus, Loki and Grafana
+config directory, uploaded files and plugins, the OpenSearch indices, Prometheus, Loki and Grafana
 data, the NFS export directory and the service users. A role never drops a database on a
 server it does not own, so Mattermost's database is PostgreSQL's to remove.
 
